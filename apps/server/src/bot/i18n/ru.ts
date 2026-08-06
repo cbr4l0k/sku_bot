@@ -1,0 +1,47 @@
+import { blockquote, bold, format, join } from "gramio";
+import type { ShouldFollowLanguage } from "@gramio/i18n";
+import type { en } from "./en";
+
+export const ru = {
+  welcome: "Добро пожаловать в клуб бега! Подготовим всё для ближайшего старта.",
+  contactPrompt: "Поделитесь номером телефона, чтобы мы сохранили вашу регистрацию и присылали важные обновления.",
+  contactButton: "📱 Поделиться контактом",
+  contactSaved: "Готово — контакт сохранён.",
+  contactRejected: "Пожалуйста, поделитесь своим контактом кнопкой ниже.",
+  hero: () => format`${bold("🏃 Клуб бега")}
+
+${blockquote("Пробежки, тренировки и хорошая компания — всё в одном месте.")}`,
+  openApp: "🏃 Открыть приложение",
+  openEvent: "Открыть событие",
+  eventDate: (date: string) => `📅 ${date}`,
+  eventLocation: (location: string) => `📍 ${location}`,
+  spotsLeft: (count: number) => `Осталось мест: ${count}`,
+  eventUnavailable: "Это событие больше недоступно.",
+  unknownPayload: "Не удалось распознать ссылку, но вы в нужном месте.",
+  error: "Что-то пошло не так. Попробуйте ещё раз.",
+  offer: (title: string, date: string) => format`${bold("Место освободилось!")}
+
+${bold(title)}
+${date}
+
+У вас есть 20 минут, чтобы принять приглашение.`,
+  offerAccept: "Принять",
+  offerAccepted: (title: string, date: string) => format`${bold("✅ Вы в списке участников!")}
+
+${bold(title)}
+${date}`,
+  offerSpotTaken: "Это место уже занято. Посмотрите другие события в приложении.",
+  bannedNotice: "Ваш доступ к записи на события ограничен. Свяжитесь с организаторами клуба.",
+  offerSuperseded: "Это место уже недоступно.",
+  eventCanceled: (title: string) => format`${bold("Событие отменено")}
+
+${title}
+
+Надеемся увидеться на другой пробежке!`,
+  eventUpdated: (title: string, changes: string[]) => format`${bold("Событие обновлено")}
+
+${bold(title)}
+
+${join(changes, (change) => format`• ${change}`, "\n")}`,
+  commandStart: "Главное меню",
+} satisfies ShouldFollowLanguage<typeof en>;
