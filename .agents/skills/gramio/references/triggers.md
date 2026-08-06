@@ -1,0 +1,259 @@
+---
+name: triggers
+description: All GramIO trigger types — command, hears, callbackQuery, inlineQuery, chosenInlineResult, reaction — with matchers and context properties.
+---
+
+# Triggers
+
+> [!NOTE]
+> Every trigger shorthand below — `command`, `hears`, `callbackQuery`, `inlineQuery`, `chosenInlineResult`, `reaction`, `startParameter` — is also exposed **directly on `Plugin`** instances since gramio 0.9. Same signatures, same semantics. Lets you encapsulate a feature as a `Plugin` and register handlers without routing through an internal `Composer`:
+>
+> ```typescript
+> import { Plugin } from "gramio";
+>
+> const adminPlugin = new Plugin("admin")
+>     .command("ban", banHandler)
+>     .command("unban", unbanHandler)
+>     .callbackQuery(adminAction, callbackHandler);
+>
+> bot.extend(adminPlugin);
+> ```
+>
+> `composer.extend(plugin).command(...)` chains correctly and preserves accumulated `TMethods` typings, so the Plugin-as-router pattern just works.
+
+## command
+
+```typescript
+bot.command("start", (context) => {
+    context.args; // everything after "/start " (string)
+    return context.send("Welcome!");
+});
+```
+
+- Do NOT include `/` in the command name.
+- Automatically handles `/start@bot_username` (deep linking).
+- `context.args` contains text after the command.
+
+### CommandMeta + `bot.syncCommands()` (gramio 0.9+)
+
+`bot.command()` accepts an optional `CommandMeta` object **between** the name and the handler — `bot.command(name, meta, handler)`. A single `bot.syncCommands()` call flushes everything to Telegram with hash-based caching, so unchanged metadata doesn't burn rate-limit budget.
+
+```typescript
+const bot = new Bot(token)
+    .command("start", { description: "Start the bot" }, (ctx) => ctx.send("Hi!"))
+    .command(
+        "help",
+        {
+            description: "Show help",
+            locales: { ru: "Помощь", uk: "Допомога" },  // or i18n.localesFor("cmd.help")
+        },
+        helpHandler,
+    )
+    .command(
+        "admin",
+        { description: "Admin panel", scopes: [{ type: "chat_administrators" }] },
+        adminHandler,
+    )
+    .command("debug", { hide: true }, debugHandler);  // /debug works, but stays out of menu
+
+bot.onStart(() => bot.syncCommands());
+await bot.start();
+```
+
+`CommandMeta` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | `string` | Required for the command to appear in Telegram's menu |
+| `locales` | `Record<string, string>` | Per-language descriptions (Telegram `language_code` keys) |
+| `scopes` | `BotCommandScope[]` | `default`, `all_private_chats`, `all_group_chats`, `all_chat_administrators`, `chat`, `chat_administrators`, `chat_member` |
+| `hide` | `boolean` | Skip from menu (handler still fires) |
+
+`syncCommands({ exclude: ["debug"] })` skips individual commands at sync time. The two-arg form `bot.command(name, handler)` is unchanged for commands you don't want in the menu.
+
+> [!WARNING]
+> Argument order is `name → meta → handler`. `bot.command(name, handler, meta)` is wrong and a recurring AI mistake — meta sits BETWEEN.
+
+## hears
+
+Matches message text. Accepts RegExp, string, or function:
+
+```typescript
+// RegExp — captures available via context.args
+bot.hears(/hello (.*)/i, (context) => {
+    return context.send(`Hello, ${context.args![1]}!`);
+});
+
+// Exact string match
+bot.hears("start", (context) => context.send("Matched 'start'"));
+
+// Function matcher — return boolean
+bot.hears(
+    (context) => context.from?.is_premium === true,
+    (context) => context.send("Premium user detected!")
+);
+```
+
+## callbackQuery
+
+Matches callback button presses. Accepts string, RegExp, or `CallbackData` instance:
+
+```typescript
+// String match
+bot.callbackQuery("approve", (context) => {
+    return context.answer("Approved!");
+});
+
+// RegExp
+bot.callbackQuery(/action_(\d+)/, (context) => {
+    return context.answer(`Action: ${context.data}`);
+});
+
+// Type-safe CallbackData (see callback-data reference)
+const itemData = new CallbackData("item").number("id").string("action");
+bot.callbackQuery(itemData, (context) => {
+    // context.queryData is typed: { id: number, action: string }
+    return context.answer(`Item ${context.queryData.id}: ${context.queryData.action}`);
+});
+```
+
+## inlineQuery
+
+Matches inline queries. Requires enabling inline mode via @BotFather `/setinline`.
+
+```typescript
+import { InlineQueryResult, InputMessageContent } from "gramio";
+
+bot.inlineQuery(/find (.*)/i, async (context) => {
+    await context.answer(
+        [
+            InlineQueryResult.article(
+                "id-1",
+                `Result for ${context.args![1]}`,
+                InputMessageContent.text(
+                    format`Found: ${bold(context.args![1])}`
+                ),
+                {
+                    thumbnail_url: "https://example.com/thumb.jpg", // JPEG, ≤320×320 px, ≤200 KB
+                }
+            ),
+        ],
+        { cache_time: 0 }
+    );
+}, {
+    // Optional: handle when user picks this result
+    onResult: (context) => context.editText("You selected this!"),
+});
+```
+
+> **Thumbnail constraints (`thumbnail_url`)** — must be **JPEG** (PNG/WebP silently fail in some Telegram clients), ≤**320×320 px**, ≤**~200 KB**. Oversized or non-JPEG URLs cause the preview to disappear instead of falling back to a default — applies to `InlineQueryResultArticle`, `Contact`, `Document`, `Gif`, `Location`, `Mpeg4Gif`, `Photo`, `Venue`, `Video`.
+
+**Auth-required queries — use `button` to redirect the user to a private chat.** When serving results requires the user to be logged in / connected / onboarded, return an **empty** results array plus a top `button` with a deep-link `start_parameter`. Telegram shows the button above the empty results panel; tapping it opens the PM with `/start <param>`, which you handle via `ctx.args`.
+
+```typescript
+bot.inlineQuery(async (ctx) => {
+    if (!(await isAuthenticated(ctx.from!.id))) {
+        return ctx.answer([], {
+            cache_time: 0,
+            is_personal: true,
+            button: {
+                text: "Log in to continue",
+                start_parameter: "login-inline", // 1-64 chars, [A-Za-z0-9_-]
+            },
+        });
+    }
+    // ...normal results once authenticated
+});
+
+bot.command("start", (ctx) => {
+    if (ctx.args === "login-inline") return ctx.send("Let's get you logged in…");
+});
+```
+
+`InlineQueryResultsButton` is a discriminated union — provide **exactly one** of `start_parameter` (deep-link to PM) or `web_app` (launch a Mini App). Use this pattern any time inline mode needs side-effects it can't do on its own: auth, long-running setup, file uploads, etc. The `start_parameter` follows the same 64-char `[A-Za-z0-9_-]` rules as every other deep-link payload — see [deep-links](./deep-links.md) for the full ruleset and the other seven link families.
+
+## chosenInlineResult
+
+Fires when user picks an inline result. Requires @BotFather `/setinlinefeedback`.
+
+```typescript
+bot.chosenInlineResult(/search (.*)/i, async (context) => {
+    await context.editText(`You chose: ${context.resultId}`);
+});
+```
+
+Can only edit messages that contain an InlineKeyboard.
+
+**CallbackData trigger (gramio 0.10+):** pass a `CallbackData` instance — it matches on the chosen `result_id` (not the `query`) and unpacks into a typed `context.queryData`, mirroring `callbackQuery(schema, …)`:
+
+```typescript
+import { CallbackData } from "gramio";
+
+const card = new CallbackData("card").number("id");
+
+bot.inlineQuery(/cards/, (ctx) =>
+    ctx.answer([InlineQueryResult.article(card.pack({ id: 42 }), "Card #42", /* … */)]),
+);
+
+bot.chosenInlineResult(card, (ctx) => {
+    ctx.queryData.id; // typed as number
+});
+```
+
+## guestQuery (Bot API 10.0, gramio 0.10+)
+
+Handles **guest messages** — the Bot API 10.0 `guest_message` update, where a user reaches the bot without a regular chat. Same trigger shape as `inlineQuery` (string / RegExp / predicate / **no trigger** = match any), but reply with **`ctx.answerGuestQuery(result)`**, NOT `ctx.send`/`reply`. The `result` arg is **required** — a single `InlineQueryResult` (the same shape you'd put in an `answerInlineQuery` results array). That different reply semantics is exactly why it's a separate trigger from `command`/`hears`/`startParameter`.
+
+```typescript
+import { InlineQueryResult, InputMessageContent } from "gramio";
+
+// match any guest message
+bot.guestQuery((ctx) =>
+    ctx.answerGuestQuery(
+        InlineQueryResult.article("1", "Hi", InputMessageContent.text("Hello!")),
+    ),
+);
+
+// filter on the guest query text (captures via ctx.args: RegExpMatchArray | null)
+bot.guestQuery(/^order (.+)/i, (ctx) =>
+    ctx.answerGuestQuery(
+        InlineQueryResult.article(
+            ctx.args![1],
+            "Order",
+            InputMessageContent.text(`Order ${ctx.args![1]}`),
+        ),
+    ),
+);
+```
+
+Guest-message context getters: `ctx.guestQueryId`, `ctx.guestBotCallerUser`, `ctx.guestBotCallerChat`, plus `ctx.answerGuestQuery(result, params?)`. Check `User.supportsGuestQueries()` before initiating. `guest_message` is auto-added to `allowed_updates` when a `guestQuery` handler is registered.
+
+## reaction
+
+```typescript
+// Single emoji
+bot.reaction("👍", (context) => context.reply("Thanks!"));
+
+// Multiple emojis
+bot.reaction(["👍", "❤️"], (context) => context.reply("Appreciated!"));
+```
+
+## Generic Update Handlers
+
+```typescript
+// All updates
+bot.use((context, next) => {
+    console.log("Update received:", context.updateId);
+    return next();
+});
+
+// Specific update type
+bot.on("message", (context) => { /* message context */ });
+
+// Multiple types
+bot.on(["message", "callback_query"], (context) => { /* union context */ });
+```
+
+<!--
+Source: https://gramio.dev/triggers/
+-->
