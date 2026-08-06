@@ -17,6 +17,7 @@ import {
   waitlistOffers,
 } from "@sku/db";
 import { bot } from "../bot";
+import type { EventChange } from "../bot/event-card";
 import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
@@ -193,13 +194,13 @@ export const app = new Elysia()
       if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
-      const changes = [
-        body.title === undefined ? null : "title",
-        body.description === undefined ? null : "description",
-        body.startsAt === undefined ? null : "startsAt",
-        body.location === undefined ? null : "location",
-        body.capacity === undefined ? null : "capacity",
-      ].filter((change): change is string => change !== null);
+      const changes: EventChange[] = [
+        body.title !== undefined && body.title !== event.title ? "title" : null,
+        body.description !== undefined && body.description !== event.description ? "description" : null,
+        startsAt !== undefined && startsAt.getTime() !== event.startsAt.getTime() ? "startsAt" : null,
+        body.location !== undefined && body.location !== event.location ? "location" : null,
+        body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
+      ].filter((change): change is EventChange => change !== null);
       if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined) {
         db.update(events).set({
           ...(body.title === undefined ? {} : { title: body.title }),
@@ -247,6 +248,13 @@ export const app = new Elysia()
       if (!event) return error(status, 404, "event_not_found");
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
+      const changes: EventChange[] = [
+        body.title !== undefined && body.title !== event.title ? "title" : null,
+        body.description !== undefined && body.description !== event.description ? "description" : null,
+        startsAt !== undefined && startsAt.getTime() !== event.startsAt.getTime() ? "startsAt" : null,
+        body.location !== undefined && body.location !== event.location ? "location" : null,
+        body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
+      ].filter((change): change is EventChange => change !== null);
       if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || body.status !== undefined) db.update(events).set({
         ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(body.status === undefined ? {} : { status: body.status }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
@@ -256,6 +264,7 @@ export const app = new Elysia()
         fireEffects(result.effects);
         void notifyEventCanceled(result.userIds, params.id).catch(console.error);
       }
+      if (event.status !== "draft" && body.status !== "canceled" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams, body: t.Intersect([eventPatchFields, t.Object({ status: t.Optional(t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")])) })]) })

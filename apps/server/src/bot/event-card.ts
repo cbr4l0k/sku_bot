@@ -13,9 +13,12 @@ type EventCardContext = {
   send: (text: string | ReturnType<typeof format>, params?: { reply_markup?: InlineKeyboard }) => Promise<unknown>;
 };
 
-type EventSummary = { title: string; date: string };
+export type EventChange = "title" | "description" | "startsAt" | "location" | "capacity";
+export type EventUpdatedFields = { title?: string; description?: true; startsAt?: string; location?: string; capacity?: number | null };
 
-const formatDate = (startsAt: Date, locale: Locale): string => new Intl.DateTimeFormat(
+type EventSummary = { title: string; date: string; description: string; location: string; capacity: number | null };
+
+export const formatDate = (startsAt: Date, locale: Locale): string => new Intl.DateTimeFormat(
   locale === "ru" ? "ru-RU" : "en-US",
   { dateStyle: "long", timeStyle: "short", timeZone: timezone },
 ).format(startsAt);
@@ -29,11 +32,11 @@ const publishedEvent = (eventId: number) => db.select({
 }).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
 
 export const eventSummary = (eventId: number, locale: Locale): EventSummary | null => {
-  const event = db.select({ title: events.title, startsAt: events.startsAt })
+  const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, capacity: events.capacity })
     .from(events)
     .where(eq(events.id, eventId))
     .get();
-  return event ? { title: event.title, date: formatDate(event.startsAt, locale) } : null;
+  return event ? { ...event, date: formatDate(event.startsAt, locale) } : null;
 };
 
 export const sendEventCard = async (context: EventCardContext, eventId: number, locale: Locale): Promise<void> => {

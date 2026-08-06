@@ -1,5 +1,6 @@
 import { blockquote, bold, format, join } from "gramio";
 import type { LanguageMap } from "@gramio/i18n";
+import type { EventUpdatedFields } from "../event-card";
 
 export const en = {
   welcome: "Welcome to the running club! Let's get you ready for the next run.",
@@ -35,10 +36,16 @@ ${date}`,
   eventCanceled: (title: string) => format`${bold("Event canceled")}
 
 ${title} has been canceled. We hope to see you at another run soon.`,
-  eventUpdated: (title: string, changes: string[]) => format`${bold("Event updated")}
+  eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Event updated")}
 
 ${bold(title)}
 
-${join(changes, (change) => format`• ${change}`, "\n")}`,
+${join([
+    changes.title === undefined ? null : format`• New title: ${changes.title}`,
+    changes.description === undefined ? null : format`• Description updated`,
+    changes.startsAt === undefined ? null : format`• New date: ${changes.startsAt}`,
+    changes.location === undefined ? null : format`• New location: ${changes.location}`,
+    changes.capacity === undefined ? null : format`• New capacity: ${changes.capacity === null ? "unlimited" : changes.capacity}`,
+  ].filter((change): change is ReturnType<typeof format> => change !== null), (change) => change, "\n")}`,
   commandStart: "Main menu",
 } satisfies LanguageMap;

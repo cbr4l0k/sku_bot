@@ -1,6 +1,7 @@
 import { blockquote, bold, format, join } from "gramio";
 import type { ShouldFollowLanguage } from "@gramio/i18n";
 import type { en } from "./en";
+import type { EventUpdatedFields } from "../event-card";
 
 export const ru = {
   welcome: "Добро пожаловать в клуб бега! Подготовим всё для ближайшего старта.",
@@ -38,10 +39,16 @@ ${date}`,
 ${title}
 
 Надеемся увидеться на другой пробежке!`,
-  eventUpdated: (title: string, changes: string[]) => format`${bold("Событие обновлено")}
+  eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Событие обновлено")}
 
 ${bold(title)}
 
-${join(changes, (change) => format`• ${change}`, "\n")}`,
+${join([
+    changes.title === undefined ? null : format`• Новое название: ${changes.title}`,
+    changes.description === undefined ? null : format`• Обновили описание`,
+    changes.startsAt === undefined ? null : format`• Новая дата: ${changes.startsAt}`,
+    changes.location === undefined ? null : format`• Новое место: ${changes.location}`,
+    changes.capacity === undefined ? null : format`• Лимит участников: ${changes.capacity === null ? "без ограничений" : changes.capacity}`,
+  ].filter((change): change is ReturnType<typeof format> => change !== null), (change) => change, "\n")}`,
   commandStart: "Главное меню",
 } satisfies ShouldFollowLanguage<typeof en>;
