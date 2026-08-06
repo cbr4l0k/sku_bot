@@ -2,7 +2,7 @@ import { Link } from "react-router";
 
 import type { EventCard as EventCardData, EventStatus, RegistrationStatus } from "../api";
 import { useI18n } from "../i18n";
-import { bib, dayNumber, monthShort, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
+import { dayNumber, monthNumber, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
 import { Chip, Track } from "./primitives";
 
 export const StatusBadge = ({
@@ -34,16 +34,20 @@ export const EventStatusChip = ({ status }: { status: EventStatus }) => {
   );
 };
 
-/** Race-bib date block: big day numeral over month, with the weekday as a rail. */
+/**
+ * The poster's hero: day stacked over month in enormous tight-leaded numerals,
+ * with the time and weekday underneath as small tracked-out labels. The date is
+ * the star of every card, not a caption on it.
+ */
 export const DateBlock = ({ iso }: { iso: string }) => {
   const { locale, t } = useI18n();
   const relative = relativeDayKey(iso);
   return (
-    <div className="flex w-[54px] shrink-0 flex-col items-center border-r border-hair pr-3">
-      <span className="display text-[26px] leading-none">{dayNumber(iso, locale)}</span>
-      <span className="num mt-1 text-[10px] tracking-[0.18em] text-hint">{monthShort(iso, locale)}</span>
-      <span className="num mt-2 text-[13px] font-medium">{timeOf(iso, locale)}</span>
-      <span className="num mt-0.5 text-[9px] tracking-[0.16em] text-hint">
+    <div className="flex w-[66px] shrink-0 flex-col items-center border-r border-hair pr-3">
+      <span className="datenum">{dayNumber(iso, locale)}</span>
+      <span className="datenum">{monthNumber(iso, locale)}</span>
+      <span className="num mt-2.5 text-[13px] tracking-[0.02em]">{timeOf(iso, locale)}</span>
+      <span className="num mt-1 text-[9px] tracking-[0.18em] text-hint">
         {relative ? t(relative).toUpperCase() : weekdayShort(iso, locale)}
       </span>
     </div>
@@ -63,13 +67,10 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
         mine ? "card-mine pl-5" : ""
       }`}
     >
-      <span className="num pointer-events-none absolute top-3 right-4 text-[10px] tracking-[0.2em] text-hint opacity-50">
-        {bib(event.id)}
-      </span>
       <div className="flex gap-3.5">
         <DateBlock iso={event.startsAt} />
         <div className="min-w-0 flex-1">
-          <h3 className="display mb-1 pr-8 text-[16px] leading-[1.15]">{event.title}</h3>
+          <h3 className="display mb-1 text-[16px] leading-[1.15] break-words">{event.title}</h3>
           <p className="mb-3 truncate text-[13px] text-hint">{event.location}</p>
           <Track
             value={event.confirmedCount}
@@ -97,7 +98,7 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
   );
 };
 
-/** Chronograph ring: sweeps from full to empty over `total` ms. */
+/** Countdown ring: sweeps from full to empty over `total` ms. */
 export const CountdownRing = ({
   remaining,
   total,

@@ -36,8 +36,8 @@ export const OrganizerScreen = () => {
             <DateBlock iso={event.startsAt} />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex items-start justify-between gap-2">
-                <h3 className="display text-[16px] leading-tight">{event.title}</h3>
-                <span className="num text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
+                <h3 className="display min-w-0 text-[16px] leading-tight break-words">{event.title}</h3>
+                <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
               </div>
               <p className="mb-2.5 truncate text-[13px] text-hint">{event.location}</p>
               <div className="flex items-center gap-1.5">

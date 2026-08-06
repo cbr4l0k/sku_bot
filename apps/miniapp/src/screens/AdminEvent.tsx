@@ -9,7 +9,7 @@ import { useAction, useResource } from "../lib/useResource";
 import { copyText } from "../telegram";
 import { EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
-import { Sheet, useConfirm, useToast } from "../ui/overlays";
+import { Sheet, SheetFooter, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
   Chip,
@@ -80,9 +80,11 @@ const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose: () =>
           );
         })}
       </div>
-      <Button block loading={action.pending} disabled={picked.length === 0} onClick={save}>
-        {t("common.save")} · {picked.length}
-      </Button>
+      <SheetFooter>
+        <Button block loading={action.pending} disabled={picked.length === 0} onClick={save}>
+          {t("common.save")} · {picked.length}
+        </Button>
+      </SheetFooter>
     </Sheet>
   );
 };

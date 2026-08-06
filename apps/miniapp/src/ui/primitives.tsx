@@ -4,15 +4,21 @@ import { haptic } from "../telegram";
 
 /* ------------------------------------------------------------------- layout */
 
+/* The bottom padding clears the floating tab bar plus the home indicator below
+   it, so the last row of a screen is never trapped under either. */
 export const Screen = ({ children, className = "" }: { children: ReactNode; className?: string }) => (
-  <div className={`relative z-10 mx-auto w-full max-w-[560px] px-4 pt-4 pb-28 ${className}`}>{children}</div>
+  <div
+    className={`relative z-10 mx-auto w-full max-w-[560px] px-4 pt-4 pb-[calc(7rem_+_env(safe-area-inset-bottom,0px))] ${className}`}
+  >
+    {children}
+  </div>
 );
 
 export const PageTitle = ({ eyebrow, title, aside }: { eyebrow?: string; title: string; aside?: ReactNode }) => (
   <header className="mb-5 flex items-end justify-between gap-3">
     <div className="min-w-0">
-      {eyebrow ? <div className="eyebrow mb-1.5">{eyebrow}</div> : null}
-      <h1 className="display text-[27px]">{title}</h1>
+      {eyebrow ? <div className="eyebrow mb-2">{eyebrow}</div> : null}
+      <h1 className="hero break-words">{title}</h1>
     </div>
     {aside}
   </header>
@@ -105,16 +111,19 @@ export const Track = ({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className="num text-[11px] tracking-[0.08em] text-hint uppercase">{label}</span>
-        {right ? <span className="num text-[11px] text-hint">{right}</span> : null}
+        {/* Poster weight pairing: tracked-out label, plain numerals at full ink. */}
+        <span className="num text-[11px] tracking-[0.14em] text-hint uppercase">{label}</span>
+        {right ? <span className="num text-[11px] text-ink">{right}</span> : null}
       </div>
       <div className={`track ${full ? "track-full" : ""}`}>
         {max === null ? (
+          /* Uncapped: a running row of lozenges rather than a filled bar. */
           <div
-            className="absolute inset-0 opacity-45"
+            className="absolute inset-0 opacity-70"
             style={{
-              backgroundImage:
-                "repeating-linear-gradient(115deg, var(--flare) 0 2px, transparent 2px 8px)",
+              backgroundImage: "radial-gradient(closest-side, var(--flare) 0 68%, transparent 71%)",
+              backgroundSize: "11px 100%",
+              backgroundRepeat: "repeat-x",
             }}
           />
         ) : (
@@ -136,7 +145,7 @@ export const Loader = ({ label }: { label: string }) => (
 
 export const ErrorState = ({ message, onRetry, retryLabel }: { message: string; onRetry?: () => void; retryLabel: string }) => (
   <div className="card fade-in px-5 py-6 text-center">
-    <div className="checker mx-auto mb-4 w-16" />
+    <div className="swoop mx-auto mb-4 w-16" />
     <p className="mb-4 text-[15px]">{message}</p>
     {onRetry ? (
       <Button variant="ghost" size="sm" onClick={onRetry}>
@@ -204,7 +213,7 @@ export const SearchInput = ({ className = "", ...rest }: InputHTMLAttributes<HTM
 export const StatTile = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
   <div className="card px-4 py-3.5">
     <div className="eyebrow mb-1">{label}</div>
-    <div className="display text-[24px] tabular-nums">{value}</div>
+    <div className="display text-[28px] leading-[0.95] tabular-nums">{value}</div>
     {hint ? <div className="num mt-0.5 text-[11px] text-hint">{hint}</div> : null}
   </div>
 );

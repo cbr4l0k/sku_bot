@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { EventDraft } from "../api";
 import { useI18n } from "../i18n";
 import { fromLocalInput, toLocalInput } from "../lib/format";
+import { SheetFooter } from "./overlays";
 import { Button, Field, TextArea, TextInput } from "./primitives";
 
 type Initial = Partial<EventDraft>;
@@ -79,9 +80,11 @@ export const EventForm = ({
         </p>
       ) : null}
 
-      <Button block loading={pending} onClick={submit}>
-        {submitLabel}
-      </Button>
+      <SheetFooter>
+        <Button block loading={pending} onClick={submit}>
+          {submitLabel}
+        </Button>
+      </SheetFooter>
     </div>
   );
 };

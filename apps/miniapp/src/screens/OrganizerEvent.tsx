@@ -9,7 +9,7 @@ import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { CountdownRing, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
-import { Sheet, useToast } from "../ui/overlays";
+import { Sheet, useOverlayLock, useToast } from "../ui/overlays";
 import {
   Button,
   Chip,
@@ -30,6 +30,7 @@ const TOKEN_WINDOW_MS = 30_000;
 const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void }) => {
   const { t } = useI18n();
   const token = useResource(useCallback(() => sku.checkinToken(eventId), [eventId]), { pollMs: TOKEN_WINDOW_MS });
+  useOverlayLock();
   const fetchedAt = useRef(Date.now());
   const now = useTicker(1000);
 
@@ -41,7 +42,15 @@ const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void })
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-6" style={{ background: "var(--color-bg)" }}>
-      <div className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "repeating-linear-gradient(114deg, var(--flare) 0 2px, transparent 2px 16px)" }} />
+      {/* The stage covers the app's own atmosphere layer, so it carries its
+          own pair of cropped blobs. */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            "radial-gradient(74% 40% at 88% -4%, var(--blob), transparent 66%), radial-gradient(64% 36% at -12% 100%, var(--blob-soft), transparent 64%)",
+        }}
+      />
       <div className="relative flex flex-col items-center gap-5">
         <div className="eyebrow">{t("organizer.qrTitle")}</div>
         {token.data ? (
@@ -92,9 +101,9 @@ const PersonRow = ({
     >
       <div className="min-w-0 flex-1">
         <div className="truncate text-[14px]">{fullName(person)}</div>
-        <div className="num mt-0.5 flex items-center gap-2 text-[11px] text-hint">
-          {person.username ? <span>@{person.username}</span> : null}
-          {person.phone ? <span>{person.phone}</span> : null}
+        <div className="num mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-hint">
+          {person.username ? <span className="break-all">@{person.username}</span> : null}
+          {person.phone ? <span className="break-all">{person.phone}</span> : null}
           {person.status === "waitlisted" ? <Chip>{t("status.waitlisted")}</Chip> : null}
           {person.status === "canceled" ? <Chip>{t("status.canceled")}</Chip> : null}
         </div>

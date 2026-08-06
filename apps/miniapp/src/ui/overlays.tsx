@@ -1,4 +1,4 @@
-import { createContext, use, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useI18n } from "../i18n";
 import { haptic } from "../telegram";
@@ -50,6 +50,28 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
+/* -------------------------------------------------------------- overlay lock */
+
+let openOverlays = 0;
+
+/**
+ * Telegram's WebKit webview paints `backdrop-filter` layers above later stacking
+ * contexts, so the blurred tab bar bleeds through modals however high their
+ * z-index is. Flagging the body while anything is open lets CSS pull the bar out
+ * of the layout instead, which sidesteps the paint order entirely.
+ */
+export const useOverlayLock = (active = true) => {
+  useEffect(() => {
+    if (!active) return;
+    openOverlays += 1;
+    document.body.dataset.overlay = "open";
+    return () => {
+      openOverlays -= 1;
+      if (openOverlays === 0) delete document.body.dataset.overlay;
+    };
+  }, [active]);
+};
+
 /* ------------------------------------------------------------------- confirm */
 
 type ConfirmRequest = { text: string; confirmLabel?: string; danger?: boolean };
@@ -66,6 +88,7 @@ export const useConfirm = () => {
 export const ConfirmProvider = ({ children }: { children: ReactNode }) => {
   const { t } = useI18n();
   const [pending, setPending] = useState<Pending | null>(null);
+  useOverlayLock(pending !== null);
 
   const ask = useCallback(
     (request: ConfirmRequest) =>
@@ -94,8 +117,8 @@ export const ConfirmProvider = ({ children }: { children: ReactNode }) => {
             onClick={() => settle(false)}
             className="fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
           />
-          <div className="sheet-in relative m-3 w-full max-w-[460px] rounded-[22px] border border-hair bg-surface p-5 shadow-[0_30px_70px_-30px_rgb(0_0_0/0.8)]">
-            <div className="checker mb-4 w-14" />
+          <div className="sheet-in relative mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom,0px))] w-full max-w-[460px] rounded-[22px] border border-hair bg-surface p-5 shadow-[0_30px_70px_-30px_rgb(0_0_0/0.8)]">
+            <div className="swoop mb-4 w-14" />
             <p className="mb-5 text-[15px] leading-relaxed">{pending.text}</p>
             <div className="flex gap-2">
               <Button variant="ghost" block onClick={() => settle(false)}>
@@ -126,6 +149,7 @@ export const Sheet = ({
   full?: boolean;
 }) => {
   const { t } = useI18n();
+  useOverlayLock();
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center">
       <button
@@ -134,8 +158,10 @@ export const Sheet = ({
         onClick={onClose}
         className="fade-in absolute inset-0 bg-black/50 backdrop-blur-[2px]"
       />
+      {/* The sheet is bottom-anchored, so its own bottom edge is the viewport's:
+          the inset keeps the scroll area clear of the home indicator. */}
       <div
-        className={`sheet-in relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-t-[24px] border border-hair bg-surface ${
+        className={`sheet-in relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-t-[24px] border border-hair bg-surface pb-[env(safe-area-inset-bottom,0px)] ${
           full ? "h-[94dvh]" : "max-h-[88dvh]"
         }`}
       >
@@ -150,3 +176,13 @@ export const Sheet = ({
     </div>
   );
 };
+
+/**
+ * Sticky action bar for the trailing button of a sheet. Left in the flow it
+ * would scroll away under the tab bar on tall forms; pinned to the bottom of the
+ * scroll area it stays reachable. The negative margins exactly cancel the scroll
+ * area's own padding, so the bar bleeds edge to edge without overflowing it.
+ */
+export const SheetFooter = ({ children }: { children: ReactNode }) => (
+  <div className="sticky bottom-0 -mx-5 -mb-5 mt-1 border-t border-hair bg-surface px-5 pt-4 pb-5">{children}</div>
+);

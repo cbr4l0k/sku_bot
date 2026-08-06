@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router";
 
 import { sku, type EventCard as EventCardData, type EventDetail } from "../api";
 import { useI18n } from "../i18n";
-import { bib, countdown, errorText, fullDate, isPast } from "../lib/format";
+import { countdown, errorText, fullDate, isPast } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
@@ -119,12 +119,12 @@ export const EventDetailScreen = () => {
   return (
     <Screen>
       <div className="rise">
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="num text-[10px] tracking-[0.24em] text-hint">BIB {bib(detail.id)}</span>
-          <span className="hairline flex-1" />
+        <div className="mb-2 flex items-center gap-2.5">
+          <span className="eyebrow shrink-0">{t("app.name")}</span>
+          <span className="hairline min-w-4 flex-1" />
           <StatusBadge status={status} position={detail.myWaitlistPosition} hasOffer={offer !== null} />
         </div>
-        <h1 className="display mb-3 text-[28px] leading-[1.04]">{detail.title}</h1>
+        <h1 className="hero mb-3 break-words">{detail.title}</h1>
       </div>
 
       {offer ? (
@@ -201,7 +201,7 @@ export const EventDetailScreen = () => {
       {status === "registered" ? <p className="mb-4 text-[13px] text-hint">{t("detail.registeredHint")}</p> : null}
       {status === "checked_in" ? <p className="mb-4 text-[13px] text-hint">{t("detail.checkedInHint")}</p> : null}
 
-      <div className="sticky bottom-24 flex flex-col gap-2">
+      <div className="sticky bottom-[calc(6rem_+_env(safe-area-inset-bottom,0px))] flex flex-col gap-2">
         {!joinable ? (
           <div className="card px-4 py-3 text-center text-[13px] text-hint">
             {past ? t("detail.pastEvent") : detail.status === "canceled" ? t("detail.canceled") : t("detail.closed")}

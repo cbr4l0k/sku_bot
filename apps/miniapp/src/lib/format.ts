@@ -9,11 +9,9 @@ export const parseDate = (iso: string): Date => new Date(iso);
 export const dayNumber = (iso: string, locale: Locale): string =>
   new Intl.DateTimeFormat(tags[locale], { day: "2-digit" }).format(parseDate(iso));
 
-export const monthShort = (iso: string, locale: Locale): string =>
-  new Intl.DateTimeFormat(tags[locale], { month: "short" })
-    .format(parseDate(iso))
-    .replace(".", "")
-    .toUpperCase();
+/** Two-digit month, for the poster's stacked "05 / 08" date hero. */
+export const monthNumber = (iso: string, locale: Locale): string =>
+  new Intl.DateTimeFormat(tags[locale], { month: "2-digit" }).format(parseDate(iso));
 
 export const weekdayShort = (iso: string, locale: Locale): string =>
   new Intl.DateTimeFormat(tags[locale], { weekday: "short" })

@@ -77,8 +77,8 @@ const EventsTab = () => {
             <DateBlock iso={event.startsAt} />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex items-start justify-between gap-2">
-                <h3 className="display text-[16px] leading-tight">{event.title}</h3>
-                <span className="num text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
+                <h3 className="display min-w-0 text-[16px] leading-tight break-words">{event.title}</h3>
+                <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
               </div>
               <p className="mb-2.5 truncate text-[13px] text-hint">{event.location}</p>
               <EventStatusChip status={event.status} />
@@ -125,8 +125,8 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
         <div className="min-w-0">
           <div className="truncate text-[14px]">{fullName(person)}</div>
           <div className="num mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-hint">
-            {person.username ? <span>@{person.username}</span> : null}
-            {person.phone ? <span>{person.phone}</span> : null}
+            {person.username ? <span className="break-all">@{person.username}</span> : null}
+            {person.phone ? <span className="break-all">{person.phone}</span> : null}
             <span>{t("admin.registrationsCount", { n: person.registrationCount })}</span>
           </div>
         </div>
@@ -256,9 +256,9 @@ export const AdminScreen = () => {
             type="button"
             onClick={() => setTab(item.id)}
             data-active={tab === item.id}
-            className="tab flex-1 flex-row justify-center py-2"
+            className="tab min-w-0 flex-1 flex-row justify-center py-2"
           >
-            {t(item.key)}
+            <span className="max-w-full truncate">{t(item.key)}</span>
           </button>
         ))}
       </div>

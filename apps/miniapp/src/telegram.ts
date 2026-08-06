@@ -32,8 +32,10 @@ const applyScheme = () => {
 };
 
 /**
- * Telegram itself writes --tg-theme-* custom properties onto the root element.
- * Outside Telegram nothing is written and the CSS fallbacks in index.css take over.
+ * Telegram writes --tg-theme-* custom properties onto the root element, but the
+ * club palette in index.css deliberately ignores them: only `data-scheme`, set
+ * by applyScheme, is honoured, and it picks between the bright and the deep
+ * teal field. Outside Telegram the same switch follows prefers-color-scheme.
  */
 export const initViewport = (onThemeChange?: () => void): (() => void) => {
   const app = webApp();

@@ -16,7 +16,9 @@ export const QrCanvas = ({ value, size = 260 }: { value: string; size?: number }
       width: size,
       margin: 1,
       errorCorrectionLevel: "M",
-      color: { dark: "#0d0d0b", light: "#ffffff" },
+      // Brand's deepest teal rather than black — still ~19:1 on white, which is
+      // far more than any scanner needs.
+      color: { dark: "#012025", light: "#ffffff" },
     })
       .then(() => setFailed(false))
       .catch(() => setFailed(true));
@@ -29,8 +31,10 @@ export const QrCanvas = ({ value, size = 260 }: { value: string; size?: number }
         (corner) => (
           <span
             key={corner}
+            /* --flare is white; on the white plate the marks have to be the
+               ink side of the pair instead. */
             className={`absolute h-5 w-5 rounded-[3px] ${corner}`}
-            style={{ borderColor: "var(--flare)" }}
+            style={{ borderColor: "var(--flare-ink)" }}
           />
         ),
       )}
@@ -42,7 +46,7 @@ export const QrCanvas = ({ value, size = 260 }: { value: string; size?: number }
   );
 };
 
-/** Full-bleed success moment: expanding chalk rings + a drawn check mark. */
+/** Success moment: expanding rings out of a white disc + a drawn check mark. */
 export const SuccessBurst = ({ label, hint }: { label: string; hint?: string }) => (
   <div className="flex flex-col items-center py-8 text-center">
     <div className="relative mb-5 grid h-24 w-24 place-items-center">
@@ -73,6 +77,6 @@ export const SuccessBurst = ({ label, hint }: { label: string; hint?: string }) 
     </div>
     <h3 className="display text-[20px]">{label}</h3>
     {hint ? <p className="mt-2 text-[13px] text-hint">{hint}</p> : null}
-    <div className="checker mt-5 w-24" />
+    <div className="swoop mt-5 w-24" />
   </div>
 );

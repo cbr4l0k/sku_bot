@@ -5,9 +5,26 @@
 @import "@fontsource/ibm-plex-mono/cyrillic-500.css";
 
 /* ============================================================================
-   SKU CLUB — "хронограф": race-bib typography, lane hatching, chalk-line rules.
-   Every surface colour is a Telegram theme variable so the app wears the user's
-   own theme; one bold accent (flare orange) is layered on top of it.
+   SKURATOV RUNNING CLUB — one hue, fully committed.
+
+   The club's posters are ~90% a single teal with white type on top; background
+   shapes differ from the base by only a few percent of lightness, and there is
+   no second accent colour at all. This app is built the same way: teal is the
+   SURFACE, not an accent laid over a neutral card, and the only "accent" is
+   white — exactly as on the poster.
+
+   Consequence, and it is deliberate: the app no longer wears the user's
+   Telegram theme. Deriving every surface from --tg-theme-* is what made it look
+   like a generic mini app with a coloured button. `data-scheme` still switches
+   between a bright teal field (light) and a deep teal field (dark) so both
+   Telegram themes stay comfortable, but the hue never leaves the brand.
+
+   Contrast budget: the measured poster teal #0192A3 gives white only 3.7:1,
+   which is fine for the poster's display type but not for 11px UI text. So the
+   fields below sit a few rungs down the same ramp (7.6:1 light / 13:1 dark),
+   which leaves room for a second, softer text tier while still reading as the
+   poster's teal. #0192A3 itself survives as --brand: the luminous rung used for
+   large fills and the theme colour.
    ========================================================================== */
 
 @theme {
@@ -15,14 +32,13 @@
   --font-sans: "Golos Text Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
 
-  --color-bg: var(--tg-theme-bg-color, #f4f2ed);
-  --color-surface: var(--tg-theme-secondary-bg-color, #ffffff);
-  --color-ink: var(--tg-theme-text-color, #16150f);
-  --color-hint: var(--tg-theme-hint-color, #837f74);
-  --color-link: var(--tg-theme-link-color, #1d6ad4);
-  --color-btn: var(--tg-theme-button-color, #16150f);
-  --color-btn-ink: var(--tg-theme-button-text-color, #ffffff);
-  --color-danger: var(--tg-theme-destructive-text-color, #cf3a2c);
+  --color-bg: var(--field);
+  --color-surface: var(--field-lift);
+  --color-ink: var(--ink);
+  --color-hint: var(--ink-dim);
+  --color-btn: var(--field-deep);
+  --color-btn-ink: var(--ink);
+  --color-danger: var(--danger);
   --color-flare: var(--flare);
   --color-hair: var(--hair);
 
@@ -32,19 +48,74 @@
 }
 
 :root {
-  --flare: #f2490c;
-  --flare-ink: #ffffff;
-  --hair: color-mix(in oklab, var(--color-ink) 13%, transparent);
-  --veil: color-mix(in oklab, var(--color-ink) 6%, transparent);
-  --flare-soft: color-mix(in oklab, var(--flare) 13%, transparent);
-  color-scheme: light;
+  /* The measured poster teal. Kept as the brand constant even where the fields
+     step away from it for legibility. */
+  --brand: #0192a3;
+
+  /* --- daylight: bright teal field --------------------------------------- */
+  --field: #015d68;
+  --field-lift: #016a77;
+  --field-sink: #014c56;
+  --field-deep: #012025;
+
+  --ink: #ffffff;
+  --ink-dim: rgb(255 255 255 / 0.84);
+
+  /* The poster has exactly one mark colour on top of the teal: white. --flare
+     is that white — every accent in the app resolves through it. */
+  --flare: #ffffff;
+  --flare-ink: #013f48;
+  --flare-soft: color-mix(in oklab, var(--flare) 14%, transparent);
+
+  /* No second hue exists in the brand, so danger is a warm white: it separates
+     from the cool field by temperature instead of by colour, and still clears
+     4.5:1 on the lifted card. */
+  --danger: #ffd0c4;
+
+  --hair: color-mix(in oklab, var(--ink) 20%, transparent);
+  --veil: color-mix(in oklab, var(--ink) 10%, transparent);
+
+  /* Poster blobs sit 8-10% lighter than the field, never a hard edge. Mixing
+     against --ink keeps that relationship true in either scheme. */
+  --blob: color-mix(in oklab, var(--ink) 9%, transparent);
+  --blob-soft: color-mix(in oklab, var(--ink) 5%, transparent);
+
+  /* Film grain: two dot tilings with coprime periods, so the interference
+     reads as noise rather than a grid. Costs one cached tile, no SVG, no blend
+     mode — it can be layered into any background-image list. */
+  --grain-img:
+    radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.055) 0 0.5px, transparent 0.8px),
+    radial-gradient(circle at 50% 50%, rgb(0 0 0 / 0.07) 0 0.5px, transparent 0.8px);
+  --grain-size:
+    3px 3px,
+    5px 5px;
+  --grain-pos:
+    0 0,
+    1px 2px;
+
+  /* Both schemes are dark-on-teal, so native controls (the datetime pickers in
+     the event form especially) must always render for a dark surface. */
+  color-scheme: dark;
 }
 
 :root[data-scheme="dark"] {
-  --flare: #ff6a33;
-  --flare-ink: #17110d;
-  --hair: color-mix(in oklab, var(--color-ink) 18%, transparent);
-  --veil: color-mix(in oklab, var(--color-ink) 9%, transparent);
+  /* --- night: the same hue, pushed deep ---------------------------------- */
+  --field: #01353d;
+  --field-lift: #01414b;
+  --field-sink: #012228;
+  --field-deep: #010f12;
+
+  --ink: #e8fafc;
+  --ink-dim: rgb(232 250 252 / 0.72);
+
+  --flare: #f2feff;
+  --flare-ink: #012027;
+
+  --danger: #ffb9a8;
+
+  --hair: color-mix(in oklab, var(--ink) 17%, transparent);
+  --veil: color-mix(in oklab, var(--ink) 9%, transparent);
+
   color-scheme: dark;
 }
 
@@ -53,6 +124,13 @@
   body,
   #root {
     height: 100%;
+  }
+
+  /* Safety net only — every known offender is width-constrained below. Set on
+     the root it propagates to the viewport, so nothing can be panned sideways
+     without turning body into a scroll container. */
+  html {
+    overflow-x: hidden;
   }
 
   body {
@@ -66,19 +144,35 @@
     overscroll-behavior-y: none;
   }
 
-  /* Atmosphere: a wash of flare at the top plus faint lane hatching, so the
-     page never reads as a flat block of Telegram grey. */
+  /* Atmosphere: a wash that lifts the top of the field to the exact poster
+     teal, plus three soft lozenges cropped by the frame — the sweeping track
+     curves. Fixed, so it composites once and never repaints on scroll. The wash
+     peaks off-screen above the viewport; at its strongest visible point white
+     still clears 5.8:1 and --ink-dim 4.6:1. */
   body::before {
     content: "";
     position: fixed;
-    inset: 0 0 auto 0;
-    height: 380px;
+    inset: 0;
     pointer-events: none;
     z-index: 0;
     background:
-      radial-gradient(120% 100% at 82% -20%, color-mix(in oklab, var(--flare) 22%, transparent), transparent 62%),
-      repeating-linear-gradient(114deg, color-mix(in oklab, var(--flare) 9%, transparent) 0 1px, transparent 1px 13px);
-    mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+      radial-gradient(96% 42% at 80% -22%, color-mix(in oklab, var(--brand) 32%, transparent) 0%, transparent 68%),
+      radial-gradient(72% 44% at 94% -8%, var(--blob) 0%, transparent 66%),
+      radial-gradient(58% 38% at -18% 24%, var(--blob-soft) 0%, transparent 64%),
+      radial-gradient(88% 32% at 44% 106%, var(--blob) 0%, transparent 68%);
+  }
+
+  /* Grain over the field. Cards carry their own copy so the texture is
+     continuous across the whole surface. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: var(--grain-img);
+    background-size: var(--grain-size);
+    background-position: var(--grain-pos);
   }
 
   button,
@@ -110,11 +204,36 @@
     text-transform: uppercase;
   }
 
+  /* Poster hero: uppercase display, very tight leading, negative tracking. */
+  .hero {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(26px, 8vw, 36px);
+    line-height: 0.92;
+    letter-spacing: -0.045em;
+    text-transform: uppercase;
+  }
+
+  /* The stacked date numerals — day over month, the way the poster stacks
+     "05" over "08". Slashed zero where the face carries one. */
+  .datenum {
+    display: block;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 32px;
+    line-height: 0.84;
+    letter-spacing: -0.06em;
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-feature-settings:
+      "tnum" 1,
+      "zero" 1;
+  }
+
   .eyebrow {
     font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 500;
-    letter-spacing: 0.22em;
+    letter-spacing: 0.28em;
     text-transform: uppercase;
     color: var(--color-hint);
   }
@@ -122,14 +241,19 @@
   .num {
     font-family: var(--font-mono);
     font-weight: 500;
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums slashed-zero;
+    font-feature-settings:
+      "tnum" 1,
+      "zero" 1;
   }
 
   /* --------------------------------------------------------------- chrome */
   .card {
     position: relative;
-    background: var(--color-surface);
+    background-color: var(--color-surface);
+    background-image: var(--grain-img);
+    background-size: var(--grain-size);
+    background-position: var(--grain-pos);
     border: 1px solid var(--hair);
     border-radius: var(--radius-card);
     overflow: hidden;
@@ -145,20 +269,26 @@
 
   .hairline {
     height: 1px;
-    background: repeating-linear-gradient(90deg, var(--hair) 0 6px, transparent 6px 10px);
+    background: linear-gradient(90deg, var(--hair), color-mix(in oklab, var(--hair) 15%, transparent));
   }
 
-  /* Finish-line checker, used as a section rule and on success moments. */
-  .checker {
-    height: 6px;
+  /* Section mark: three soft lozenges receding to the right — the poster's
+     blob language reduced to a rule. Replaces the old finish-line chequer. */
+  .swoop {
+    height: 14px;
+    background-repeat: no-repeat;
     background-image:
-      linear-gradient(45deg, var(--color-ink) 25%, transparent 25% 75%, var(--color-ink) 75%),
-      linear-gradient(45deg, var(--color-ink) 25%, transparent 25% 75%, var(--color-ink) 75%);
-    background-size: 6px 6px;
+      radial-gradient(closest-side, var(--flare) 0 70%, transparent 73%),
+      radial-gradient(closest-side, color-mix(in oklab, var(--flare) 46%, transparent) 0 70%, transparent 73%),
+      radial-gradient(closest-side, color-mix(in oklab, var(--flare) 20%, transparent) 0 70%, transparent 73%);
+    background-size:
+      36% 100%,
+      26% 100%,
+      18% 100%;
     background-position:
-      0 0,
-      3px 3px;
-    opacity: 0.32;
+      0 50%,
+      50% 50%,
+      100% 50%;
   }
 
   .chip {
@@ -171,7 +301,7 @@
     font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 500;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     white-space: nowrap;
   }
@@ -183,7 +313,7 @@
   }
 
   .chip-soft {
-    border-color: color-mix(in oklab, var(--flare) 40%, transparent);
+    border-color: color-mix(in oklab, var(--flare) 42%, transparent);
     background: var(--flare-soft);
     color: var(--color-ink);
   }
@@ -193,11 +323,16 @@
     padding: 11px 13px;
     border-radius: 12px;
     border: 1px solid var(--hair);
-    background: var(--color-bg);
+    background: var(--field-sink);
+    color: var(--color-ink);
     outline: none;
     transition:
       border-color 0.15s,
       box-shadow 0.15s;
+  }
+
+  .field::placeholder {
+    color: color-mix(in oklab, var(--ink) 48%, transparent);
   }
 
   .field:focus {
@@ -238,10 +373,12 @@
     cursor: default;
   }
 
+  /* A white block on teal is the strongest mark the poster's palette allows,
+     so the primary action is exactly that — not a tinted pill. */
   .btn-primary {
     background: var(--flare);
     color: var(--flare-ink);
-    box-shadow: 0 6px 20px -10px color-mix(in oklab, var(--flare) 80%, transparent);
+    box-shadow: 0 8px 26px -14px color-mix(in oklab, var(--flare) 85%, transparent);
   }
 
   .btn-ghost {
@@ -257,7 +394,7 @@
 
   .btn-danger {
     background: transparent;
-    border-color: color-mix(in oklab, var(--color-danger) 45%, transparent);
+    border-color: color-mix(in oklab, var(--color-danger) 50%, transparent);
     color: var(--color-danger);
   }
 
@@ -267,12 +404,13 @@
     border-radius: 10px;
   }
 
-  /* Sweep of light across a primary button when its action succeeds. */
+  /* Sweep across a primary button when its action succeeds. Tinted with the
+     button's own ink so it reads on the white fill. */
   .btn-sweep::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(100deg, transparent 20%, rgb(255 255 255 / 0.55) 50%, transparent 80%);
+    background: linear-gradient(100deg, transparent 20%, color-mix(in oklab, var(--flare-ink) 26%, transparent) 50%, transparent 80%);
     transform: translateX(-120%);
     animation: sweep 0.7s ease-out;
   }
@@ -291,12 +429,13 @@
     inset: 0 auto 0 0;
     border-radius: 999px;
     background-color: var(--flare);
-    background-image: repeating-linear-gradient(115deg, rgb(255 255 255 / 0.28) 0 2px, transparent 2px 7px);
     transition: width 0.6s var(--ease-out-back);
   }
 
+  /* Full means closed: the bar goes to the deepest rung of the ramp instead of
+     the luminous one, so "full" reads as sealed rather than as achievement. */
   .track-full .track-fill {
-    background-color: var(--color-ink);
+    background-color: var(--field-deep);
   }
 
   /* --------------------------------------------------------------- tab bar */
@@ -308,12 +447,16 @@
     z-index: 40;
     display: flex;
     gap: 2px;
+    /* Fixed positioning resolves this against the viewport. Without it the bar
+       sizes purely to its content, and the five tabs an admin sees are wider
+       than a narrow phone — which is what made the whole page pannable. */
+    max-width: calc(100% - 16px);
     padding: 5px;
     border-radius: 999px;
     border: 1px solid var(--hair);
-    background: color-mix(in oklab, var(--color-surface) 88%, transparent);
+    background: color-mix(in oklab, var(--field-sink) 84%, transparent);
     backdrop-filter: blur(14px) saturate(1.4);
-    box-shadow: 0 14px 40px -18px rgb(0 0 0 / 0.55);
+    box-shadow: 0 14px 40px -18px rgb(0 0 0 / 0.6);
   }
 
   .tab {
@@ -321,6 +464,8 @@
     flex-direction: column;
     align-items: center;
     gap: 2px;
+    /* Lets a tab shrink past its label so the row can never push the bar wide. */
+    min-width: 0;
     padding: 7px 13px 6px;
     border-radius: 999px;
     color: var(--color-hint);
@@ -337,6 +482,25 @@
   .tab[data-active="true"] {
     color: var(--flare-ink);
     background: var(--flare);
+  }
+
+  /* Narrow phones: five tabs of Russian labels only fit with tighter tabs. */
+  @media (max-width: 400px) {
+    .tabbar {
+      gap: 0;
+      padding: 4px;
+    }
+
+    .tab {
+      padding: 7px 9px 6px;
+      letter-spacing: 0.06em;
+    }
+  }
+
+  /* See useOverlayLock: WebKit can paint this blurred bar above an open sheet,
+     so the bar leaves the layout entirely while an overlay is up. */
+  body[data-overlay] .tabbar {
+    display: none;
   }
 
   /* -------------------------------------------------------------- entrance */

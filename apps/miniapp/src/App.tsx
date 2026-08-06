@@ -53,7 +53,7 @@ const TabBar = () => {
           onClick={() => navigate(tab.to)}
         >
           <span className="text-[13px] leading-none">{tab.glyph}</span>
-          <span>{t(tab.key)}</span>
+          <span className="max-w-full truncate">{t(tab.key)}</span>
         </button>
       ))}
     </nav>
@@ -81,8 +81,8 @@ const BlockedScreen = ({ reason }: { reason: "banned" | "unauthorized" }) => {
   const { t } = useI18n();
   return (
     <div className="relative z-10 mx-auto flex min-h-full max-w-[460px] flex-col items-center justify-center px-7 text-center">
-      <div className="checker mb-6 w-24" />
-      <h1 className="display mb-3 text-[24px]">{t("app.blocked.title")}</h1>
+      <div className="swoop mb-6 w-24" />
+      <h1 className="hero mb-3">{t("app.blocked.title")}</h1>
       <p className="text-[14px] leading-relaxed text-hint">
         {reason === "banned" ? t("app.blocked.banned") : t("app.blocked.unauthorized")}
       </p>

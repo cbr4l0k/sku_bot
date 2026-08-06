@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 
 import { sku } from "../api";
 import { useI18n } from "../i18n";
@@ -14,6 +15,7 @@ type Outcome = { kind: "ok" } | { kind: "err"; message: string } | null;
 export const CheckinScreen = () => {
   const { t } = useI18n();
   const action = useAction();
+  const navigate = useNavigate();
   const [outcome, setOutcome] = useState<Outcome>(null);
   useBackButton("/");
 
@@ -83,9 +85,11 @@ export const CheckinScreen = () => {
         </div>
       )}
 
+      {/* Once you are checked in another scan is meaningless, so the only useful
+          action left is going back to the events list. */}
       {outcome?.kind === "ok" ? (
-        <Button variant="ghost" block className="mt-3" onClick={() => setOutcome(null)}>
-          {t("checkin.tryAgain")}
+        <Button variant="ghost" block className="mt-3" onClick={() => navigate("/")}>
+          {t("common.back")}
         </Button>
       ) : null}
     </Screen>
