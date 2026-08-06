@@ -1,7 +1,7 @@
 import type { Dict } from "./ru";
 
 export const en: Dict = {
-  "app.name": "SKU Club",
+  "app.name": "SKURATOV",
   "app.tagline": "running club",
   "app.outsideTelegram": "Open this app from Telegram to sign up for events.",
   "app.blocked.title": "Access closed",

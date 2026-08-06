@@ -15,10 +15,13 @@ Development mode uses Telegram long polling. Run the Mini App separately with `c
 ## Deploy to a VDS
 
 1. Create a DNS `A` record for your domain pointing to the VDS.
-2. Clone this repository on the VDS and create the data directory: `mkdir -p data`.
-3. Copy `.env.example` to `.env` and fill in every value, including `DOMAIN` without `https://`.
-4. Start the stack: `docker compose up -d --build`.
-5. Follow startup logs with `docker compose logs -f app caddy`.
+2. Put this repository on the VDS (clone it, or `rsync` it from a workstation).
+3. Create the data directory and give it to the container's `bun` user (uid 1000):
+   `mkdir -p data && chown -R 1000:1000 data`. The container runs unprivileged, so a
+   root-owned bind mount makes SQLite fail with `SQLITE_CANTOPEN`.
+4. Copy `.env.example` to `.env` and fill in every value, including `DOMAIN` without `https://`.
+5. Start the stack: `docker compose up -d --build`.
+6. Follow startup logs with `docker compose logs -f app caddy`.
 
 Caddy obtains and renews HTTPS certificates automatically once DNS points to the server and ports 80 and 443 are reachable. The app is intentionally exposed only to the Compose network; Caddy is the public entry point.
 
@@ -31,7 +34,7 @@ Caddy obtains and renews HTTPS certificates automatically once DNS points to the
 
 ## Backups
 
-SQLite data lives in `./data/sku.db` on the host. Copy that file regularly while the service is stopped, or use SQLite's backup mechanism for a live backup.
+SQLite data lives in `./data/sku.db` on the host, owned by uid 1000. Copy that file regularly while the service is stopped, or use SQLite's backup mechanism for a live backup.
 
 ## Environment
 

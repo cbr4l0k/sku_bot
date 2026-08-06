@@ -1,6 +1,6 @@
 /** Russian is the source of truth: the key union and the params come from here. */
 export const ru = {
-  "app.name": "СКУ Клуб",
+  "app.name": "Skuratov",
   "app.tagline": "беговой клуб",
   "app.outsideTelegram": "Открой приложение из Telegram, чтобы записываться на события.",
   "app.blocked.title": "Доступ закрыт",
