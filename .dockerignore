@@ -1,0 +1,9 @@
+node_modules
+data
+.env*
+.git
+.agents
+.claude
+.codex
+**/dist
+*.log
