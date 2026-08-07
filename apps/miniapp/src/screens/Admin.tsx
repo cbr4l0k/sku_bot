@@ -139,14 +139,10 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
         <Button size="sm" variant={person.isBanned ? "ghost" : "danger"} loading={action.pending} onClick={() => void toggleBan()}>
           {person.isBanned ? t("admin.unban") : t("admin.ban")}
         </Button>
-        {person.isAdmin ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={person.isConfiguredAdmin}
-            loading={action.pending}
-            onClick={() => run(() => sku.demote(person.id))}
-          >
+        {person.isConfiguredAdmin ? (
+          <span className="self-center text-[11px] text-hint">{t("admin.configuredAdmin")}</span>
+        ) : person.isAdmin ? (
+          <Button size="sm" variant="ghost" loading={action.pending} onClick={() => run(() => sku.demote(person.id))}>
             {t("admin.demote")}
           </Button>
         ) : (

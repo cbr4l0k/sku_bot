@@ -172,6 +172,7 @@ export const ru = {
   "admin.demote": "Снять админа",
   "admin.banned": "Заблокирован",
   "admin.admin": "Админ",
+  "admin.configuredAdmin": "Админ из настроек сервера",
   "admin.registrationsCount": "{n} записей",
   "admin.usersEmpty": "Никого не нашли",
 

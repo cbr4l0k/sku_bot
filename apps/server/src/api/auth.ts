@@ -22,6 +22,7 @@ export const auth = new Elysia({ name: "auth" })
     if (ageSeconds > 60 * 60 * 24) return status(401, { error: "unauthorized" });
 
     const telegramUser = result.user;
+    const isConfiguredAdmin = env.ADMIN_IDS.includes(telegramUser.id);
     db.insert(users)
       .values({
         id: telegramUser.id,
@@ -29,6 +30,7 @@ export const auth = new Elysia({ name: "auth" })
         lastName: telegramUser.last_name,
         username: telegramUser.username,
         locale: localeFromLanguageCode(telegramUser.language_code),
+        isAdmin: isConfiguredAdmin,
       })
       .onConflictDoNothing()
       .run();
@@ -36,7 +38,6 @@ export const auth = new Elysia({ name: "auth" })
     const user = db.select().from(users).where(eq(users.id, telegramUser.id)).get();
     if (!user) return status(401, { error: "unauthorized" });
 
-    const configuredAdminIds = env.ADMIN_IDS.split(",").map((id) => id.trim());
-    return { user, isAdmin: user.isAdmin || configuredAdminIds.includes(String(user.id)) };
+    return { user, isAdmin: user.isAdmin || isConfiguredAdmin };
   })
   .as("scoped");

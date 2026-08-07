@@ -29,7 +29,7 @@ import { dispatchEffects, notifyEventCanceled, notifyEventUpdated } from "../not
 import { auth } from "./auth";
 
 const env = loadEnv();
-const adminIds = new Set(env.ADMIN_IDS.split(",").map((id) => id.trim()));
+const adminIds = new Set(env.ADMIN_IDS);
 const miniappDist = new URL("../../../miniapp/dist/", import.meta.url);
 const now = () => new Date();
 const iso = (value: Date | null) => value?.toISOString() ?? null;
@@ -62,7 +62,8 @@ const userView = (user: typeof users.$inferSelect) => ({
   username: user.username,
   phone: user.phone,
   locale: user.locale,
-  isAdmin: user.isAdmin,
+  // Env-configured admins are admins even if their row predates the boot-time sync.
+  isAdmin: user.isAdmin || adminIds.has(user.id),
   isBanned: user.isBanned,
   createdAt: iso(user.createdAt),
 });
@@ -121,10 +122,10 @@ export const app = new Elysia()
   .get("/api/health", () => ({ ok: true }))
   .group("/api", (api) => api
     .use(auth)
-    .get("/me", ({ user, isAdmin }) => {
+    .get("/me", ({ user }) => {
       const isOrganizerOfAny = Boolean(db.select({ eventId: eventOrganizers.eventId }).from(eventOrganizers)
         .where(eq(eventOrganizers.userId, user.id)).get());
-      return { ...userView(user), isAdmin, isOrganizerOfAny };
+      return { ...userView(user), isOrganizerOfAny };
     })
     .patch("/me", ({ user, body }) => {
       db.update(users).set({
@@ -326,7 +327,7 @@ export const app = new Elysia()
       const predicate = term ? or(sql`${users.firstName} LIKE ${`%${term}%`}`, sql`${users.lastName} LIKE ${`%${term}%`}`, sql`${users.username} LIKE ${`%${term}%`}`, sql`${users.phone} LIKE ${`%${term}%`}`) : undefined;
       return db.select().from(users).where(predicate).orderBy(asc(users.firstName)).all().map((person) => ({
         ...userView(person),
-        isConfiguredAdmin: adminIds.has(String(person.id)),
+        isConfiguredAdmin: adminIds.has(person.id),
         registrationCount: db.select({ value: sql<number>`count(*)` }).from(registrations).where(and(eq(registrations.userId, person.id), ne(registrations.status, "canceled"))).get()?.value ?? 0,
       }));
     }, { query: t.Object({ query: t.Optional(t.String()) }) })
@@ -347,7 +348,7 @@ export const app = new Elysia()
     }, { params: idParams })
     .post("/admin/users/:id/demote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
-      if (adminIds.has(String(params.id))) return error(status, 409, "configured_admin_cannot_be_demoted");
+      if (adminIds.has(params.id)) return error(status, 409, "configured_admin_cannot_be_demoted");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run(); return { ok: true };
     }, { params: idParams })

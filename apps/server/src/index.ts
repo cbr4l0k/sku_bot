@@ -2,6 +2,7 @@ import { webhookHandler } from "gramio";
 import { migrate } from "@sku/db";
 import { app } from "./api";
 import { bot } from "./bot";
+import { syncConfiguredAdmins } from "./core/admins";
 import { db } from "./db";
 import { loadEnv } from "./env";
 import { startSweeper } from "./sweeper";
@@ -10,6 +11,7 @@ const env = loadEnv();
 const isProduction = env.NODE_ENV === "production";
 
 migrate(db);
+syncConfiguredAdmins(db, env.ADMIN_IDS);
 
 if (isProduction) {
   app.post("/webhook", webhookHandler(bot, "elysia", env.WEBHOOK_SECRET));

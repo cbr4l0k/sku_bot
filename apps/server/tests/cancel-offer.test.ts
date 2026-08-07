@@ -2,7 +2,7 @@
 // boots the API: the auth and bot singletons capture whichever file loads first.
 process.env.BOT_TOKEN = "12345:notifications-test-token";
 process.env.DOMAIN = "club.example.com";
-process.env.ADMIN_IDS = "1001";
+process.env.ADMIN_IDS = "1001,4004";
 process.env.WEBHOOK_SECRET = "notifications-webhook";
 process.env.CHECKIN_SECRET = "notifications-checkin";
 process.env.DATABASE_PATH = ":memory:";

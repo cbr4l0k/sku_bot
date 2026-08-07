@@ -3,9 +3,12 @@ import { eq, users } from "@sku/db";
 
 import { db } from "../db";
 import { parseStartPayload } from "../core/links";
+import { loadEnv } from "../env";
 import { sendEventCard } from "./event-card";
 import { sendHero } from "./hero";
 import { i18n, localeFromLanguageCode } from "./i18n";
+
+const env = loadEnv();
 
 type TelegramUser = {
   id: number;
@@ -35,6 +38,7 @@ export const startHandler = async (context: StartContext): Promise<void> => {
     lastName: telegramUser.lastName,
     username: telegramUser.username,
     locale: localeFromLanguageCode(telegramUser.languageCode),
+    isAdmin: env.ADMIN_IDS.includes(telegramUser.id),
   }).onConflictDoNothing().run();
 
   const user = db.select({ phone: users.phone, locale: users.locale })

@@ -1,6 +1,6 @@
 process.env.BOT_TOKEN = "12345:smoke-test-token";
 process.env.DOMAIN = "club.example.com";
-process.env.ADMIN_IDS = "1001";
+process.env.ADMIN_IDS = "1001,4004";
 process.env.WEBHOOK_SECRET = "smoke-webhook";
 process.env.CHECKIN_SECRET = "smoke-checkin";
 process.env.DATABASE_PATH = ":memory:";

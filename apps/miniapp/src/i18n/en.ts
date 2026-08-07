@@ -173,6 +173,7 @@ export const en: Dict = {
   "admin.demote": "Remove admin",
   "admin.banned": "Blocked",
   "admin.admin": "Admin",
+  "admin.configuredAdmin": "Admin from server config",
   "admin.registrationsCount": "{n} signups",
   "admin.usersEmpty": "No users found",
 
