@@ -189,7 +189,9 @@ export const EventDetailScreen = () => {
       </section>
 
       {detail.description ? (
-        <section className="rise mb-5" style={{ "--i": 3 } as React.CSSProperties}>
+        /* Prose belongs on paper: 14px in white would be 3.50:1 on the field,
+           and 12.33:1 on a card. */
+        <section className="rise card mb-5 px-4 py-4" style={{ "--i": 3 } as React.CSSProperties}>
           <div className="eyebrow mb-2">{t("detail.about")}</div>
           <p className="text-[14px] leading-relaxed whitespace-pre-line">{detail.description}</p>
         </section>

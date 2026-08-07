@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1" />
-    <!-- Both schemes are a teal field with white type, so the UA must always
-         lay out native controls for a dark surface. -->
-    <meta name="color-scheme" content="dark" />
-    <!-- Brand teal, matched to the field each scheme actually paints, so the
-         client chrome never sits on a seam. The plain tag is the fallback. -->
-    <meta name="theme-color" content="#01353d" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#015d68" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#015d68" />
+    <!-- Every native control in the app sits on white paper (the inputs and the
+         datetime pickers above all), so the UA lays them out for a light
+         surface in both schemes. -->
+    <meta name="color-scheme" content="light" />
+    <!-- The brand teal, straight off the club icon. Both schemes paint the same
+         field, so there is one value and the client chrome never sits on a
+         seam. -->
+    <meta name="theme-color" content="#0097a8" />
     <title>СКУ Клуб</title>
     <!-- Telegram's own bridge: the only script served from Telegram; fonts and
          every other asset are bundled locally. Absent outside Telegram, which

@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
 import { haptic } from "../telegram";
+import { SwooshMark } from "./swoosh";
 
 /* ------------------------------------------------------------------- layout */
 
@@ -145,7 +146,7 @@ export const Loader = ({ label }: { label: string }) => (
 
 export const ErrorState = ({ message, onRetry, retryLabel }: { message: string; onRetry?: () => void; retryLabel: string }) => (
   <div className="card fade-in px-5 py-6 text-center">
-    <div className="swoop mx-auto mb-4 w-16" />
+    <SwooshMark className="mx-auto mb-4 h-9 w-9" />
     <p className="mb-4 text-[15px]">{message}</p>
     {onRetry ? (
       <Button variant="ghost" size="sm" onClick={onRetry}>
@@ -157,10 +158,9 @@ export const ErrorState = ({ message, onRetry, retryLabel }: { message: string; 
 
 export const EmptyState = ({ text, action }: { text: string; action?: ReactNode }) => (
   <div className="fade-in flex flex-col items-center gap-4 px-6 py-14 text-center">
-    <svg width="54" height="54" viewBox="0 0 54 54" aria-hidden className="opacity-70">
-      <circle cx="27" cy="27" r="24" fill="none" stroke="var(--hair)" strokeWidth="2" />
-      <path d="M27 9v18l12 7" fill="none" stroke="var(--flare)" strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
+    {/* The club's own mark as a watermark — the brand has one shape, so an
+        empty screen shows that one rather than a stock glyph. */}
+    <SwooshMark className="h-12 w-12 opacity-55" />
     <p className="max-w-[280px] text-[14px] leading-relaxed text-hint">{text}</p>
     {action}
   </div>
@@ -194,11 +194,14 @@ export const TextArea = ({ className = "", ...rest }: TextareaHTMLAttributes<HTM
 
 export const SearchInput = ({ className = "", ...rest }: InputHTMLAttributes<HTMLInputElement>) => (
   <div className={`relative ${className}`}>
+    {/* The glyph sits on the input's own white plate, so it takes the input's
+        ink rather than inheriting the surrounding context's. */}
     <svg
       width="15"
       height="15"
       viewBox="0 0 24 24"
-      className="absolute top-1/2 left-3.5 -translate-y-1/2 opacity-45"
+      className="absolute top-1/2 left-3.5 -translate-y-1/2"
+      style={{ color: "var(--input-ph)" }}
       aria-hidden
     >
       <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2.4" />
@@ -210,8 +213,10 @@ export const SearchInput = ({ className = "", ...rest }: InputHTMLAttributes<HTM
 
 /* ------------------------------------------------------------------ numbers */
 
+/* Poster numerals: a solid teal tile with the figure in white display type,
+   the same move the date tile makes on an event card. */
 export const StatTile = ({ label, value, hint }: { label: string; value: string; hint?: string }) => (
-  <div className="card px-4 py-3.5">
+  <div className="stattile px-4 py-3.5">
     <div className="eyebrow mb-1">{label}</div>
     <div className="display text-[28px] leading-[0.95] tabular-nums">{value}</div>
     {hint ? <div className="num mt-0.5 text-[11px] text-hint">{hint}</div> : null}

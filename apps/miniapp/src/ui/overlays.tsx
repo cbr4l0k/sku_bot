@@ -3,6 +3,7 @@ import { createContext, use, useCallback, useEffect, useMemo, useRef, useState, 
 import { useI18n } from "../i18n";
 import { haptic } from "../telegram";
 import { Button } from "./primitives";
+import { SwooshMark } from "./swoosh";
 
 /* --------------------------------------------------------------------- toast */
 
@@ -36,11 +37,11 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
           <div
             key={toast.id}
             style={{ animation: "toastIn 0.3s var(--ease-out-back)" }}
-            className="flex max-w-[92%] items-center gap-2.5 rounded-full border border-hair bg-surface/95 px-4 py-2.5 shadow-[0_16px_44px_-20px_rgb(0_0_0/0.7)] backdrop-blur-md"
+            className="paper flex max-w-[92%] items-center gap-2.5 rounded-full border border-hair px-4 py-2.5 shadow-[0_16px_44px_-20px_rgb(1_32_36/0.45)] backdrop-blur-md"
           >
             <span
               className="inline-block h-2 w-2 shrink-0 rounded-full"
-              style={{ background: toast.tone === "ok" ? "var(--flare)" : "var(--color-danger)" }}
+              style={{ background: toast.tone === "ok" ? "var(--flare)" : "var(--danger)" }}
             />
             <span className="text-[13px] leading-snug">{toast.text}</span>
           </div>
@@ -117,8 +118,8 @@ export const ConfirmProvider = ({ children }: { children: ReactNode }) => {
             onClick={() => settle(false)}
             className="fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
           />
-          <div className="sheet-in relative mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom,0px))] w-full max-w-[460px] rounded-[22px] border border-hair bg-surface p-5 shadow-[0_30px_70px_-30px_rgb(0_0_0/0.8)]">
-            <div className="swoop mb-4 w-14" />
+          <div className="paper sheet-in relative mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom,0px))] w-full max-w-[460px] rounded-[22px] border border-hair p-5 shadow-[0_30px_70px_-30px_rgb(1_32_36/0.7)]">
+            <SwooshMark className="mb-4 h-8 w-8" />
             <p className="mb-5 text-[15px] leading-relaxed">{pending.text}</p>
             <div className="flex gap-2">
               <Button variant="ghost" block onClick={() => settle(false)}>
@@ -161,7 +162,7 @@ export const Sheet = ({
       {/* The sheet is bottom-anchored, so its own bottom edge is the viewport's:
           the inset keeps the scroll area clear of the home indicator. */}
       <div
-        className={`sheet-in relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-t-[24px] border border-hair bg-surface pb-[env(safe-area-inset-bottom,0px)] ${
+        className={`paper sheet-in relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-t-[24px] border border-hair pb-[env(safe-area-inset-bottom,0px)] ${
           full ? "h-[94dvh]" : "max-h-[88dvh]"
         }`}
       >
@@ -184,5 +185,5 @@ export const Sheet = ({
  * area's own padding, so the bar bleeds edge to edge without overflowing it.
  */
 export const SheetFooter = ({ children }: { children: ReactNode }) => (
-  <div className="sticky bottom-0 -mx-5 -mb-5 mt-1 border-t border-hair bg-surface px-5 pt-4 pb-5">{children}</div>
+  <div className="paper sticky bottom-0 -mx-5 -mb-5 mt-1 border-t border-hair px-5 pt-4 pb-5">{children}</div>
 );

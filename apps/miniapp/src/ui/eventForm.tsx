@@ -75,7 +75,7 @@ export const EventForm = ({
       </Field>
 
       {touched && !valid ? (
-        <p className="text-[12px]" style={{ color: "var(--color-danger)" }}>
+        <p className="text-[12px]" style={{ color: "var(--danger)" }}>
           {t("form.required")}
         </p>
       ) : null}

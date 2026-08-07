@@ -17,6 +17,7 @@ import { SessionProvider, useSession } from "./session";
 import { initViewport, insideTelegram, startParam } from "./telegram";
 import { ConfirmProvider, ToastProvider } from "./ui/overlays";
 import { Spinner } from "./ui/primitives";
+import { Backdrop, SwooshMark } from "./ui/swoosh";
 
 /* ------------------------------------------------------------------ tab bar */
 
@@ -81,7 +82,7 @@ const BlockedScreen = ({ reason }: { reason: "banned" | "unauthorized" }) => {
   const { t } = useI18n();
   return (
     <div className="relative z-10 mx-auto flex min-h-full max-w-[460px] flex-col items-center justify-center px-7 text-center">
-      <div className="swoop mb-6 w-24" />
+      <SwooshMark className="mb-6 h-14 w-14" />
       <h1 className="hero mb-3">{t("app.blocked.title")}</h1>
       <p className="text-[14px] leading-relaxed text-hint">
         {reason === "banned" ? t("app.blocked.banned") : t("app.blocked.unauthorized")}
@@ -94,7 +95,7 @@ const OutsideBanner = () => {
   const { t } = useI18n();
   return (
     <div className="relative z-20 mx-auto max-w-[560px] px-4 pt-3">
-      <div className="flex items-center gap-2.5 rounded-xl border border-hair bg-surface px-3.5 py-2.5">
+      <div className="card flex items-center gap-2.5 rounded-xl px-3.5 py-2.5">
         <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--flare)" }} />
         <span className="text-[12px] leading-snug text-hint">{t("app.outsideTelegram")}</span>
       </div>
@@ -160,7 +161,7 @@ const Boot = () => {
 
   if (insideTelegram() && !me && session.loading) {
     return (
-      <div className="grid min-h-full place-items-center text-hint">
+      <div className="relative z-10 grid min-h-full place-items-center text-hint">
         <Spinner size={26} />
       </div>
     );
@@ -183,6 +184,9 @@ const Boot = () => {
 
 export const App = () => (
   <BrowserRouter>
+    {/* Sits behind every route, the boot spinner and the blocked screen alike:
+        the field's swoosh is the page, not a per-screen decoration. */}
+    <Backdrop />
     <Boot />
   </BrowserRouter>
 );

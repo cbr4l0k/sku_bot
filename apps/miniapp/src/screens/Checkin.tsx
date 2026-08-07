@@ -75,7 +75,7 @@ export const CheckinScreen = () => {
             {canScan() ? t("checkin.hint") : t("checkin.unavailable")}
           </p>
           {outcome?.kind === "err" ? (
-            <p className="mb-4 max-w-[280px] text-[13px]" style={{ color: "var(--color-danger)" }}>
+            <p className="mb-4 max-w-[280px] text-[13px]" style={{ color: "var(--danger)" }}>
               {outcome.message}
             </p>
           ) : null}

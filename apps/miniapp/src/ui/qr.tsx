@@ -1,6 +1,8 @@
 import QRCode from "qrcode";
 import { useEffect, useRef, useState } from "react";
 
+import { SwooshMark } from "./swoosh";
+
 /**
  * QR is rendered client-side (no network, no external service) on a fixed
  * white plate — scanners need the contrast even when the app is in dark mode.
@@ -16,9 +18,9 @@ export const QrCanvas = ({ value, size = 260 }: { value: string; size?: number }
       width: size,
       margin: 1,
       errorCorrectionLevel: "M",
-      // Brand's deepest teal rather than black — still ~19:1 on white, which is
+      // Brand's deepest teal rather than black — still ~17:1 on white, which is
       // far more than any scanner needs.
-      color: { dark: "#012025", light: "#ffffff" },
+      color: { dark: "#022024", light: "#ffffff" },
     })
       .then(() => setFailed(false))
       .catch(() => setFailed(true));
@@ -77,6 +79,6 @@ export const SuccessBurst = ({ label, hint }: { label: string; hint?: string }) 
     </div>
     <h3 className="display text-[20px]">{label}</h3>
     {hint ? <p className="mt-2 text-[13px] text-hint">{hint}</p> : null}
-    <div className="swoop mt-5 w-24" />
+    <SwooshMark className="mt-5 h-9 w-9" />
   </div>
 );

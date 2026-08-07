@@ -35,21 +35,20 @@ export const EventStatusChip = ({ status }: { status: EventStatus }) => {
 };
 
 /**
- * The poster's hero: day stacked over month in enormous tight-leaded numerals,
- * with the time and weekday underneath as small tracked-out labels. The date is
- * the star of every card, not a caption on it.
+ * The poster, shrunk to a tile: a panel of untouched brand teal carrying the
+ * day stacked over the month in enormous tight-leaded white numerals, with the
+ * time and weekday under them in the deep ink the teal can hold at small sizes.
+ * The date is the star of every card, not a caption on it.
  */
 export const DateBlock = ({ iso }: { iso: string }) => {
   const { locale, t } = useI18n();
   const relative = relativeDayKey(iso);
   return (
-    <div className="flex w-[66px] shrink-0 flex-col items-center border-r border-hair pr-3">
+    <div className="datetile">
       <span className="datenum">{dayNumber(iso, locale)}</span>
       <span className="datenum">{monthNumber(iso, locale)}</span>
-      <span className="num mt-2.5 text-[13px] tracking-[0.02em]">{timeOf(iso, locale)}</span>
-      <span className="num mt-1 text-[9px] tracking-[0.18em] text-hint">
-        {relative ? t(relative).toUpperCase() : weekdayShort(iso, locale)}
-      </span>
+      <span className="num datetile-time">{timeOf(iso, locale)}</span>
+      <span className="num datetile-day">{relative ? t(relative).toUpperCase() : weekdayShort(iso, locale)}</span>
     </div>
   );
 };

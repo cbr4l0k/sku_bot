@@ -22,6 +22,7 @@ import {
   SearchInput,
 } from "../ui/primitives";
 import { QrCanvas } from "../ui/qr";
+import { Backdrop } from "../ui/swoosh";
 
 const TOKEN_WINDOW_MS = 30_000;
 
@@ -41,17 +42,11 @@ const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void })
   const remaining = Math.max(0, TOKEN_WINDOW_MS - (now - fetchedAt.current));
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-6" style={{ background: "var(--color-bg)" }}>
-      {/* The stage covers the app's own atmosphere layer, so it carries its
-          own pair of cropped blobs. */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          backgroundImage:
-            "radial-gradient(74% 40% at 88% -4%, var(--blob), transparent 66%), radial-gradient(64% 36% at -12% 100%, var(--blob-soft), transparent 64%)",
-        }}
-      />
-      <div className="relative flex flex-col items-center gap-5">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-6" style={{ background: "var(--brand)" }}>
+      {/* The stage covers the app's own backdrop layer, so it carries its own
+          copy of the cropped swooshes. */}
+      <Backdrop />
+      <div className="relative z-10 flex flex-col items-center gap-5">
         <div className="eyebrow">{t("organizer.qrTitle")}</div>
         {token.data ? (
           <div className="fade-in">
@@ -70,7 +65,7 @@ const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void })
         </div>
         <p className="max-w-[300px] text-center text-[12px] leading-relaxed text-hint">{t("organizer.qrHint")}</p>
       </div>
-      <Button variant="ghost" onClick={onClose} className="relative">
+      <Button variant="ghost" onClick={onClose} className="relative z-10">
         {t("common.close")}
       </Button>
     </div>

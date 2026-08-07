@@ -34,8 +34,10 @@ const applyScheme = () => {
 /**
  * Telegram writes --tg-theme-* custom properties onto the root element, but the
  * club palette in index.css deliberately ignores them: only `data-scheme`, set
- * by applyScheme, is honoured, and it picks between the bright and the deep
- * teal field. Outside Telegram the same switch follows prefers-color-scheme.
+ * by applyScheme, is honoured. The brand teal field is identical in both
+ * schemes — the club has no night palette and darkening the field stops it
+ * looking like the brand — so `data-scheme="dark"` only dims the paper the
+ * cards are made of. Outside Telegram the switch follows prefers-color-scheme.
  */
 export const initViewport = (onThemeChange?: () => void): (() => void) => {
   const app = webApp();
