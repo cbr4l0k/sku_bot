@@ -8,7 +8,7 @@ services:
       NODE_ENV: production
       DATABASE_PATH: /app/data/sku.db
     volumes:
-      - ./data:/app/data
+      - sku_data:/app/data
     expose:
       - "3000"
 
@@ -28,5 +28,6 @@ services:
       - app
 
 volumes:
+  sku_data:
   caddy_data:
   caddy_config:

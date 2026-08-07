@@ -32,8 +32,13 @@ RUN bun install --frozen-lockfile --production
 COPY apps/server/src ./apps/server/src
 COPY packages/db/src ./packages/db/src
 COPY packages/db/drizzle ./packages/db/drizzle
+COPY scripts ./scripts
 COPY --from=build /app/apps/miniapp/dist ./apps/miniapp/dist
 
+# /app/data must exist in the image and be owned by bun (uid 1000) before USER is
+# set. Compose mounts the sku_data named volume here, and Docker initialises a new
+# volume from the image directory's ownership and mode -- so the volume comes up as
+# 1000:1000 and needs no chown on the host. Do not turn this back into a bind mount.
 RUN mkdir -p /app/data && chown -R bun:bun /app
 USER bun
 
