@@ -16,7 +16,7 @@ type EventCardContext = {
 export type EventChange = "title" | "description" | "startsAt" | "location" | "capacity";
 export type EventUpdatedFields = { title?: string; description?: true; startsAt?: string; location?: string; capacity?: number | null };
 
-type EventSummary = { title: string; date: string; description: string; location: string; capacity: number | null };
+type EventSummary = { title: string; date: string; description: string; location: string; locationUrl: string | null; capacity: number | null };
 
 export const formatDate = (startsAt: Date, locale: Locale): string => new Intl.DateTimeFormat(
   locale === "ru" ? "ru-RU" : "en-US",
@@ -28,11 +28,12 @@ const publishedEvent = (eventId: number) => db.select({
   title: events.title,
   startsAt: events.startsAt,
   location: events.location,
+  locationUrl: events.locationUrl,
   capacity: events.capacity,
 }).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
 
 export const eventSummary = (eventId: number, locale: Locale): EventSummary | null => {
-  const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, capacity: events.capacity })
+  const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, locationUrl: events.locationUrl, capacity: events.capacity })
     .from(events)
     .where(eq(events.id, eventId))
     .get();
@@ -60,7 +61,7 @@ export const sendEventCard = async (context: EventCardContext, eventId: number, 
   await context.send(format`${bold(event.title)}
 
 ${i18n.t(locale, "eventDate", date)}
-${i18n.t(locale, "eventLocation", event.location)}${spotsLine}`, {
+${i18n.t(locale, "eventLocation", event.location, event.locationUrl)}${spotsLine}`, {
     reply_markup: new InlineKeyboard().webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`),
   });
 };

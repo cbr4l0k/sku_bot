@@ -35,6 +35,7 @@ export const events = sqliteTable(
     description: text("description").notNull(),
     startsAt: integer("starts_at", { mode: "timestamp" }).notNull(),
     location: text("location").notNull(),
+    locationUrl: text("location_url"),
     capacity: integer("capacity"),
     status: text("status").$type<EventStatus>().notNull().default("draft"),
     createdBy: integer("created_by").notNull().references(() => users.id),

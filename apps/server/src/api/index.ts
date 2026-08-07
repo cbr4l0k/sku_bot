@@ -79,6 +79,16 @@ const parseDate = (value: string): Date | undefined => {
   return Number.isNaN(date.getTime()) ? undefined : date;
 };
 
+const parseLocationUrl = (value: string | null): string | null | undefined => {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  try {
+    return new URL(normalized).protocol === "https:" ? normalized : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const requireEventOrganizer = (eventId: number, userId: number, isAdmin: boolean) => isAdmin || Boolean(
   db.select({ eventId: eventOrganizers.eventId })
     .from(eventOrganizers)
@@ -100,6 +110,7 @@ const eventFields = t.Object({
   description: t.String(),
   startsAt: t.String(),
   location: t.String({ minLength: 1 }),
+  locationUrl: t.Optional(t.Nullable(t.String())),
   capacity: t.Nullable(t.Integer({ minimum: 0 })),
 });
 
@@ -194,19 +205,22 @@ export const app = new Elysia()
       if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
+      const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
+      if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
       const changes: EventChange[] = [
         body.title !== undefined && body.title !== event.title ? "title" : null,
         body.description !== undefined && body.description !== event.description ? "description" : null,
         startsAt !== undefined && startsAt.getTime() !== event.startsAt.getTime() ? "startsAt" : null,
-        body.location !== undefined && body.location !== event.location ? "location" : null,
+        (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined) {
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined) {
         db.update(events).set({
           ...(body.title === undefined ? {} : { title: body.title }),
           ...(body.description === undefined ? {} : { description: body.description }),
           ...(startsAt === undefined ? {} : { startsAt }),
           ...(body.location === undefined ? {} : { location: body.location }),
+          ...(locationUrl === undefined ? {} : { locationUrl }),
           updatedAt: now(),
         }).where(eq(events.id, params.id)).run();
       }
@@ -239,7 +253,9 @@ export const app = new Elysia()
       if (!isAdmin) return error(status, 403, "forbidden");
       const startsAt = parseDate(body.startsAt);
       if (!startsAt) return error(status, 400, "invalid_starts_at");
-      const created = db.insert(events).values({ ...body, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
+      const locationUrl = body.locationUrl === undefined ? null : parseLocationUrl(body.locationUrl);
+      if (locationUrl === undefined) return error(status, 400, "invalid_location_url");
+      const created = db.insert(events).values({ ...body, locationUrl, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
       return eventView(created);
     }, { body: t.Intersect([eventFields, t.Object({ status: t.Optional(t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")])) })]) })
     .patch("/admin/events/:id", ({ params, body, isAdmin, status }) => {
@@ -248,15 +264,17 @@ export const app = new Elysia()
       if (!event) return error(status, 404, "event_not_found");
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
+      const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
+      if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
       const changes: EventChange[] = [
         body.title !== undefined && body.title !== event.title ? "title" : null,
         body.description !== undefined && body.description !== event.description ? "description" : null,
         startsAt !== undefined && startsAt.getTime() !== event.startsAt.getTime() ? "startsAt" : null,
-        body.location !== undefined && body.location !== event.location ? "location" : null,
+        (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || body.status !== undefined) db.update(events).set({
-        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(body.status === undefined ? {} : { status: body.status }), updatedAt: now(),
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined) db.update(events).set({
+        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
       if (body.status === "canceled" && event.status !== "canceled") {

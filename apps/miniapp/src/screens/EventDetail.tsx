@@ -6,7 +6,7 @@ import { useI18n } from "../i18n";
 import { countdown, errorText, fullDate, isPast } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
-import { haptic } from "../telegram";
+import { haptic, openLink } from "../telegram";
 import { CountdownRing, StatusBadge } from "../ui/event";
 import { useConfirm, useToast } from "../ui/overlays";
 import { Button, ErrorState, Loader, Screen, Track } from "../ui/primitives";
@@ -168,7 +168,22 @@ export const EventDetailScreen = () => {
           <div className="hairline" />
           <div>
             <dt className="eyebrow mb-0.5">{t("detail.where")}</dt>
-            <dd className="text-[14px]">{detail.location}</dd>
+            <dd className="min-w-0 text-[14px]">
+              {detail.locationUrl ? (
+                <button
+                  type="button"
+                  className="block max-w-full text-left break-words text-[color:var(--brand-deep)] underline decoration-current underline-offset-2"
+                  aria-label={t("detail.openMap", { location: detail.location })}
+                  onClick={() => {
+                    if (!detail.locationUrl) return;
+                    haptic.tap("light");
+                    openLink(detail.locationUrl);
+                  }}
+                >
+                  {detail.location}
+                </button>
+              ) : <span className="block break-words">{detail.location}</span>}
+            </dd>
           </div>
         </dl>
 

@@ -67,3 +67,33 @@ test("event updates notify only real changes with participant-facing copy", asyn
   expect(messages[0]).not.toContain("• location");
   fetchSpy.mockRestore();
 });
+
+test("HTTPS map links round-trip, empty links clear, and unsafe links are rejected", async () => {
+  const request = (method: string, path: string, body: object) => app.handle(new Request(`http://localhost${path}`, {
+    method,
+    headers: { "x-init-data": initData, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+  const startsAt = new Date("2030-08-06T16:30:00Z").toISOString();
+  const created = await request("POST", "/api/admin/events", {
+    title: "Утренний забег", description: "Лёгкий темп", startsAt, location: "Парк", locationUrl: "https://maps.example.com/park", capacity: null,
+  });
+  const event = await created.json() as { id: number; locationUrl: string | null };
+  expect(created.status).toBe(200);
+  expect(event.locationUrl).toBe("https://maps.example.com/park");
+
+  const patched = await request("PATCH", `/api/admin/events/${event.id}`, { locationUrl: "https://maps.example.com/new-park" });
+  expect(patched.status).toBe(200);
+  expect((await patched.json() as { locationUrl: string | null }).locationUrl).toBe("https://maps.example.com/new-park");
+
+  const listed = await app.handle(new Request("http://localhost/api/organizer/events", { headers: { "x-init-data": initData } }));
+  expect((await listed.json() as Array<{ id: number; locationUrl: string | null }>).find((item) => item.id === event.id)?.locationUrl).toBe("https://maps.example.com/new-park");
+
+  const cleared = await request("PATCH", `/api/organizer/events/${event.id}`, { locationUrl: "" });
+  expect(cleared.status).toBe(200);
+  expect((await cleared.json() as { locationUrl: string | null }).locationUrl).toBeNull();
+
+  const unsafe = await request("PATCH", `/api/admin/events/${event.id}`, { locationUrl: "javascript:alert(1)" });
+  expect(unsafe.status).toBe(400);
+  expect(await unsafe.json()).toEqual({ error: "invalid_location_url" });
+});

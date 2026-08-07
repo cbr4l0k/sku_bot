@@ -1,4 +1,4 @@
-import { blockquote, bold, format, join } from "gramio";
+import { blockquote, bold, format, join, link } from "gramio";
 import type { LanguageMap } from "@gramio/i18n";
 import type { EventUpdatedFields } from "../event-card";
 
@@ -14,7 +14,7 @@ ${blockquote("Runs, training sessions, and good company — all in one place.")}
   openApp: "🏃 Open the app",
   openEvent: "Open event",
   eventDate: (date: string) => `📅 ${date}`,
-  eventLocation: (location: string) => `📍 ${location}`,
+  eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
   spotsLeft: (count: number) => `Spots left: ${count}`,
   eventUnavailable: "This event is no longer available.",
   unknownPayload: "We couldn't recognise that link, but you're in the right place.",

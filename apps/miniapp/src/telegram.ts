@@ -150,3 +150,9 @@ export const openTelegramLink = (url: string): void => {
   if (app) app.openTelegramLink(url);
   else window.open(url, "_blank", "noopener");
 };
+
+export const openLink = (url: string): void => {
+  const app = webApp();
+  if (app) app.openLink(url);
+  else window.open(url, "_blank", "noopener,noreferrer");
+};

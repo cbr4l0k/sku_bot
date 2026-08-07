@@ -1,4 +1,5 @@
 import { webhookHandler } from "gramio";
+import { migrate } from "@sku/db";
 import { app } from "./api";
 import { bot } from "./bot";
 import { db } from "./db";
@@ -7,6 +8,8 @@ import { startSweeper } from "./sweeper";
 
 const env = loadEnv();
 const isProduction = env.NODE_ENV === "production";
+
+migrate(db);
 
 if (isProduction) {
   app.post("/webhook", webhookHandler(bot, "elysia", env.WEBHOOK_SECRET));

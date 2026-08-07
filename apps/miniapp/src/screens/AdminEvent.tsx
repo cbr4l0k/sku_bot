@@ -173,7 +173,7 @@ export const AdminEventScreen = () => {
         aside={<EventStatusChip status={event.status} />}
       />
 
-      <p className="mb-4 text-[13px] text-hint first-letter:uppercase">
+      <p className="mb-4 block truncate text-[13px] text-hint first-letter:uppercase">
         {fullDate(event.startsAt, locale)} · {event.location}
       </p>
 
@@ -246,6 +246,7 @@ export const AdminEventScreen = () => {
               description: event.description,
               startsAt: event.startsAt,
               location: event.location,
+              locationUrl: event.locationUrl,
               capacity: event.capacity,
             }}
             submitLabel={t("common.save")}

@@ -96,6 +96,7 @@ export type EventDraft = {
   description: string;
   startsAt: string;
   location: string;
+  locationUrl: string | null;
   capacity: number | null;
 };
 

@@ -220,7 +220,7 @@ export const OrganizerEventScreen = () => {
       />
 
       {event ? (
-        <p className="mb-4 text-[13px] text-hint first-letter:uppercase">
+        <p className="mb-4 block truncate text-[13px] text-hint first-letter:uppercase">
           {fullDate(event.startsAt, locale)} · {event.location}
         </p>
       ) : null}
@@ -285,6 +285,7 @@ export const OrganizerEventScreen = () => {
                     description: event.description,
                     startsAt: event.startsAt,
                     location: event.location,
+                    locationUrl: event.locationUrl,
                     capacity: event.capacity,
                   }
                 : {}

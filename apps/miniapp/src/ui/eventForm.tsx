@@ -12,6 +12,7 @@ const emptyDraft = (initial: Initial) => ({
   title: initial.title ?? "",
   description: initial.description ?? "",
   location: initial.location ?? "",
+  locationUrl: initial.locationUrl ?? "",
   startsAt: initial.startsAt ? toLocalInput(initial.startsAt) : "",
   capacity: initial.capacity === null || initial.capacity === undefined ? "" : String(initial.capacity),
 });
@@ -31,7 +32,10 @@ export const EventForm = ({
   const [form, setForm] = useState(() => emptyDraft(initial));
   const [touched, setTouched] = useState(false);
 
-  const valid = form.title.trim() !== "" && form.location.trim() !== "" && form.startsAt !== "";
+  const locationUrlValid = form.locationUrl.trim() === "" || (() => {
+    try { return new URL(form.locationUrl.trim()).protocol === "https:"; } catch { return false; }
+  })();
+  const valid = form.title.trim() !== "" && form.location.trim() !== "" && form.startsAt !== "" && locationUrlValid;
 
   const submit = () => {
     setTouched(true);
@@ -40,6 +44,7 @@ export const EventForm = ({
       title: form.title.trim(),
       description: form.description.trim(),
       location: form.location.trim(),
+      locationUrl: form.locationUrl.trim() === "" ? null : form.locationUrl.trim(),
       startsAt: fromLocalInput(form.startsAt),
       capacity: form.capacity.trim() === "" ? null : Math.max(0, Number(form.capacity)),
     });
@@ -62,6 +67,9 @@ export const EventForm = ({
       <Field label={t("form.location")}>
         <TextInput value={form.location} onChange={(event) => set("location")(event.target.value)} maxLength={160} />
       </Field>
+      <Field label={t("form.locationUrl")} hint={t("form.locationUrlHint")}>
+        <TextInput inputMode="url" value={form.locationUrl} onChange={(event) => set("locationUrl")(event.target.value)} placeholder={t("form.locationUrlPlaceholder")} maxLength={500} />
+      </Field>
       <Field label={t("form.capacity")} hint={t("form.capacityHint")}>
         <TextInput
           inputMode="numeric"
@@ -76,7 +84,7 @@ export const EventForm = ({
 
       {touched && !valid ? (
         <p className="text-[12px]" style={{ color: "var(--danger)" }}>
-          {t("form.required")}
+          {locationUrlValid ? t("form.required") : t("form.invalidLocationUrl")}
         </p>
       ) : null}
 
