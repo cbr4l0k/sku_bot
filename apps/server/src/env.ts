@@ -10,10 +10,20 @@ const adminIds = z.string().transform((raw, ctx): readonly number[] => {
   return segments.map(Number);
 });
 
+/** A comma-separated catalog of group names, e.g. "alumni,coaches". Empty disables restrictions. */
+const groupNames = z.string().default("").transform((raw, ctx): readonly string[] => {
+  const segments = raw.split(",").map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+  for (const segment of segments) {
+    if (segment.length > 40) ctx.addIssue({ code: "custom", message: `"${segment}" is longer than 40 characters` });
+  }
+  return [...new Set(segments)];
+});
+
 const environmentSchema = z.object({
   BOT_TOKEN: z.string().min(1),
   DOMAIN: z.string().min(1),
   ADMIN_IDS: adminIds,
+  EVENT_GROUPS: groupNames,
   WEBHOOK_SECRET: z.string().min(1),
   CHECKIN_SECRET: z.string().min(1),
   DATABASE_PATH: z.string().min(1).default("./data/sku.db"),

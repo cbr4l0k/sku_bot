@@ -2,7 +2,7 @@ import type { Db } from "@sku/db";
 import type { NotificationEffect } from "./types";
 import { issueOffers } from "./waitlist";
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_past" };
+type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_past" | "not_eligible" };
 type EventRow = { capacity: number | null; status: string; starts_at: number };
 type RegistrationRow = { id: number; status: string };
 
@@ -15,6 +15,13 @@ export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): J
   if (event.starts_at <= timestamp) return { error: "event_past" };
   const registration = db.$client.query<RegistrationRow, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (registration && registration.status !== "canceled") return { error: "already_joined" };
+  // Restricted events admit only members of the listed groups (see core/groups.ts).
+  const eligible = db.$client.query<{ ok: number }, [number, number, number]>(
+    `SELECT (NOT EXISTS (SELECT 1 FROM event_groups WHERE event_id = ?)
+       OR EXISTS (SELECT 1 FROM event_groups JOIN user_groups ON user_groups.group_name = event_groups.group_name
+                  WHERE event_groups.event_id = ? AND user_groups.user_id = ?)) AS ok`,
+  ).get(eventId, eventId, userId)?.ok;
+  if (!eligible) return { error: "not_eligible" };
   const confirmed = db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
   const reserved = db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, timestamp)?.count ?? 0;
   const status = event.capacity === null || event.capacity - confirmed - reserved > 0 ? "registered" : "waitlisted";

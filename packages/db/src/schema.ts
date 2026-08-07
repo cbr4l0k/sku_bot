@@ -45,6 +45,33 @@ export const events = sqliteTable(
   (table) => [index("events_status_starts_at_idx").on(table.status, table.startsAt)],
 );
 
+/**
+ * Group membership. The catalog of valid names lives in the EVENT_GROUPS env var;
+ * eligibility itself is pure data, so an event stays restricted even if its group
+ * is later dropped from the catalog.
+ */
+export const userGroups = sqliteTable(
+  "user_groups",
+  {
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    groupName: text("group_name").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.groupName] }),
+    index("user_groups_group_name_idx").on(table.groupName),
+  ],
+);
+
+/** An event with no rows here is open to everyone. */
+export const eventGroups = sqliteTable(
+  "event_groups",
+  {
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    groupName: text("group_name").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.eventId, table.groupName] })],
+);
+
 export const eventOrganizers = sqliteTable(
   "event_organizers",
   {
