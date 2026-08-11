@@ -1,4 +1,4 @@
-import { blockquote, bold, format, join, link } from "gramio";
+import { blockquote, bold, code, format, join, link } from "gramio";
 import type { ShouldFollowLanguage } from "@gramio/i18n";
 import type { en } from "./en";
 import type { EventUpdatedFields } from "../event-card";
@@ -51,4 +51,9 @@ ${join([
     changes.capacity === undefined ? null : format`• Лимит участников: ${changes.capacity === null ? "без ограничений" : changes.capacity}`,
   ].filter((change): change is ReturnType<typeof format> => change !== null), (change) => change, "\n")}`,
   commandStart: "Главное меню",
+  commandChatId: "Показать ID этой группы",
+  chatId: (chatId: number) => format`ID этого чата — ${code(String(chatId))}
+
+Добавьте его в ${code("EVENT_GROUPS")}, чтобы ограничить события участниками этой группы.`,
+  chatIdOnlyInGroups: "Отправьте эту команду в самой группе, ID которой нужен.",
 } satisfies ShouldFollowLanguage<typeof en>;

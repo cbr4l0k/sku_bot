@@ -99,10 +99,18 @@ EVENT_GROUPS=-1001234567890,-1009876543210
 ```
 
 **The bot must be an administrator in each of those chats.** Telegram only guarantees
-`getChatMember` answers about other users to admins; without that, every lookup fails and
-the events stay closed. To find a chat's ID, add the bot to the group and read the
-`chat.id` from any update, or forward a message from the group to a bot like `@userinfobot`.
-Supergroup IDs start with `-100`.
+`getChatMember` answers about other users to admins; without that, every lookup fails, the
+group shows up unnamed in the admin UI, and the events stay closed to everyone.
+
+To find a group's ID:
+
+1. Add the bot to the group and promote it to administrator.
+2. Send `/chatid` in the group — the bot replies with the ID (admins only). The server also
+   logs `[chat] bot is now "administrator" in … — id …` the moment it is added.
+3. Paste that ID into `EVENT_GROUPS` and restart.
+
+Group IDs are **negative**: supergroups start with `-100`. The positive number in a
+`t.me/c/<number>/…` link is not the chat ID — prefix it with `-100`, or just use `/chatid`.
 
 Admins restrict an event from the event form — at any point in its life, before or after
 publishing. Titles shown in the picker come from Telegram, so groups read as names rather

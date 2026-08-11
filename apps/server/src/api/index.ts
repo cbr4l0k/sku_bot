@@ -79,7 +79,7 @@ const userView = (user: typeof users.$inferSelect) => ({
 
 const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
-  groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) })),
+  groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
   startsAt: event.startsAt.toISOString(),
   createdAt: event.createdAt.toISOString(),
   updatedAt: event.updatedAt.toISOString(),

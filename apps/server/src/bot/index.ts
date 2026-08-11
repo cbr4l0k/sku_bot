@@ -4,6 +4,7 @@ import { db } from "../db";
 import { loadEnv } from "../env";
 import { i18n, localeFromLanguageCode } from "./i18n";
 import { offerCallback } from "./callbacks";
+import { chatIdHandler, chatMembershipHandler } from "./chat-id";
 import { contactHandler } from "./contact";
 import { offerHandler } from "./offers";
 import { startHandler } from "./start";
@@ -22,17 +23,25 @@ const i18nPlugin = new Plugin("sku-i18n").derive(["message", "callback_query"], 
 export const bot = new Bot(env.BOT_TOKEN)
   .extend(i18nPlugin)
   .command("start", startHandler)
+  .command("chatid", chatIdHandler)
+  .on("my_chat_member", chatMembershipHandler)
   .on("message", contactHandler)
   .on("callback_query", offerHandler)
   .onStart(async () => {
     await Promise.all([
       bot.api.setMyCommands({
         language_code: "ru",
-        commands: [{ command: "start", description: i18n.t("ru", "commandStart") }],
+        commands: [
+          { command: "start", description: i18n.t("ru", "commandStart") },
+          { command: "chatid", description: i18n.t("ru", "commandChatId") },
+        ],
       }),
       bot.api.setMyCommands({
         language_code: "en",
-        commands: [{ command: "start", description: i18n.t("en", "commandStart") }],
+        commands: [
+          { command: "start", description: i18n.t("en", "commandStart") },
+          { command: "chatid", description: i18n.t("en", "commandChatId") },
+        ],
       }),
     ]);
   })

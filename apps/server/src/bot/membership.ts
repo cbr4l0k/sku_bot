@@ -25,8 +25,8 @@ export const telegramMembership: MembershipProbe = async (chatId, userId) => {
 const TITLE_TTL_MS = 30 * 60 * 1000;
 const titles = new Map<number, { title: string; fetchedAt: number }>();
 
-/** The chat's title, falling back to its id until Telegram has answered once. */
-export const chatTitle = (chatId: number): string => titles.get(chatId)?.title ?? String(chatId);
+/** The chat's title, or null while Telegram has not answered — usually because the bot is not in it. */
+export const chatTitle = (chatId: number): string | null => titles.get(chatId)?.title ?? null;
 
 export const refreshChatTitles = async (chatIds: readonly number[], now: Date = new Date()): Promise<void> => {
   const stale = chatIds.filter((chatId) => {

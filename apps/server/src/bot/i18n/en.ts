@@ -1,4 +1,4 @@
-import { blockquote, bold, format, join, link } from "gramio";
+import { blockquote, bold, code, format, join, link } from "gramio";
 import type { LanguageMap } from "@gramio/i18n";
 import type { EventUpdatedFields } from "../event-card";
 
@@ -48,4 +48,9 @@ ${join([
     changes.capacity === undefined ? null : format`• New capacity: ${changes.capacity === null ? "unlimited" : changes.capacity}`,
   ].filter((change): change is ReturnType<typeof format> => change !== null), (change) => change, "\n")}`,
   commandStart: "Main menu",
+  commandChatId: "Show this group's ID",
+  chatId: (chatId: number) => format`This chat's ID is ${code(String(chatId))}
+
+Add it to ${code("EVENT_GROUPS")} to restrict events to this group's members.`,
+  chatIdOnlyInGroups: "Run this command inside the group whose ID you need.",
 } satisfies LanguageMap;
