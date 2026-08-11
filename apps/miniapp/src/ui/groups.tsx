@@ -32,8 +32,8 @@ export const GroupPicker = ({
 
   if (available.length === 0) return <p className="text-[12px] text-hint">{t("admin.noGroups")}</p>;
 
-  // A missing title means getChat failed, which means membership lookups fail too.
-  const unreachable = available.some((group) => group.title === null);
+  // `problem` carries Telegram's own words — far more useful than "something went wrong".
+  const broken = available.filter((group) => group.problem !== null);
 
   return (
     <>
@@ -47,17 +47,25 @@ export const GroupPicker = ({
               disabled={disabled}
               onClick={() => onChange(active ? value.filter((id) => id !== group.id) : [...value, group.id])}
               className={`chip ${active ? "chip-flare" : ""} transition-transform active:scale-95 disabled:opacity-50`}
-              style={group.title === null ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}
+              style={group.problem === null ? undefined : { borderColor: "var(--danger)", color: "var(--danger)" }}
             >
-              {group.title ?? `⚠ ${group.id}`}
+              {group.problem === null ? (group.title ?? group.id) : `⚠ ${group.title ?? group.id}`}
             </button>
           );
         })}
       </div>
-      {unreachable ? (
-        <p className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--danger)" }}>
-          {t("admin.groupsUnreachable")}
-        </p>
+      {broken.length > 0 ? (
+        <div className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--danger)" }}>
+          <p>{t("admin.groupsUnreachable")}</p>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {broken.map((group) => (
+              <li key={group.id} className="num break-all">
+                {group.id}: {group.problem}
+                {group.movedTo === null ? null : ` → ${t("admin.groupMovedTo", { id: group.movedTo })}`}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </>
   );
