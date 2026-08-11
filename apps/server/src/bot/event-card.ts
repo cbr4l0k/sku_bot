@@ -2,6 +2,7 @@ import { InlineKeyboard, bold, format } from "gramio";
 import { and, count, eq, events, inArray, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
+import { canSeeEvent } from "../core/groups";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { i18n } from "./i18n";
@@ -40,9 +41,10 @@ export const eventSummary = (eventId: number, locale: Locale): EventSummary | nu
   return event ? { ...event, date: formatDate(event.startsAt, locale) } : null;
 };
 
-export const sendEventCard = async (context: EventCardContext, eventId: number, locale: Locale): Promise<void> => {
+export const sendEventCard = async (context: EventCardContext, eventId: number, userId: number, locale: Locale): Promise<void> => {
   const event = publishedEvent(eventId);
-  if (!event) {
+  // A deep link must not reveal an event the recipient's groups exclude them from.
+  if (!event || !canSeeEvent(db, eventId, userId)) {
     await context.send(i18n.t(locale, "eventUnavailable"));
     return;
   }

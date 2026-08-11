@@ -50,6 +50,6 @@ export const contactHandler = async (context: ContactContext): Promise<void> => 
   const eventId = pendingEventStarts.get(telegramUser.id);
   if (eventId !== undefined) {
     pendingEventStarts.delete(telegramUser.id);
-    await sendEventCard(context, eventId, locale);
+    await sendEventCard(context, eventId, telegramUser.id, locale);
   }
 };

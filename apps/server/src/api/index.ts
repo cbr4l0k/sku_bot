@@ -19,6 +19,7 @@ import {
 import { bot } from "../bot";
 import type { EventChange } from "../bot/event-card";
 import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
+import { canSeeEvent, groupsOfEvent, groupsOfUser, setEventGroups, setUserGroups, visibleToUser } from "../core/groups";
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
 import { eventStats, globalStats } from "../core/stats";
@@ -70,10 +71,15 @@ const userView = (user: typeof users.$inferSelect) => ({
 
 const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
+  groups: groupsOfEvent(db, event.id),
   startsAt: event.startsAt.toISOString(),
   createdAt: event.createdAt.toISOString(),
   updatedAt: event.updatedAt.toISOString(),
 });
+
+const configuredGroups = new Set(env.EVENT_GROUPS);
+/** Only names from the EVENT_GROUPS catalog may be assigned; stored rows outlive the catalog. */
+const unknownGroup = (groups: readonly string[]) => groups.some((name) => !configuredGroups.has(name));
 
 const parseDate = (value: string): Date | undefined => {
   const date = new Date(value);
@@ -116,6 +122,7 @@ const eventFields = t.Object({
 });
 
 const eventPatchFields = t.Partial(eventFields);
+const eventStatus = t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")]);
 const idParams = t.Object({ id: t.Numeric() });
 
 export const app = new Elysia()
@@ -125,7 +132,7 @@ export const app = new Elysia()
     .get("/me", ({ user }) => {
       const isOrganizerOfAny = Boolean(db.select({ eventId: eventOrganizers.eventId }).from(eventOrganizers)
         .where(eq(eventOrganizers.userId, user.id)).get());
-      return { ...userView(user), isOrganizerOfAny };
+      return { ...userView(user), isOrganizerOfAny, groups: groupsOfUser(db, user.id) };
     })
     .patch("/me", ({ user, body }) => {
       db.update(users).set({
@@ -139,7 +146,7 @@ export const app = new Elysia()
     .get("/events", ({ user }) => {
       const current = now();
       return db.select().from(events)
-        .where(and(eq(events.status, "published"), gt(events.startsAt, current)))
+        .where(and(eq(events.status, "published"), gt(events.startsAt, current), visibleToUser(user.id)))
         .orderBy(asc(events.startsAt)).all().map((event) => {
           const registration = db.select({ status: registrations.status }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
@@ -155,7 +162,8 @@ export const app = new Elysia()
     })
     .get("/events/:id", ({ params, user, status }) => {
       const event = participantEvent(params.id);
-      if (!event) return error(status, 404, "event_not_found");
+      // A restricted event stays invisible rather than forbidden — do not leak that it exists.
+      if (!event || !canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
       const registration = db.select({ status: registrations.status }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
       const waitlisted = registration?.status === "waitlisted";
@@ -167,7 +175,10 @@ export const app = new Elysia()
     .post("/events/:id/join", ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
       const result = joinEvent(db, params.id, user.id, now());
-      if ("error" in result) return error(status, result.error === "already_joined" ? 409 : 400, result.error);
+      if ("error" in result) {
+        const code = result.error === "already_joined" ? 409 : result.error === "not_eligible" ? 403 : 400;
+        return error(status, code, result.error);
+      }
       return result;
     }, { params: idParams })
     .post("/events/:id/cancel", ({ params, user, status }) => {
@@ -256,9 +267,12 @@ export const app = new Elysia()
       if (!startsAt) return error(status, 400, "invalid_starts_at");
       const locationUrl = body.locationUrl === undefined ? null : parseLocationUrl(body.locationUrl);
       if (locationUrl === undefined) return error(status, 400, "invalid_location_url");
-      const created = db.insert(events).values({ ...body, locationUrl, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
+      if (body.groups && unknownGroup(body.groups)) return error(status, 400, "unknown_group");
+      const { groups, ...fields } = body;
+      const created = db.insert(events).values({ ...fields, locationUrl, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
+      if (groups) setEventGroups(db, created.id, groups);
       return eventView(created);
-    }, { body: t.Intersect([eventFields, t.Object({ status: t.Optional(t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")])) })]) })
+    }, { body: t.Intersect([eventFields, t.Object({ status: t.Optional(eventStatus), groups: t.Optional(t.Array(t.String())) })]) })
     .patch("/admin/events/:id", ({ params, body, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       const event = db.select().from(events).where(eq(events.id, params.id)).get();
@@ -267,6 +281,7 @@ export const app = new Elysia()
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
       const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
       if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
+      if (body.groups && unknownGroup(body.groups)) return error(status, 400, "unknown_group");
       const changes: EventChange[] = [
         body.title !== undefined && body.title !== event.title ? "title" : null,
         body.description !== undefined && body.description !== event.description ? "description" : null,
@@ -274,6 +289,7 @@ export const app = new Elysia()
         (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
+      if (body.groups !== undefined) setEventGroups(db, params.id, body.groups);
       if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined) db.update(events).set({
         ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
@@ -286,7 +302,7 @@ export const app = new Elysia()
       if (event.status !== "draft" && body.status !== "canceled" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
-    }, { params: idParams, body: t.Intersect([eventPatchFields, t.Object({ status: t.Optional(t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")])) })]) })
+    }, { params: idParams, body: t.Intersect([eventPatchFields, t.Object({ status: t.Optional(eventStatus), groups: t.Optional(t.Array(t.String())) })]) })
     .delete("/admin/events/:id", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       const event = db.select().from(events).where(eq(events.id, params.id)).get();
@@ -328,6 +344,7 @@ export const app = new Elysia()
       return db.select().from(users).where(predicate).orderBy(asc(users.firstName)).all().map((person) => ({
         ...userView(person),
         isConfiguredAdmin: adminIds.has(person.id),
+        groups: groupsOfUser(db, person.id),
         registrationCount: db.select({ value: sql<number>`count(*)` }).from(registrations).where(and(eq(registrations.userId, person.id), ne(registrations.status, "canceled"))).get()?.value ?? 0,
       }));
     }, { query: t.Object({ query: t.Optional(t.String()) }) })
@@ -341,6 +358,13 @@ export const app = new Elysia()
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isBanned: false }).where(eq(users.id, params.id)).run(); return { ok: true };
     }, { params: idParams })
+    .get("/admin/groups", ({ isAdmin, status }) => isAdmin ? { groups: [...env.EVENT_GROUPS] } : error(status, 403, "forbidden"))
+    .put("/admin/users/:id/groups", ({ params, body, isAdmin, status }) => {
+      if (!isAdmin) return error(status, 403, "forbidden");
+      if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
+      if (unknownGroup(body.groups)) return error(status, 400, "unknown_group");
+      return { groups: setUserGroups(db, params.id, body.groups) };
+    }, { params: idParams, body: t.Object({ groups: t.Array(t.String()) }) })
     .post("/admin/users/:id/promote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");

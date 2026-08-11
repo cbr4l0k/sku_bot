@@ -61,7 +61,7 @@ export const startHandler = async (context: StartContext): Promise<void> => {
 
   if (context.args && !payload) await context.send(i18n.t(locale, "unknownPayload"));
   if (payload) {
-    await sendEventCard(context, payload.eventId, locale);
+    await sendEventCard(context, payload.eventId, telegramUser.id, locale);
     return;
   }
   await sendHero(context, locale);
