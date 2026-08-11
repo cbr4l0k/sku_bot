@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `waitlist_enabled` integer DEFAULT true NOT NULL;

@@ -3,11 +3,11 @@ import type { NotificationEffect, OfferEffect, SupersededEffect } from "./types"
 
 const OFFER_WINDOW_SECONDS = 20 * 60;
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type EventRow = { id: number; capacity: number | null };
+type EventRow = { id: number; capacity: number | null; waitlist_enabled: number };
 type OfferRow = { id: number; event_id: number; user_id: number; expires_at: number; message_id: number | null };
 
 const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
-const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity FROM events WHERE id = ?").get(eventId);
+const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled FROM events WHERE id = ?").get(eventId);
 const confirmed = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
 const reserved = (db: Db, eventId: number, now: number) => db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, now)?.count ?? 0;
 const free = (db: Db, eventId: number, now: number) => {
@@ -27,6 +27,9 @@ const supersede = (db: Db, eventId: number, exceptOfferId?: number): SupersededE
 };
 
 const issue = (db: Db, eventId: number, now: number): OfferEffect[] => {
+  // With the queue off, a freed spot is not handed on. Anyone queued before it was
+  // switched off keeps their place, dormant, in case it is switched back on.
+  if (!event(db, eventId)?.waitlist_enabled) return [];
   const effects: OfferEffect[] = [];
   while (free(db, eventId, now) === null || (free(db, eventId, now) ?? 0) > 0) {
     const candidate = db.$client.query<{ user_id: number }, [number]>(`SELECT r.user_id FROM registrations r WHERE r.event_id = ? AND r.status = 'waitlisted' AND NOT EXISTS (SELECT 1 FROM waitlist_offers o WHERE o.event_id = r.event_id AND o.user_id = r.user_id AND o.status = 'pending') ORDER BY r.created_at, r.id LIMIT 1`).get(eventId);

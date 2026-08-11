@@ -37,6 +37,8 @@ export const events = sqliteTable(
     location: text("location").notNull(),
     locationUrl: text("location_url"),
     capacity: integer("capacity"),
+    /** With the queue off, a full event simply stops accepting registrations. */
+    waitlistEnabled: integer("waitlist_enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").$type<EventStatus>().notNull().default("draft"),
     createdBy: integer("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),

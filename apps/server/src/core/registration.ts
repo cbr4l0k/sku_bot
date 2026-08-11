@@ -2,15 +2,15 @@ import type { Db } from "@sku/db";
 import type { NotificationEffect } from "./types";
 import { issueOffers } from "./waitlist";
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_past" | "not_eligible" };
-type EventRow = { capacity: number | null; status: string; starts_at: number };
+type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_past" | "not_eligible" | "event_full" };
+type EventRow = { capacity: number | null; status: string; starts_at: number; waitlist_enabled: number };
 type RegistrationRow = { id: number; status: string };
 
 export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): JoinResult => db.$client.transaction((): JoinResult => {
   const timestamp = seconds(now);
   const banned = db.$client.query<{ is_banned: number }, [number]>("SELECT is_banned FROM users WHERE id = ?").get(userId)?.is_banned;
   if (banned) return { error: "banned" };
-  const event = db.$client.query<EventRow, [number]>("SELECT capacity, status, starts_at FROM events WHERE id = ?").get(eventId);
+  const event = db.$client.query<EventRow, [number]>("SELECT capacity, status, starts_at, waitlist_enabled FROM events WHERE id = ?").get(eventId);
   if (!event || event.status !== "published") return { error: "not_published" };
   if (event.starts_at <= timestamp) return { error: "event_past" };
   const registration = db.$client.query<RegistrationRow, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
@@ -25,7 +25,10 @@ export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): J
   if (!eligible) return { error: "not_eligible" };
   const confirmed = db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
   const reserved = db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, timestamp)?.count ?? 0;
-  const status = event.capacity === null || event.capacity - confirmed - reserved > 0 ? "registered" : "waitlisted";
+  const hasRoom = event.capacity === null || event.capacity - confirmed - reserved > 0;
+  // With the queue off there is nowhere to put someone who arrives late.
+  if (!hasRoom && !event.waitlist_enabled) return { error: "event_full" };
+  const status = hasRoom ? "registered" : "waitlisted";
   if (registration) db.$client.query("UPDATE registrations SET status = ?, created_at = ?, updated_at = ?, checked_in_at = NULL WHERE id = ?").run(status, timestamp, timestamp, registration.id);
   else db.$client.query("INSERT INTO registrations (event_id, user_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(eventId, userId, status, timestamp, timestamp);
   if (status === "registered") return { status };
