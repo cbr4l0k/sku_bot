@@ -90,6 +90,21 @@ Stale `-wal` and `-shm` sidecars must go with the old database; leaving them beh
 | `DATABASE_PATH` | SQLite database path; Compose sets `/app/data/sku.db`. |
 | `NODE_ENV` | `development` uses polling; `production` configures the webhook. |
 
+## The queue
+
+Every event carries a queue switch, toggled from the event's admin screen. It is **on** by
+default, which is the existing behaviour: once an event fills up, further signups join a
+waitlist, and a cancellation offers the freed spot to whoever is first in line.
+
+Turn it **off** and a full event simply stops accepting people — the signup button becomes
+"no spots left, and this event has no queue", and the API answers `409 event_full`. Freed
+spots are not handed on. An event with no capacity limit is unaffected either way.
+
+Switching it off does **not** discard anyone already queued: their places are kept but go
+dormant, no further offers are sent, and the admin screen says how many people that affects
+before the switch is confirmed. Switching it back on resumes the queue immediately, handing
+out any spots that came free while it was off.
+
 ## Restricted events
 
 An event can be limited to the members of one or more Telegram groups:

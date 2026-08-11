@@ -87,6 +87,25 @@ const ban = await call("POST", "/api/admin/users/2002/ban", admin);
 const joinBanned = await call("POST", `/api/events/${eventId}/join`, runner);
 check("banned user cannot join", ban.status === 200 && joinBanned.status === 403, joinBanned.json);
 
+/* --------------------------------------------------------------- queue switch */
+
+const noQueue = await call("POST", "/api/admin/events", admin, {
+  title: "Без очереди", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
+  location: "Парк", capacity: 1, status: "published", waitlistEnabled: false,
+});
+const noQueueId = (noQueue.json as { id: number }).id;
+check("admin creates an event with the queue off", noQueue.status === 200 && (noQueue.json as { waitlistEnabled: boolean }).waitlistEnabled === false, noQueue.json);
+
+const tookLastSpot = await call("POST", `/api/events/${noQueueId}/join`, runnerB);
+check("first signup takes the last spot", tookLastSpot.status === 200 && (tookLastSpot.json as { status: string }).status === "registered", tookLastSpot.json);
+
+const turnedAway = await call("POST", `/api/events/${noQueueId}/join`, admin);
+check("a full event with no queue turns the next person away", turnedAway.status === 409 && (turnedAway.json as { error: string }).error === "event_full", turnedAway.json);
+
+const queueBackOn = await call("PATCH", `/api/admin/events/${noQueueId}`, admin, { waitlistEnabled: true });
+const queued = await call("POST", `/api/events/${noQueueId}/join`, admin);
+check("turning the queue on lets the next person queue", queueBackOn.status === 200 && queued.status === 200 && (queued.json as { position: number }).position === 1, queued.json);
+
 /* ------------------------------------------------------------ group restrictions */
 
 // Membership answers come from Telegram; seed the cache so the smoke run needs no network.
