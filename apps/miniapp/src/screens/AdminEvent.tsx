@@ -151,7 +151,9 @@ export const AdminEventScreen = () => {
     void action.run(
       async () => {
         const link = await sku.eventLink(id);
-        await copyText(link.miniAppLink);
+        // The bot link works without a registered Mini App short name, and answers
+        // with the event card and its sign-up button.
+        await copyText(link.botLink);
         toast(t("common.copied"));
       },
       { onError: (error) => toast(errorText(t, error), "err") },
