@@ -31,7 +31,7 @@ import {
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
 import { eventStats, globalStats } from "../core/stats";
-import { acceptOffer, cancelEvent, setCapacity } from "../core/waitlist";
+import { acceptOffer, cancelEvent, issueOffers, setCapacity } from "../core/waitlist";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { dispatchEffects, notifyEventCanceled, notifyEventUpdated } from "../notify";
@@ -131,6 +131,7 @@ const eventFields = t.Object({
   location: t.String({ minLength: 1 }),
   locationUrl: t.Optional(t.Nullable(t.String())),
   capacity: t.Nullable(t.Integer({ minimum: 0 })),
+  waitlistEnabled: t.Optional(t.Boolean()),
 });
 
 const eventPatchFields = t.Partial(eventFields);
@@ -192,7 +193,7 @@ export const app = new Elysia()
       await syncMemberships(user.id, chatsOfEvent(db, params.id));
       const result = joinEvent(db, params.id, user.id, now());
       if ("error" in result) {
-        const code = result.error === "already_joined" ? 409 : result.error === "not_eligible" ? 403 : 400;
+        const code = result.error === "already_joined" || result.error === "event_full" ? 409 : result.error === "not_eligible" ? 403 : 400;
         return error(status, code, result.error);
       }
       return result;
@@ -242,17 +243,20 @@ export const app = new Elysia()
         (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined) {
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.waitlistEnabled !== undefined) {
         db.update(events).set({
           ...(body.title === undefined ? {} : { title: body.title }),
           ...(body.description === undefined ? {} : { description: body.description }),
           ...(startsAt === undefined ? {} : { startsAt }),
           ...(body.location === undefined ? {} : { location: body.location }),
           ...(locationUrl === undefined ? {} : { locationUrl }),
+          ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }),
           updatedAt: now(),
         }).where(eq(events.id, params.id)).run();
       }
       if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
+      // Switching the queue back on hands out the spots the dormant queue missed.
+      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(issueOffers(db, params.id, now()));
       if (event.status !== "draft" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
@@ -306,10 +310,12 @@ export const app = new Elysia()
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
       if (body.groups !== undefined) setEventChats(db, params.id, body.groups);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined) db.update(events).set({
-        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), updatedAt: now(),
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined) db.update(events).set({
+        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
+      // Switching the queue back on hands out the spots the dormant queue missed.
+      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(issueOffers(db, params.id, now()));
       if (body.status === "canceled" && event.status !== "canceled") {
         const result = cancelEvent(db, params.id);
         fireEffects(result.effects);
