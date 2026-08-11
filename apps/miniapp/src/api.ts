@@ -100,8 +100,11 @@ export type EventDraft = {
   capacity: number | null;
 };
 
-/** A Telegram group an event can be restricted to, as listed in EVENT_GROUPS. */
+/** A Telegram group from EVENT_GROUPS; `title` is null when the bot cannot reach the chat. */
 export type Group = Ok<typeof api.admin.groups.get>["groups"][number];
+
+/** A group already attached to an event, where the id always has a display string. */
+export type EventGroup = EventSummary["groups"][number];
 
 /** Chat restrictions ride along with the event, but only admins may set them. */
 export type AdminEventDraft = EventDraft & { groups?: number[] };

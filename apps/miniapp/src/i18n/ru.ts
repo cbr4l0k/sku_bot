@@ -156,6 +156,7 @@ export const ru = {
   "admin.organizers": "Организаторы",
   "admin.organizersHint": "Отметь, кто ведёт это событие",
   "admin.noGroups": "Telegram-группы не настроены на сервере",
+  "admin.groupsUnreachable": "Бот не видит отмеченные группы: добавьте его в них администратором и проверьте ID (команда /chatid в группе).",
   "admin.stats": "Статистика события",
   "admin.statRegistered": "Записаны",
   "admin.statWaitlisted": "Очередь",

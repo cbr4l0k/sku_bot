@@ -1,4 +1,4 @@
-import type { Group } from "../api";
+import type { EventGroup, Group } from "../api";
 import { useI18n } from "../i18n";
 import { Chip } from "./primitives";
 
@@ -6,7 +6,7 @@ import { Chip } from "./primitives";
  * Groups are Telegram chats: the title comes from Telegram, and membership is
  * managed there rather than here.
  */
-export const GroupChips = ({ groups }: { groups: readonly Group[] }) =>
+export const GroupChips = ({ groups }: { groups: readonly EventGroup[] }) =>
   groups.length === 0 ? null : (
     <>
       {groups.map((group) => (
@@ -32,22 +32,33 @@ export const GroupPicker = ({
 
   if (available.length === 0) return <p className="text-[12px] text-hint">{t("admin.noGroups")}</p>;
 
+  // A missing title means getChat failed, which means membership lookups fail too.
+  const unreachable = available.some((group) => group.title === null);
+
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {available.map((group) => {
-        const active = value.includes(group.id);
-        return (
-          <button
-            key={group.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(active ? value.filter((id) => id !== group.id) : [...value, group.id])}
-            className={`chip ${active ? "chip-flare" : ""} transition-transform active:scale-95 disabled:opacity-50`}
-          >
-            {group.title}
-          </button>
-        );
-      })}
-    </div>
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        {available.map((group) => {
+          const active = value.includes(group.id);
+          return (
+            <button
+              key={group.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(active ? value.filter((id) => id !== group.id) : [...value, group.id])}
+              className={`chip ${active ? "chip-flare" : ""} transition-transform active:scale-95 disabled:opacity-50`}
+              style={group.title === null ? { borderColor: "var(--danger)", color: "var(--danger)" } : undefined}
+            >
+              {group.title ?? `⚠ ${group.id}`}
+            </button>
+          );
+        })}
+      </div>
+      {unreachable ? (
+        <p className="mt-2 text-[12px] leading-relaxed" style={{ color: "var(--danger)" }}>
+          {t("admin.groupsUnreachable")}
+        </p>
+      ) : null}
+    </>
   );
 };

@@ -157,6 +157,7 @@ export const en: Dict = {
   "admin.organizers": "Organizers",
   "admin.organizersHint": "Pick who runs this event",
   "admin.noGroups": "No Telegram groups configured on the server",
+  "admin.groupsUnreachable": "The bot cannot see the marked groups: add it there as an administrator and check the IDs (run /chatid in the group).",
   "admin.stats": "Event stats",
   "admin.statRegistered": "Registered",
   "admin.statWaitlisted": "Waitlist",
