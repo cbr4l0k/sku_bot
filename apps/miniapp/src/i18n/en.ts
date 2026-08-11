@@ -130,7 +130,7 @@ export const en: Dict = {
   "form.location": "Location",
   "form.locationUrl": "Map link",
   "form.locationUrlHint": "Optional. HTTPS links only",
-  "form.locationUrlPlaceholder": "https://maps.google.com/...",
+  "form.locationUrlPlaceholder": "https://maps.yandex.com/...",
   "form.capacity": "Capacity",
   "form.capacityHint": "Empty means unlimited",
   "form.status": "Status",

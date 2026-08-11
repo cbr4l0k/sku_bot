@@ -129,7 +129,7 @@ export const ru = {
   "form.location": "Место",
   "form.locationUrl": "Ссылка на карту",
   "form.locationUrlHint": "Необязательно. Только HTTPS-ссылки",
-  "form.locationUrlPlaceholder": "https://maps.google.com/...",
+  "form.locationUrlPlaceholder": "https://maps.yandex.com/...",
   "form.capacity": "Вместимость",
   "form.capacityHint": "Пусто — без ограничений",
   "form.status": "Статус",
