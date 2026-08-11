@@ -13,7 +13,7 @@ export const OrganizerScreen = () => {
 
   return (
     <Screen>
-      <PageTitle eyebrow={t("organizer.subtitle")} title={t("organizer.title")} />
+      <PageTitle title={t("organizer.title")} />
 
       {events.loading && !events.data ? <Loader label={t("common.loading")} /> : null}
       {events.error && !events.data ? (

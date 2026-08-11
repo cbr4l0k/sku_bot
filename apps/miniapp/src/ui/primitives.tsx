@@ -18,7 +18,6 @@ export const Screen = ({ children, className = "" }: { children: ReactNode; clas
 export const PageTitle = ({ eyebrow, title, aside }: { eyebrow?: string; title: string; aside?: ReactNode }) => (
   <header className="mb-5 flex items-end justify-between gap-3">
     <div className="min-w-0">
-      {eyebrow ? <div className="eyebrow mb-2">{eyebrow}</div> : null}
       <h1 className="hero break-words">{title}</h1>
     </div>
     {aside}

@@ -19,7 +19,6 @@ export const EventsScreen = () => {
   return (
     <Screen>
       <PageTitle
-        eyebrow={`${t("app.name")} · ${t("app.tagline")}`}
         title={t("events.title")}
         aside={
           canScanSomething ? (

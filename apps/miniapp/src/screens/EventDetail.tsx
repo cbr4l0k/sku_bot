@@ -121,7 +121,6 @@ export const EventDetailScreen = () => {
     <Screen>
       <div className="rise">
         <div className="mb-2 flex items-center gap-2.5">
-          <span className="eyebrow shrink-0">{t("app.name")}</span>
           <span className="hairline min-w-4 flex-1" />
           <GroupChips groups={detail.groups} />
           <StatusBadge status={status} position={detail.myWaitlistPosition} hasOffer={offer !== null} />

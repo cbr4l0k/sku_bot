@@ -254,7 +254,7 @@ export const AdminScreen = () => {
 
   return (
     <Screen>
-      <PageTitle eyebrow={t("app.name")} title={t("admin.title")} />
+      <PageTitle title={t("admin.title")} />
 
       <div className="mb-5 flex gap-1.5 rounded-full border border-hair p-1">
         {TABS.map((item) => (

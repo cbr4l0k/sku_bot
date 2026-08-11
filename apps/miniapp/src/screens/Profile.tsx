@@ -23,7 +23,7 @@ export const ProfileScreen = () => {
 
   return (
     <Screen>
-      <PageTitle eyebrow={t("app.name")} title={t("profile.title")} />
+      <PageTitle title={t("profile.title")} />
 
       <section className="rise card mb-4 px-5 py-5">
         <div className="flex items-start justify-between gap-3">

@@ -47,7 +47,6 @@ const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void })
           copy of the cropped swooshes. */}
       <Backdrop />
       <div className="relative z-10 flex flex-col items-center gap-5">
-        <div className="eyebrow">{t("organizer.qrTitle")}</div>
         {token.data ? (
           <div className="fade-in">
             <QrCanvas value={token.data.token} size={Math.min(280, window.innerWidth - 96)} />
@@ -214,7 +213,6 @@ export const OrganizerEventScreen = () => {
   return (
     <Screen>
       <PageTitle
-        eyebrow={`${t("organizer.title")} · ${bib(id)}`}
         title={event?.title ?? t("organizer.attendance")}
         aside={event ? <EventStatusChip status={event.status} /> : null}
       />

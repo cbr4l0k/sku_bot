@@ -36,7 +36,7 @@ export const CheckinScreen = () => {
 
   return (
     <Screen>
-      <PageTitle eyebrow={t("app.name")} title={t("checkin.title")} />
+      <PageTitle title={t("checkin.title")} />
 
       {outcome?.kind === "ok" ? (
         <div className="card px-4 py-2">

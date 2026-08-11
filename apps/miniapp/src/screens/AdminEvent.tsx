@@ -179,7 +179,6 @@ export const AdminEventScreen = () => {
   return (
     <Screen>
       <PageTitle
-        eyebrow={`${t("admin.title")} · ${bib(id)}`}
         title={event.title}
         aside={<EventStatusChip status={event.status} />}
       />

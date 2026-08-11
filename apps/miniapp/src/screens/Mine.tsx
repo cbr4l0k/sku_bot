@@ -23,7 +23,7 @@ export const MineScreen = () => {
 
   return (
     <Screen>
-      <PageTitle eyebrow={t("mine.subtitle")} title={t("mine.title")} />
+      <PageTitle title={t("mine.title")} />
 
       {events.loading && !events.data ? <Loader label={t("common.loading")} /> : null}
       {events.error && !events.data ? (
