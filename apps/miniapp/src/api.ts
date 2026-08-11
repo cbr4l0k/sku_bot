@@ -98,6 +98,7 @@ export type EventDraft = {
   location: string;
   locationUrl: string | null;
   capacity: number | null;
+  waitlistEnabled?: boolean;
 };
 
 /** A Telegram group from EVENT_GROUPS; `title` is null when the bot cannot reach the chat. */

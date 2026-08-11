@@ -246,6 +246,9 @@ export const EventDetailScreen = () => {
               {t("action.cancel")}
             </Button>
           </>
+        ) : left === 0 && !detail.waitlistEnabled ? (
+          // No queue on this event: once the spots are gone, they are gone.
+          <div className="card px-4 py-3 text-center text-[13px] text-hint">{t("detail.fullNoQueue")}</div>
         ) : (
           <Button
             block

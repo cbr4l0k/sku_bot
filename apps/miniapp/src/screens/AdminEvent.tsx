@@ -122,6 +122,15 @@ export const AdminEventScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
+  const toggleQueue = async () => {
+    if (event?.waitlistEnabled) {
+      const waiting = stats.data?.waitlisted ?? 0;
+      const text = waiting > 0 ? t("admin.confirmDisableQueueWaiting", { n: waiting }) : t("admin.confirmDisableQueue");
+      if (!(await confirm({ text, confirmLabel: t("admin.disableQueue"), danger: true }))) return;
+    }
+    patch({ waitlistEnabled: !event?.waitlistEnabled });
+  };
+
   const cancelEvent = async () => {
     if (!(await confirm({ text: t("admin.confirmCancel"), confirmLabel: t("admin.cancelEvent"), danger: true }))) return;
     patch({ status: "canceled" });
@@ -179,10 +188,11 @@ export const AdminEventScreen = () => {
         <p className="block truncate text-[13px] text-hint first-letter:uppercase">
           {fullDate(event.startsAt, locale)} · {event.location}
         </p>
-        {event.groups.length > 0 ? (
+        {event.groups.length > 0 || !event.waitlistEnabled ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] text-hint">{t("form.groups")}</span>
+            {event.groups.length > 0 ? <span className="text-[11px] text-hint">{t("form.groups")}</span> : null}
             <GroupChips groups={event.groups} />
+            {event.waitlistEnabled ? null : <Chip tone="plain">{t("admin.queueOff")}</Chip>}
           </div>
         ) : null}
       </div>
@@ -197,6 +207,9 @@ export const AdminEventScreen = () => {
             {t("admin.close")}
           </Button>
         )}
+        <Button size="sm" variant="ghost" loading={action.pending} onClick={() => void toggleQueue()}>
+          {event.waitlistEnabled ? t("admin.disableQueue") : t("admin.enableQueue")}
+        </Button>
         <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
           {t("common.edit")}
         </Button>
