@@ -100,6 +100,9 @@ export type EventDraft = {
   capacity: number | null;
 };
 
+/** Group restrictions ride along with the event, but only admins may set them. */
+export type AdminEventDraft = EventDraft & { groups?: string[] };
+
 export const sku = {
   me: () => call(api.me.get(auth())),
   setMe: (body: { locale?: Locale; firstName?: string; lastName?: string }) => call(api.me.patch(body, auth())),
@@ -118,9 +121,11 @@ export const sku = {
   toggleAttendance: (id: number, userId: number) =>
     call(api.organizer.events({ id }).attendance({ userId }).post(undefined, auth())),
 
-  createEvent: (body: EventDraft & { status?: EventStatus }) => call(api.admin.events.post(body, auth())),
-  adminUpdateEvent: (id: number, body: Partial<EventDraft> & { status?: EventStatus }) =>
+  createEvent: (body: AdminEventDraft & { status?: EventStatus }) => call(api.admin.events.post(body, auth())),
+  adminUpdateEvent: (id: number, body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
     call(api.admin.events({ id }).patch(body, auth())),
+  groupCatalog: () => call(api.admin.groups.get(auth())),
+  setUserGroups: (id: number, groups: string[]) => call(api.admin.users({ id }).groups.put({ groups }, auth())),
   deleteEvent: (id: number) => call(api.admin.events({ id }).delete(undefined, auth())),
   setOrganizers: (id: number, userIds: number[]) => call(api.admin.events({ id }).organizers.put({ userIds }, auth())),
   eventStats: (id: number) => call(api.admin.events({ id }).stats.get(auth())),

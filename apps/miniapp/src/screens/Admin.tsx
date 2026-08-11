@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 
-import { sku, type AdminUser, type EventDraft } from "../api";
+import { sku, type AdminEventDraft, type AdminUser } from "../api";
 import { useI18n } from "../i18n";
 import { bib, errorText, fullName, percent } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { DateBlock, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
+import { GroupChips, GroupPicker } from "../ui/groups";
 import { Sheet, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
@@ -32,14 +33,14 @@ const TABS: { id: Tab; key: "admin.tabEvents" | "admin.tabUsers" | "admin.tabSta
 
 /* --------------------------------------------------------------- events tab */
 
-const EventsTab = () => {
+const EventsTab = ({ availableGroups }: { availableGroups: readonly string[] }) => {
   const { t } = useI18n();
   const toast = useToast();
   const action = useAction();
   const [creating, setCreating] = useState(false);
   const events = useResource(sku.organizerEvents);
 
-  const create = (draft: EventDraft) =>
+  const create = (draft: AdminEventDraft) =>
     void action.run(
       async () => {
         await sku.createEvent({ ...draft, status: "draft" });
@@ -81,7 +82,10 @@ const EventsTab = () => {
                 <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
               </div>
               <p className="mb-2.5 truncate text-[13px] text-hint">{event.location}</p>
-              <EventStatusChip status={event.status} />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <EventStatusChip status={event.status} />
+                <GroupChips groups={event.groups} />
+              </div>
             </div>
           </Link>
         ))}
@@ -89,7 +93,12 @@ const EventsTab = () => {
 
       {creating ? (
         <Sheet title={t("admin.newEvent")} onClose={() => setCreating(false)}>
-          <EventForm submitLabel={t("form.create")} pending={action.pending} onSubmit={create} />
+          <EventForm
+            submitLabel={t("form.create")}
+            pending={action.pending}
+            availableGroups={availableGroups}
+            onSubmit={create}
+          />
         </Sheet>
       ) : null}
     </>
@@ -98,7 +107,17 @@ const EventsTab = () => {
 
 /* ---------------------------------------------------------------- users tab */
 
-const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: number; onChanged: () => void }) => {
+const UserRow = ({
+  person,
+  index,
+  availableGroups,
+  onChanged,
+}: {
+  person: AdminUser;
+  index: number;
+  availableGroups: readonly string[];
+  onChanged: () => void;
+}) => {
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
@@ -135,6 +154,17 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
           {person.isBanned ? <Chip tone="plain">{t("admin.banned")}</Chip> : null}
         </div>
       </div>
+      {availableGroups.length > 0 ? (
+        <div className="mt-2.5">
+          <div className="mb-1.5 text-[11px] text-hint">{t("admin.groups")}</div>
+          <GroupPicker
+            available={availableGroups}
+            value={person.groups}
+            disabled={action.pending}
+            onChange={(groups) => run(() => sku.setUserGroups(person.id, groups))}
+          />
+        </div>
+      ) : null}
       <div className="mt-2.5 flex flex-wrap gap-2">
         <Button size="sm" variant={person.isBanned ? "ghost" : "danger"} loading={action.pending} onClick={() => void toggleBan()}>
           {person.isBanned ? t("admin.unban") : t("admin.ban")}
@@ -155,7 +185,7 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
   );
 };
 
-const UsersTab = () => {
+const UsersTab = ({ availableGroups }: { availableGroups: readonly string[] }) => {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -183,7 +213,13 @@ const UsersTab = () => {
       {users.data && users.data.length > 0 ? (
         <section className="card px-4 py-1">
           {users.data.map((person, index) => (
-            <UserRow key={person.id} person={person} index={index} onChanged={() => void users.reload(true)} />
+            <UserRow
+              key={person.id}
+              person={person}
+              index={index}
+              availableGroups={availableGroups}
+              onChanged={() => void users.reload(true)}
+            />
           ))}
         </section>
       ) : null}
@@ -240,6 +276,8 @@ const StatsTab = () => {
 export const AdminScreen = () => {
   const { t } = useI18n();
   const [tab, setTab] = useState<Tab>("events");
+  const catalog = useResource(sku.groupCatalog);
+  const availableGroups = catalog.data?.groups ?? [];
 
   return (
     <Screen>
@@ -259,8 +297,8 @@ export const AdminScreen = () => {
         ))}
       </div>
 
-      {tab === "events" ? <EventsTab /> : null}
-      {tab === "users" ? <UsersTab /> : null}
+      {tab === "events" ? <EventsTab availableGroups={availableGroups} /> : null}
+      {tab === "users" ? <UsersTab availableGroups={availableGroups} /> : null}
       {tab === "stats" ? <StatsTab /> : null}
     </Screen>
   );

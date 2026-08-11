@@ -1,12 +1,13 @@
 import { useState } from "react";
 
-import type { EventDraft } from "../api";
+import type { AdminEventDraft } from "../api";
 import { useI18n } from "../i18n";
 import { fromLocalInput, toLocalInput } from "../lib/format";
+import { GroupPicker } from "./groups";
 import { SheetFooter } from "./overlays";
 import { Button, Field, TextArea, TextInput } from "./primitives";
 
-type Initial = Partial<EventDraft>;
+type Initial = Partial<AdminEventDraft>;
 
 const emptyDraft = (initial: Initial) => ({
   title: initial.title ?? "",
@@ -21,15 +22,19 @@ export const EventForm = ({
   initial = {},
   submitLabel,
   pending = false,
+  availableGroups,
   onSubmit,
 }: {
   initial?: Initial;
   submitLabel: string;
   pending?: boolean;
-  onSubmit: (draft: EventDraft) => void;
+  /** Omitted for organizers — only admins may restrict an event to groups. */
+  availableGroups?: readonly string[];
+  onSubmit: (draft: AdminEventDraft) => void;
 }) => {
   const { t } = useI18n();
   const [form, setForm] = useState(() => emptyDraft(initial));
+  const [groups, setGroups] = useState<string[]>(() => [...(initial.groups ?? [])]);
   const [touched, setTouched] = useState(false);
 
   const locationUrlValid = form.locationUrl.trim() === "" || (() => {
@@ -47,6 +52,7 @@ export const EventForm = ({
       locationUrl: form.locationUrl.trim() === "" ? null : form.locationUrl.trim(),
       startsAt: fromLocalInput(form.startsAt),
       capacity: form.capacity.trim() === "" ? null : Math.max(0, Number(form.capacity)),
+      ...(availableGroups === undefined ? {} : { groups }),
     });
   };
 
@@ -81,6 +87,11 @@ export const EventForm = ({
       <Field label={t("form.description")}>
         <TextArea value={form.description} onChange={(event) => set("description")(event.target.value)} />
       </Field>
+      {availableGroups === undefined ? null : (
+        <Field label={t("form.groups")} hint={t("form.groupsHint")}>
+          <GroupPicker available={availableGroups} value={groups} onChange={setGroups} />
+        </Field>
+      )}
 
       {touched && !valid ? (
         <p className="text-[12px]" style={{ color: "var(--danger)" }}>

@@ -8,6 +8,7 @@ import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic, openLink } from "../telegram";
 import { CountdownRing, StatusBadge } from "../ui/event";
+import { GroupChips } from "../ui/groups";
 import { useConfirm, useToast } from "../ui/overlays";
 import { Button, ErrorState, Loader, Screen, Track } from "../ui/primitives";
 
@@ -122,6 +123,7 @@ export const EventDetailScreen = () => {
         <div className="mb-2 flex items-center gap-2.5">
           <span className="eyebrow shrink-0">{t("app.name")}</span>
           <span className="hairline min-w-4 flex-1" />
+          <GroupChips groups={detail.groups} />
           <StatusBadge status={status} position={detail.myWaitlistPosition} hasOffer={offer !== null} />
         </div>
         <h1 className="hero mb-3 break-words">{detail.title}</h1>

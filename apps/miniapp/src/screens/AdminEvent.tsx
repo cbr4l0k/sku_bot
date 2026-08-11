@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import { sku, type EventDraft, type EventStatus } from "../api";
+import { sku, type AdminEventDraft, type EventStatus } from "../api";
 import { useI18n } from "../i18n";
 import { bib, errorText, fullDate, fullName, percent } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
@@ -9,6 +9,7 @@ import { useAction, useResource } from "../lib/useResource";
 import { copyText } from "../telegram";
 import { EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
+import { GroupChips } from "../ui/groups";
 import { Sheet, SheetFooter, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
@@ -106,10 +107,11 @@ export const AdminEventScreen = () => {
 
   const events = useResource(sku.organizerEvents);
   const stats = useResource(useCallback(() => sku.eventStats(id), [id]));
+  const catalog = useResource(sku.groupCatalog);
 
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
 
-  const patch = (body: Partial<EventDraft> & { status?: EventStatus }) =>
+  const patch = (body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
     void action.run(
       async () => {
         await sku.adminUpdateEvent(id, body);
@@ -173,9 +175,17 @@ export const AdminEventScreen = () => {
         aside={<EventStatusChip status={event.status} />}
       />
 
-      <p className="mb-4 block truncate text-[13px] text-hint first-letter:uppercase">
-        {fullDate(event.startsAt, locale)} · {event.location}
-      </p>
+      <div className="mb-4">
+        <p className="block truncate text-[13px] text-hint first-letter:uppercase">
+          {fullDate(event.startsAt, locale)} · {event.location}
+        </p>
+        {event.groups.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-hint">{t("form.groups")}</span>
+            <GroupChips groups={event.groups} />
+          </div>
+        ) : null}
+      </div>
 
       <div className="mb-2 flex flex-wrap gap-2">
         {event.status !== "published" ? (
@@ -248,9 +258,11 @@ export const AdminEventScreen = () => {
               location: event.location,
               locationUrl: event.locationUrl,
               capacity: event.capacity,
+              groups: event.groups,
             }}
             submitLabel={t("common.save")}
             pending={action.pending}
+            availableGroups={catalog.data?.groups ?? []}
             onSubmit={(draft) => patch(draft)}
           />
         </Sheet>

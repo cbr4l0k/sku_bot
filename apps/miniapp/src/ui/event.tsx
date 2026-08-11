@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import type { EventCard as EventCardData, EventStatus, RegistrationStatus } from "../api";
 import { useI18n } from "../i18n";
 import { dayNumber, monthNumber, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
+import { GroupChips } from "./groups";
 import { Chip, Track } from "./primitives";
 
 export const StatusBadge = ({
@@ -85,6 +86,7 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
           />
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <StatusBadge status={event.myRegistrationStatus} hasOffer={event.myPendingOffer !== null} />
+            <GroupChips groups={event.groups} />
             {event.waitlistSize > 0 && !mine ? (
               <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
                 {t("events.waitlistSize", { n: event.waitlistSize })}
