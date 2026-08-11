@@ -1,7 +1,7 @@
 process.env.BOT_TOKEN = "12345:smoke-test-token";
 process.env.DOMAIN = "club.example.com";
 process.env.ADMIN_IDS = "1001,4004";
-process.env.EVENT_GROUPS = "alumni,coaches";
+process.env.EVENT_GROUPS = "-1001234567890,-1009876543210";
 process.env.WEBHOOK_SECRET = "smoke-webhook";
 process.env.CHECKIN_SECRET = "smoke-checkin";
 process.env.DATABASE_PATH = ":memory:";
@@ -89,47 +89,54 @@ check("banned user cannot join", ban.status === 200 && joinBanned.status === 403
 
 /* ------------------------------------------------------------ group restrictions */
 
-const catalog = await call("GET", "/api/admin/groups", admin);
-check("group catalog", catalog.status === 200 && (catalog.json as { groups: string[] }).groups.join() === "alumni,coaches", catalog.json);
+// Membership answers come from Telegram; seed the cache so the smoke run needs no network.
+const { db } = await import("../src/db");
+const groupChat = -1001234567890;
+const setMembership = (userId: number, isMember: boolean, ageMs = 0) =>
+  db.$client.query("INSERT INTO chat_members (chat_id, user_id, is_member, checked_at) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id, user_id) DO UPDATE SET is_member = excluded.is_member, checked_at = excluded.checked_at")
+    .run(groupChat, userId, isMember ? 1 : 0, Math.floor((Date.now() - ageMs) / 1000));
+
+// A user untouched by the earlier checks, so "banned" cannot mask "not_eligible".
+const outsider = initDataFor(5005, "Outsider");
+await call("GET", "/api/me", outsider);
+setMembership(5005, false);
+setMembership(3003, true);
 
 const restricted = await call("POST", "/api/admin/events", admin, {
   title: "Только свои", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
-  location: "Парк", capacity: null, status: "published", groups: ["alumni"],
+  location: "Парк", capacity: null, status: "published", groups: [groupChat],
 });
 const restrictedId = (restricted.json as { id: number }).id;
-check("admin creates restricted event", restricted.status === 200 && (restricted.json as { groups: string[] }).groups.join() === "alumni", restricted.json);
+check("admin restricts an event to a chat", restricted.status === 200 && (restricted.json as { groups: Array<{ id: number }> }).groups[0]?.id === groupChat, restricted.json);
 
 const badGroup = await call("POST", "/api/admin/events", admin, {
   title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
-  location: "x", capacity: null, groups: ["nope"],
+  location: "x", capacity: null, groups: [-1000000000001],
 });
-check("unknown group rejected", badGroup.status === 400, badGroup.json);
+check("chat outside EVENT_GROUPS rejected", badGroup.status === 400, badGroup.json);
 
-const hiddenList = await call("GET", "/api/events", runnerB);
-check("outsider does not see restricted event", !(hiddenList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId));
+const hiddenList = await call("GET", "/api/events", outsider);
+check("non-member does not see restricted event", !(hiddenList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId));
 
-const hiddenDetail = await call("GET", `/api/events/${restrictedId}`, runnerB);
-check("outsider gets 404 on restricted event", hiddenDetail.status === 404, hiddenDetail.json);
+const hiddenDetail = await call("GET", `/api/events/${restrictedId}`, outsider);
+check("non-member gets 404 on restricted event", hiddenDetail.status === 404, hiddenDetail.json);
 
-const blockedJoin = await call("POST", `/api/events/${restrictedId}/join`, runnerB);
-check("outsider cannot join restricted event", blockedJoin.status === 403 && (blockedJoin.json as { error: string }).error === "not_eligible", blockedJoin.json);
-
-const assign = await call("PUT", "/api/admin/users/3003/groups", admin, { groups: ["alumni"] });
-check("admin assigns a group", assign.status === 200 && (assign.json as { groups: string[] }).groups.join() === "alumni", assign.json);
+const blockedJoin = await call("POST", `/api/events/${restrictedId}/join`, outsider);
+check("non-member cannot join restricted event", blockedJoin.status === 403 && (blockedJoin.json as { error: string }).error === "not_eligible", blockedJoin.json);
 
 const memberList = await call("GET", "/api/events", runnerB);
-check("member sees restricted event", (memberList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId));
+check("chat member sees restricted event", (memberList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId));
 
 const memberJoin = await call("POST", `/api/events/${restrictedId}/join`, runnerB);
-check("member joins restricted event", memberJoin.status === 200, memberJoin.json);
+check("chat member joins restricted event", memberJoin.status === 200, memberJoin.json);
 
-const revoke = await call("PUT", "/api/admin/users/3003/groups", admin, { groups: [] });
+setMembership(3003, false);
 const stillVisible = await call("GET", `/api/events/${restrictedId}`, runnerB);
-check("registered member keeps access after losing the group", revoke.status === 200 && stillVisible.status === 200, stillVisible.json);
+check("registered member keeps access after leaving the chat", stillVisible.status === 200, stillVisible.json);
 
 const opened = await call("PATCH", `/api/admin/events/${restrictedId}`, admin, { groups: [] });
-const openList = await call("GET", "/api/events", runnerB);
-check("clearing groups reopens the event", opened.status === 200 && (opened.json as { groups: string[] }).groups.length === 0 && (openList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId), opened.json);
+const openList = await call("GET", "/api/events", outsider);
+check("clearing chats reopens the event", opened.status === 200 && (opened.json as { groups: unknown[] }).groups.length === 0 && (openList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId), opened.json);
 
 const traversal = await app.handle(new Request("http://localhost/%2e%2e/%2e%2e/etc/passwd"));
 const traversalBody = await traversal.text();

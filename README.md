@@ -84,7 +84,7 @@ Stale `-wal` and `-shm` sidecars must go with the old database; leaving them beh
 | `BOT_TOKEN` | Token issued by BotFather. |
 | `DOMAIN` | Public domain name, without a protocol. |
 | `ADMIN_IDS` | Comma-separated Telegram user IDs for bootstrap administrators. |
-| `EVENT_GROUPS` | Comma-separated membership groups events can be restricted to. Empty means every event is open. |
+| `EVENT_GROUPS` | Comma-separated Telegram chat IDs events can be restricted to. Empty means every event is open. |
 | `WEBHOOK_SECRET` | Random value used to verify Telegram webhook requests. |
 | `CHECKIN_SECRET` | Random value used to sign check-in QR tokens. |
 | `DATABASE_PATH` | SQLite database path; Compose sets `/app/data/sku.db`. |
@@ -92,14 +92,30 @@ Stale `-wal` and `-shm` sidecars must go with the old database; leaving them beh
 
 ## Restricted events
 
-`EVENT_GROUPS` lists the group names an admin may hand out, e.g. `EVENT_GROUPS=alumni,coaches`.
-Admins assign people to groups in **Admin → People**, and restrict an event to any set of
-groups from the event form — at any point in its life, before or after publishing.
+An event can be limited to the members of one or more Telegram groups:
 
-An event with no groups is open to everyone. An event with groups is listed, opened, and
-joinable only by people in at least one of them; to everyone else it reads as not found,
+```sh
+EVENT_GROUPS=-1001234567890,-1009876543210
+```
+
+**The bot must be an administrator in each of those chats.** Telegram only guarantees
+`getChatMember` answers about other users to admins; without that, every lookup fails and
+the events stay closed. To find a chat's ID, add the bot to the group and read the
+`chat.id` from any update, or forward a message from the group to a bot like `@userinfobot`.
+Supergroup IDs start with `-100`.
+
+Admins restrict an event from the event form — at any point in its life, before or after
+publishing. Titles shown in the picker come from Telegram, so groups read as names rather
+than IDs. There is nothing to assign per person: membership *is* Telegram group membership,
+so adding or removing someone from the group is what grants or revokes access.
+
+An event with no groups is open to everyone. A restricted one is listed, opened, and joinable
+only by members of at least one of its groups; to everyone else it reads as not found,
 including through a bot deep link. Anyone already signed up keeps seeing an event that is
 restricted afterwards, so they can still cancel; once they cancel, the restriction applies.
 
-Group assignments are stored in the database, so dropping a name from `EVENT_GROUPS` only
-stops it being handed out — events already restricted to it stay restricted.
+Membership answers are cached in `chat_members` for 5 minutes
+(`MEMBERSHIP_TTL_MS` in `apps/server/src/core/membership.ts`), so leaving a group takes
+up to that long to close an event off. If Telegram cannot answer, the last known answer
+stands; with no answer on record the event stays closed, so an unreachable group never
+opens an event to everyone.
