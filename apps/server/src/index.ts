@@ -2,6 +2,7 @@ import { webhookHandler } from "gramio";
 import { migrate } from "@sku/db";
 import { app } from "./api";
 import { bot } from "./bot";
+import { refreshChatTitles } from "./bot/membership";
 import { syncConfiguredAdmins } from "./core/admins";
 import { db } from "./db";
 import { loadEnv } from "./env";
@@ -30,6 +31,9 @@ if (isProduction) {
 } else {
   await bot.start();
 }
+
+// Warm the restricted-chat titles so the admin UI names them instead of showing raw ids.
+void refreshChatTitles(env.EVENT_GROUPS).catch(console.error);
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {

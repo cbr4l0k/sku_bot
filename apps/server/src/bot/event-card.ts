@@ -2,10 +2,11 @@ import { InlineKeyboard, bold, format } from "gramio";
 import { and, count, eq, events, inArray, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
-import { canSeeEvent } from "../core/groups";
+import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { i18n } from "./i18n";
+import { telegramMembership } from "./membership";
 
 const env = loadEnv();
 const timezone = "Europe/Moscow";
@@ -43,7 +44,8 @@ export const eventSummary = (eventId: number, locale: Locale): EventSummary | nu
 
 export const sendEventCard = async (context: EventCardContext, eventId: number, userId: number, locale: Locale): Promise<void> => {
   const event = publishedEvent(eventId);
-  // A deep link must not reveal an event the recipient's groups exclude them from.
+  if (event) await refreshMemberships(db, telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
+  // A deep link must not reveal an event the recipient's chats exclude them from.
   if (!event || !canSeeEvent(db, eventId, userId)) {
     await context.send(i18n.t(locale, "eventUnavailable"));
     return;
