@@ -7,8 +7,12 @@ import { and, asc, chatMembers, eq, eventChats, events, gt, inArray, sql, type D
  */
 export const MEMBERSHIP_TTL_MS = 5 * 60 * 1000;
 
-/** Whether the user is currently in the chat; null when Telegram could not answer. */
-export type MembershipProbe = (chatId: number, userId: number) => Promise<boolean | null>;
+/**
+ * What Telegram says about one user in one chat: their membership, the chat's new
+ * id if the group has been upgraded to a supergroup, or null when it could not answer.
+ */
+export type MembershipAnswer = { isMember: boolean } | { movedTo: number } | null;
+export type MembershipProbe = (chatId: number, userId: number) => Promise<MembershipAnswer>;
 
 /**
  * An event with no chats is open to everyone; one with chats is visible only to
@@ -61,6 +65,20 @@ export const setEventChats = (db: Db, eventId: number, chatIds: readonly number[
   return unique;
 };
 
+/**
+ * Telegram silently upgrades a basic group to a supergroup, which changes its id —
+ * every later lookup on the old id fails, so events restricted to it would go dark.
+ * Carry the restriction over to the new id instead. EVENT_GROUPS still needs editing
+ * by hand; the admin UI reports that.
+ */
+export const migrateChat = (db: Db, from: number, to: number): void => {
+  db.$client.transaction(() => {
+    db.$client.query("INSERT OR IGNORE INTO event_chats (event_id, chat_id) SELECT event_id, ? FROM event_chats WHERE chat_id = ?").run(to, from);
+    db.$client.query("DELETE FROM event_chats WHERE chat_id = ?").run(from);
+    db.$client.query("DELETE FROM chat_members WHERE chat_id = ?").run(from);
+  })();
+};
+
 /** Brings the user's cached answers for `chatIds` up to date, asking Telegram only where stale. */
 export const refreshMemberships = async (
   db: Db,
@@ -68,6 +86,7 @@ export const refreshMemberships = async (
   userId: number,
   chatIds: readonly number[],
   now: Date,
+  followMigrations = true,
 ): Promise<void> => {
   const unique = [...new Set(chatIds)];
   if (unique.length === 0) return;
@@ -85,17 +104,25 @@ export const refreshMemberships = async (
   if (stale.length === 0) return;
 
   const answers = await Promise.all(stale.map(async (chatId) => [chatId, await probe(chatId, userId)] as const));
-  for (const [chatId, isMember] of answers) {
+  const moved: number[] = [];
+  for (const [chatId, answer] of answers) {
+    if (answer !== null && "movedTo" in answer) {
+      migrateChat(db, chatId, answer.movedTo);
+      moved.push(answer.movedTo);
+      continue;
+    }
     // A failed lookup keeps whatever was known and stays stale so the next read retries.
     // With nothing known we record "not a member", so an unreachable chat closes an
     // event rather than opening it to everyone.
-    if (isMember === null && cached.has(chatId)) continue;
+    if (answer === null && cached.has(chatId)) continue;
+    const isMember = answer?.isMember ?? false;
     db.insert(chatMembers)
-      .values({ chatId, userId, isMember: isMember ?? false, checkedAt: now })
-      .onConflictDoUpdate({
-        target: [chatMembers.chatId, chatMembers.userId],
-        set: { isMember: isMember ?? false, checkedAt: now },
-      })
+      .values({ chatId, userId, isMember, checkedAt: now })
+      .onConflictDoUpdate({ target: [chatMembers.chatId, chatMembers.userId], set: { isMember, checkedAt: now } })
       .run();
   }
+
+  // One extra pass so the upgraded chat is answered in the same request. Never recurse
+  // further, in case Telegram ever points a migration back at a chat we just left.
+  if (moved.length > 0 && followMigrations) await refreshMemberships(db, probe, userId, moved, now, false);
 };

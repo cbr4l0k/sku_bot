@@ -33,12 +33,13 @@ describe("Telegram-gated events", () => {
   const OTHER = -1009876543210;
 
   /** Stands in for getChatMember; records every lookup so we can assert on caching. */
-  const probeFor = (members: Record<number, number[]>, failing: number[] = []) => {
+  const probeFor = (members: Record<number, number[]>, failing: number[] = [], moved: Record<number, number> = {}) => {
     const calls: Array<[number, number]> = [];
     const probe: MembershipProbe = async (chatId, userId) => {
       calls.push([chatId, userId]);
+      if (moved[chatId] !== undefined) return { movedTo: moved[chatId] as number };
       if (failing.includes(chatId)) return null;
-      return (members[chatId] ?? []).includes(userId);
+      return { isMember: (members[chatId] ?? []).includes(userId) };
     };
     return { probe, calls };
   };
@@ -117,6 +118,30 @@ describe("Telegram-gated events", () => {
 
     // User 3 was never resolved, so an unreachable chat must not open the event to them.
     await refreshMemberships(db, broken.probe, 3, [CHAT], now);
+    expect(canSeeEvent(db, 1, 3)).toBe(false);
+  });
+
+  test("a group upgraded to a supergroup carries its restriction to the new chat id", async () => {
+    event(1);
+    setEventChats(db, 1, [CHAT]);
+    // Telegram answers lookups on the old id with the supergroup's new id.
+    const { probe } = probeFor({ [OTHER]: [2] }, [], { [CHAT]: OTHER });
+
+    await refreshMemberships(db, probe, 2, [CHAT], now);
+
+    expect(chatsOfEvent(db, 1)).toEqual([OTHER]);
+    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(joinEvent(db, 1, 2, now)).toEqual({ status: "registered" });
+  });
+
+  test("an upgrade does not admit a non-member of the new chat", async () => {
+    event(1);
+    setEventChats(db, 1, [CHAT]);
+    const { probe } = probeFor({}, [], { [CHAT]: OTHER });
+
+    await refreshMemberships(db, probe, 3, [CHAT], now);
+
+    expect(chatsOfEvent(db, 1)).toEqual([OTHER]);
     expect(canSeeEvent(db, 1, 3)).toBe(false);
   });
 

@@ -2,7 +2,7 @@ import { webhookHandler } from "gramio";
 import { migrate } from "@sku/db";
 import { app } from "./api";
 import { bot } from "./bot";
-import { refreshChatTitles } from "./bot/membership";
+import { refreshChatStates } from "./bot/membership";
 import { syncConfiguredAdmins } from "./core/admins";
 import { db } from "./db";
 import { loadEnv } from "./env";
@@ -32,8 +32,9 @@ if (isProduction) {
   await bot.start();
 }
 
-// Warm the restricted-chat titles so the admin UI names them instead of showing raw ids.
-void refreshChatTitles(env.EVENT_GROUPS).catch(console.error);
+// Warm the restricted-chat titles so the admin UI names them instead of showing raw ids,
+// and surface a misconfigured EVENT_GROUPS in the log at boot rather than at first use.
+void refreshChatStates(env.EVENT_GROUPS).catch(console.error);
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {

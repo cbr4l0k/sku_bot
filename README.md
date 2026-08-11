@@ -112,6 +112,13 @@ To find a group's ID:
 Group IDs are **negative**: supergroups start with `-100`. The positive number in a
 `t.me/c/<number>/…` link is not the chat ID — prefix it with `-100`, or just use `/chatid`.
 
+Telegram silently upgrades a basic group to a supergroup when certain features are used,
+and **the chat ID changes** when it does. Restrictions on already-configured events follow
+the move automatically, and the admin UI marks the group with Telegram's own error plus the
+replacement ID to put in `EVENT_GROUPS`. Note that `getChat` keeps answering on the dead ID,
+so a stale group looks healthy until a membership lookup is actually tried — which is why
+the UI probes the bot's own membership rather than just fetching the title.
+
 Admins restrict an event from the event form — at any point in its life, before or after
 publishing. Titles shown in the picker come from Telegram, so groups read as names rather
 than IDs. There is nothing to assign per person: membership *is* Telegram group membership,

@@ -19,7 +19,7 @@ import {
 import { bot } from "../bot";
 import type { EventChange } from "../bot/event-card";
 import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
-import { chatTitle, refreshChatTitles, telegramMembership } from "../bot/membership";
+import { chatState, chatTitle, refreshChatStates, telegramMembership } from "../bot/membership";
 import {
   canSeeEvent,
   chatsGatingUpcomingEvents,
@@ -375,8 +375,8 @@ export const app = new Elysia()
     }, { params: idParams })
     .get("/admin/groups", async ({ isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
-      await refreshChatTitles(env.EVENT_GROUPS);
-      return { groups: env.EVENT_GROUPS.map((id) => ({ id, title: chatTitle(id) })) };
+      await refreshChatStates(env.EVENT_GROUPS);
+      return { groups: env.EVENT_GROUPS.map((id) => ({ id, ...chatState(id) })) };
     })
     .post("/admin/users/:id/promote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
