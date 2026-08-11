@@ -3,9 +3,10 @@ import { users } from "@sku/db";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { i18n, localeFromLanguageCode } from "./i18n";
-import { offerCallback } from "./callbacks";
+import { joinCallback } from "./callbacks";
 import { chatIdHandler, chatMembershipHandler } from "./chat-id";
 import { contactHandler } from "./contact";
+import { joinHandler } from "./join";
 import { offerHandler } from "./offers";
 import { startHandler } from "./start";
 
@@ -26,7 +27,11 @@ export const bot = new Bot(env.BOT_TOKEN)
   .command("chatid", chatIdHandler)
   .on("my_chat_member", chatMembershipHandler)
   .on("message", contactHandler)
-  .on("callback_query", offerHandler)
+  // One callback_query stream, two kinds of button: route by the packed prefix.
+  .on("callback_query", (context) => {
+    const data = typeof context.data === "string" ? context.data : undefined;
+    return data && joinCallback.safeUnpack(data).success ? joinHandler(context) : offerHandler(context);
+  })
   .onStart(async () => {
     await Promise.all([
       bot.api.setMyCommands({

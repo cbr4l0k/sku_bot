@@ -1,10 +1,11 @@
 import { InlineKeyboard, bold, format } from "gramio";
-import { and, count, eq, events, inArray, registrations } from "@sku/db";
+import { and, asc, count, eq, events, inArray, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
 import { db } from "../db";
 import { loadEnv } from "../env";
+import { joinCallback } from "./callbacks";
 import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
 
@@ -32,7 +33,65 @@ const publishedEvent = (eventId: number) => db.select({
   location: events.location,
   locationUrl: events.locationUrl,
   capacity: events.capacity,
+  waitlistEnabled: events.waitlistEnabled,
 }).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
+
+const confirmedCount = (eventId: number) => db.select({ count: count() }).from(registrations)
+  .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"])))
+  .get()?.count ?? 0;
+
+const myRegistration = (eventId: number, userId: number) => db
+  .select({ status: registrations.status })
+  .from(registrations)
+  .where(and(eq(registrations.eventId, eventId), eq(registrations.userId, userId)))
+  .get();
+
+const queuePosition = (eventId: number, userId: number) => db
+  .select({ userId: registrations.userId })
+  .from(registrations)
+  .where(and(eq(registrations.eventId, eventId), eq(registrations.status, "waitlisted")))
+  .orderBy(asc(registrations.createdAt), asc(registrations.id))
+  .all()
+  .findIndex((row) => row.userId === userId) + 1;
+
+/**
+ * The card doubles as the bot's join screen: it states where the user stands and
+ * carries the one action open to them — sign up, take a queue place, or nothing
+ * at all when the event is full and its queue is off.
+ */
+export const renderEventCard = (eventId: number, userId: number, locale: Locale): { text: ReturnType<typeof format>; keyboard: InlineKeyboard } | null => {
+  const event = publishedEvent(eventId);
+  if (!event || !canSeeEvent(db, eventId, userId)) return null;
+
+  const confirmed = confirmedCount(event.id);
+  const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed, 0);
+  const full = spots !== null && spots === 0;
+  const registration = myRegistration(event.id, userId);
+  const status = registration?.status ?? null;
+  const mine = status === "registered" || status === "checked_in" || status === "waitlisted";
+
+  const lines = [
+    spots === null ? null : i18n.t(locale, "spotsLeft", spots),
+    status === "registered" ? i18n.t(locale, "cardRegistered") : null,
+    status === "checked_in" ? i18n.t(locale, "cardCheckedIn") : null,
+    status === "waitlisted" ? i18n.t(locale, "cardWaitlisted", queuePosition(event.id, userId)) : null,
+    !mine && full && !event.waitlistEnabled ? i18n.t(locale, "noSpotsLeft") : null,
+  ].filter((line): line is string => line !== null);
+
+  const keyboard = new InlineKeyboard();
+  if (!mine && (!full || event.waitlistEnabled)) {
+    keyboard.text(i18n.t(locale, full ? "joinQueueButton" : "joinButton"), joinCallback.pack({ id: event.id })).row();
+  }
+  keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
+
+  return {
+    text: format`${bold(event.title)}
+
+${i18n.t(locale, "eventDate", formatDate(event.startsAt, locale))}
+${i18n.t(locale, "eventLocation", event.location, event.locationUrl)}${lines.length ? `\n${lines.join("\n")}` : ""}`,
+    keyboard,
+  };
+};
 
 export const eventSummary = (eventId: number, locale: Locale): EventSummary | null => {
   const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, locationUrl: events.locationUrl, capacity: events.capacity })
@@ -43,29 +102,12 @@ export const eventSummary = (eventId: number, locale: Locale): EventSummary | nu
 };
 
 export const sendEventCard = async (context: EventCardContext, eventId: number, userId: number, locale: Locale): Promise<void> => {
-  const event = publishedEvent(eventId);
-  if (event) await refreshMemberships(db, telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
   // A deep link must not reveal an event the recipient's chats exclude them from.
-  if (!event || !canSeeEvent(db, eventId, userId)) {
+  await refreshMemberships(db, telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
+  const card = renderEventCard(eventId, userId, locale);
+  if (!card) {
     await context.send(i18n.t(locale, "eventUnavailable"));
     return;
   }
-
-  const date = formatDate(event.startsAt, locale);
-  const confirmed = event.capacity === null ? null : db.select({ count: count() })
-    .from(registrations)
-    .where(and(
-      eq(registrations.eventId, event.id),
-      inArray(registrations.status, ["registered", "checked_in"]),
-    ))
-    .get()?.count ?? 0;
-  const spots = event.capacity === null || confirmed === null ? null : Math.max(event.capacity - confirmed, 0);
-  const spotsLine = spots === null ? "" : `\n${i18n.t(locale, "spotsLeft", spots)}`;
-
-  await context.send(format`${bold(event.title)}
-
-${i18n.t(locale, "eventDate", date)}
-${i18n.t(locale, "eventLocation", event.location, event.locationUrl)}${spotsLine}`, {
-    reply_markup: new InlineKeyboard().webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`),
-  });
+  await context.send(card.text, { reply_markup: card.keyboard });
 };
