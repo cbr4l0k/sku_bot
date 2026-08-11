@@ -1,16 +1,17 @@
+import type { Group } from "../api";
 import { useI18n } from "../i18n";
 import { Chip } from "./primitives";
 
 /**
- * Group names come from the server's EVENT_GROUPS catalog, so they are opaque
- * strings rather than translatable keys — they render verbatim in both locales.
+ * Groups are Telegram chats: the title comes from Telegram, and membership is
+ * managed there rather than here.
  */
-export const GroupChips = ({ groups }: { groups: readonly string[] }) =>
+export const GroupChips = ({ groups }: { groups: readonly Group[] }) =>
   groups.length === 0 ? null : (
     <>
       {groups.map((group) => (
-        <Chip key={group} tone="soft">
-          {group}
+        <Chip key={group.id} tone="soft">
+          {group.title}
         </Chip>
       ))}
     </>
@@ -22,10 +23,10 @@ export const GroupPicker = ({
   disabled = false,
   onChange,
 }: {
-  available: readonly string[];
-  value: readonly string[];
+  available: readonly Group[];
+  value: readonly number[];
   disabled?: boolean;
-  onChange: (groups: string[]) => void;
+  onChange: (groups: number[]) => void;
 }) => {
   const { t } = useI18n();
 
@@ -34,16 +35,16 @@ export const GroupPicker = ({
   return (
     <div className="flex flex-wrap gap-1.5">
       {available.map((group) => {
-        const active = value.includes(group);
+        const active = value.includes(group.id);
         return (
           <button
-            key={group}
+            key={group.id}
             type="button"
             disabled={disabled}
-            onClick={() => onChange(active ? value.filter((name) => name !== group) : [...value, group])}
+            onClick={() => onChange(active ? value.filter((id) => id !== group.id) : [...value, group.id])}
             className={`chip ${active ? "chip-flare" : ""} transition-transform active:scale-95 disabled:opacity-50`}
           >
-            {group}
+            {group.title}
           </button>
         );
       })}

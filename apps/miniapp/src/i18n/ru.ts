@@ -132,8 +132,8 @@ export const ru = {
   "form.capacity": "Вместимость",
   "form.capacityHint": "Пусто — без ограничений",
   "form.status": "Статус",
-  "form.groups": "Доступ по группам",
-  "form.groupsHint": "Пусто — событие видно всем",
+  "form.groups": "Только для групп",
+  "form.groupsHint": "Событие увидят только участники выбранных Telegram-групп. Пусто — видно всем",
   "form.create": "Создать событие",
   "form.required": "Заполни обязательные поля",
   "form.invalidLocationUrl": "Укажи корректную HTTPS-ссылку на карту",
@@ -155,9 +155,7 @@ export const ru = {
   "admin.copyLink": "Ссылка для записи",
   "admin.organizers": "Организаторы",
   "admin.organizersHint": "Отметь, кто ведёт это событие",
-  "admin.groups": "Группы",
-  "admin.groupsHint": "Участник видит события своих групп",
-  "admin.noGroups": "Группы не настроены на сервере",
+  "admin.noGroups": "Telegram-группы не настроены на сервере",
   "admin.stats": "Статистика события",
   "admin.statRegistered": "Записаны",
   "admin.statWaitlisted": "Очередь",
@@ -200,8 +198,8 @@ export const ru = {
   "err.configured_admin_cannot_be_demoted": "Этот админ задан в настройках сервера",
   "err.invalid_starts_at": "Неверная дата",
   "err.request_failed": "Не получилось. Попробуй ещё раз",
-  "err.not_eligible": "Событие только для отдельных групп",
-  "err.unknown_group": "Такой группы нет в настройках сервера",
+  "err.not_eligible": "Событие только для участников определённых Telegram-групп",
+  "err.unknown_group": "Этой группы нет в настройках сервера",
 } as const;
 
 export type Dict = { [K in keyof typeof ru]: string };

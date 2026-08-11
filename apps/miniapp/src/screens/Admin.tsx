@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 
-import { sku, type AdminEventDraft, type AdminUser } from "../api";
+import { sku, type AdminEventDraft, type AdminUser, type Group } from "../api";
 import { useI18n } from "../i18n";
 import { bib, errorText, fullName, percent } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { DateBlock, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
-import { GroupChips, GroupPicker } from "../ui/groups";
+import { GroupChips } from "../ui/groups";
 import { Sheet, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
@@ -33,7 +33,7 @@ const TABS: { id: Tab; key: "admin.tabEvents" | "admin.tabUsers" | "admin.tabSta
 
 /* --------------------------------------------------------------- events tab */
 
-const EventsTab = ({ availableGroups }: { availableGroups: readonly string[] }) => {
+const EventsTab = ({ availableGroups }: { availableGroups: readonly Group[] }) => {
   const { t } = useI18n();
   const toast = useToast();
   const action = useAction();
@@ -107,17 +107,7 @@ const EventsTab = ({ availableGroups }: { availableGroups: readonly string[] }) 
 
 /* ---------------------------------------------------------------- users tab */
 
-const UserRow = ({
-  person,
-  index,
-  availableGroups,
-  onChanged,
-}: {
-  person: AdminUser;
-  index: number;
-  availableGroups: readonly string[];
-  onChanged: () => void;
-}) => {
+const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: number; onChanged: () => void }) => {
   const { t } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
@@ -154,17 +144,6 @@ const UserRow = ({
           {person.isBanned ? <Chip tone="plain">{t("admin.banned")}</Chip> : null}
         </div>
       </div>
-      {availableGroups.length > 0 ? (
-        <div className="mt-2.5">
-          <div className="mb-1.5 text-[11px] text-hint">{t("admin.groups")}</div>
-          <GroupPicker
-            available={availableGroups}
-            value={person.groups}
-            disabled={action.pending}
-            onChange={(groups) => run(() => sku.setUserGroups(person.id, groups))}
-          />
-        </div>
-      ) : null}
       <div className="mt-2.5 flex flex-wrap gap-2">
         <Button size="sm" variant={person.isBanned ? "ghost" : "danger"} loading={action.pending} onClick={() => void toggleBan()}>
           {person.isBanned ? t("admin.unban") : t("admin.ban")}
@@ -185,7 +164,7 @@ const UserRow = ({
   );
 };
 
-const UsersTab = ({ availableGroups }: { availableGroups: readonly string[] }) => {
+const UsersTab = () => {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -213,13 +192,7 @@ const UsersTab = ({ availableGroups }: { availableGroups: readonly string[] }) =
       {users.data && users.data.length > 0 ? (
         <section className="card px-4 py-1">
           {users.data.map((person, index) => (
-            <UserRow
-              key={person.id}
-              person={person}
-              index={index}
-              availableGroups={availableGroups}
-              onChanged={() => void users.reload(true)}
-            />
+            <UserRow key={person.id} person={person} index={index} onChanged={() => void users.reload(true)} />
           ))}
         </section>
       ) : null}
@@ -298,7 +271,7 @@ export const AdminScreen = () => {
       </div>
 
       {tab === "events" ? <EventsTab availableGroups={availableGroups} /> : null}
-      {tab === "users" ? <UsersTab availableGroups={availableGroups} /> : null}
+      {tab === "users" ? <UsersTab /> : null}
       {tab === "stats" ? <StatsTab /> : null}
     </Screen>
   );

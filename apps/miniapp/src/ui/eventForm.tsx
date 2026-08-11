@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { AdminEventDraft } from "../api";
+import type { AdminEventDraft, Group } from "../api";
 import { useI18n } from "../i18n";
 import { fromLocalInput, toLocalInput } from "../lib/format";
 import { GroupPicker } from "./groups";
@@ -29,12 +29,12 @@ export const EventForm = ({
   submitLabel: string;
   pending?: boolean;
   /** Omitted for organizers — only admins may restrict an event to groups. */
-  availableGroups?: readonly string[];
+  availableGroups?: readonly Group[];
   onSubmit: (draft: AdminEventDraft) => void;
 }) => {
   const { t } = useI18n();
   const [form, setForm] = useState(() => emptyDraft(initial));
-  const [groups, setGroups] = useState<string[]>(() => [...(initial.groups ?? [])]);
+  const [groups, setGroups] = useState<number[]>(() => [...(initial.groups ?? [])]);
   const [touched, setTouched] = useState(false);
 
   const locationUrlValid = form.locationUrl.trim() === "" || (() => {

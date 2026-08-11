@@ -258,7 +258,7 @@ export const AdminEventScreen = () => {
               location: event.location,
               locationUrl: event.locationUrl,
               capacity: event.capacity,
-              groups: event.groups,
+              groups: event.groups.map((group) => group.id),
             }}
             submitLabel={t("common.save")}
             pending={action.pending}

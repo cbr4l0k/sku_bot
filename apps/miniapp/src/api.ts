@@ -100,8 +100,11 @@ export type EventDraft = {
   capacity: number | null;
 };
 
-/** Group restrictions ride along with the event, but only admins may set them. */
-export type AdminEventDraft = EventDraft & { groups?: string[] };
+/** A Telegram group an event can be restricted to, as listed in EVENT_GROUPS. */
+export type Group = Ok<typeof api.admin.groups.get>["groups"][number];
+
+/** Chat restrictions ride along with the event, but only admins may set them. */
+export type AdminEventDraft = EventDraft & { groups?: number[] };
 
 export const sku = {
   me: () => call(api.me.get(auth())),
@@ -125,7 +128,6 @@ export const sku = {
   adminUpdateEvent: (id: number, body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
     call(api.admin.events({ id }).patch(body, auth())),
   groupCatalog: () => call(api.admin.groups.get(auth())),
-  setUserGroups: (id: number, groups: string[]) => call(api.admin.users({ id }).groups.put({ groups }, auth())),
   deleteEvent: (id: number) => call(api.admin.events({ id }).delete(undefined, auth())),
   setOrganizers: (id: number, userIds: number[]) => call(api.admin.events({ id }).organizers.put({ userIds }, auth())),
   eventStats: (id: number) => call(api.admin.events({ id }).stats.get(auth())),
