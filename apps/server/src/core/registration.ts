@@ -15,11 +15,12 @@ export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): J
   if (event.starts_at <= timestamp) return { error: "event_past" };
   const registration = db.$client.query<RegistrationRow, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (registration && registration.status !== "canceled") return { error: "already_joined" };
-  // Restricted events admit only members of the listed groups (see core/groups.ts).
+  // Restricted events admit only members of the listed Telegram chats. This reads the
+  // cache; callers refresh it against Telegram first (see core/membership.ts).
   const eligible = db.$client.query<{ ok: number }, [number, number, number]>(
-    `SELECT (NOT EXISTS (SELECT 1 FROM event_groups WHERE event_id = ?)
-       OR EXISTS (SELECT 1 FROM event_groups JOIN user_groups ON user_groups.group_name = event_groups.group_name
-                  WHERE event_groups.event_id = ? AND user_groups.user_id = ?)) AS ok`,
+    `SELECT (NOT EXISTS (SELECT 1 FROM event_chats WHERE event_id = ?)
+       OR EXISTS (SELECT 1 FROM event_chats JOIN chat_members ON chat_members.chat_id = event_chats.chat_id
+                  WHERE event_chats.event_id = ? AND chat_members.user_id = ? AND chat_members.is_member = 1)) AS ok`,
   ).get(eventId, eventId, userId)?.ok;
   if (!eligible) return { error: "not_eligible" };
   const confirmed = db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;

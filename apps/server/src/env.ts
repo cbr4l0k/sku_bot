@@ -10,20 +10,24 @@ const adminIds = z.string().transform((raw, ctx): readonly number[] => {
   return segments.map(Number);
 });
 
-/** A comma-separated catalog of group names, e.g. "alumni,coaches". Empty disables restrictions. */
-const groupNames = z.string().default("").transform((raw, ctx): readonly string[] => {
+/**
+ * A comma-separated catalog of Telegram chat ids events may be restricted to,
+ * e.g. "-1001234567890,-1009876543210". Empty disables restrictions entirely.
+ * The bot must be an administrator in each chat for membership lookups to work.
+ */
+const chatIds = z.string().default("").transform((raw, ctx): readonly number[] => {
   const segments = raw.split(",").map((segment) => segment.trim()).filter((segment) => segment.length > 0);
   for (const segment of segments) {
-    if (segment.length > 40) ctx.addIssue({ code: "custom", message: `"${segment}" is longer than 40 characters` });
+    if (!/^-?[1-9][0-9]*$/.test(segment)) ctx.addIssue({ code: "custom", message: `"${segment}" is not a Telegram chat id` });
   }
-  return [...new Set(segments)];
+  return [...new Set(segments.map(Number))];
 });
 
 const environmentSchema = z.object({
   BOT_TOKEN: z.string().min(1),
   DOMAIN: z.string().min(1),
   ADMIN_IDS: adminIds,
-  EVENT_GROUPS: groupNames,
+  EVENT_GROUPS: chatIds,
   WEBHOOK_SECRET: z.string().min(1),
   CHECKIN_SECRET: z.string().min(1),
   DATABASE_PATH: z.string().min(1).default("./data/sku.db"),

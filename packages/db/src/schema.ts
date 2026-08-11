@@ -46,30 +46,32 @@ export const events = sqliteTable(
 );
 
 /**
- * Group membership. The catalog of valid names lives in the EVENT_GROUPS env var;
- * eligibility itself is pure data, so an event stays restricted even if its group
- * is later dropped from the catalog.
+ * Telegram chats an event is limited to. An event with no rows here is open to
+ * everyone; the catalog of assignable chat ids lives in the EVENT_GROUPS env var.
  */
-export const userGroups = sqliteTable(
-  "user_groups",
-  {
-    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    groupName: text("group_name").notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.userId, table.groupName] }),
-    index("user_groups_group_name_idx").on(table.groupName),
-  ],
-);
-
-/** An event with no rows here is open to everyone. */
-export const eventGroups = sqliteTable(
-  "event_groups",
+export const eventChats = sqliteTable(
+  "event_chats",
   {
     eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
-    groupName: text("group_name").notNull(),
+    chatId: integer("chat_id").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.eventId, table.groupName] })],
+  (table) => [primaryKey({ columns: [table.eventId, table.chatId] })],
+);
+
+/**
+ * Cache of Telegram's getChatMember answers. Membership lives in Telegram, not
+ * here — these rows only exist so the event queries can filter in SQL, and they
+ * are refreshed on read once older than the TTL in core/membership.ts.
+ */
+export const chatMembers = sqliteTable(
+  "chat_members",
+  {
+    chatId: integer("chat_id").notNull(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    isMember: integer("is_member", { mode: "boolean" }).notNull(),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.chatId, table.userId] })],
 );
 
 export const eventOrganizers = sqliteTable(
