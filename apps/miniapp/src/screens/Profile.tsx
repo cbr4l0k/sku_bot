@@ -46,10 +46,6 @@ export const ProfileScreen = () => {
             <dt className="eyebrow">{t("profile.phone")}</dt>
             <dd className="num text-[13px]">{me?.phone ?? <span className="text-hint">{t("profile.noPhone")}</span>}</dd>
           </div>
-          <div className="flex items-baseline justify-between gap-4">
-            <dt className="eyebrow">{t("profile.id")}</dt>
-            <dd className="num text-[13px]">{me?.id ?? "—"}</dd>
-          </div>
           {me?.createdAt ? (
             <div className="flex items-baseline justify-between gap-4">
               <dt className="eyebrow">{t("profile.since")}</dt>
