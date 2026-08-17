@@ -61,7 +61,8 @@ export const ru = {
   "detail.checkedInHint": "Отметка принята. Хорошей тренировки!",
   "detail.confirmCancel": "Точно отменяешь запись? Место сразу уйдёт следующему из очереди.",
   "detail.fullNoQueue": "Мест больше нет, очереди на это событие нет",
-  "detail.pastEvent": "Событие уже прошло",
+  "detail.pastEvent": "Событие завершено",
+  "detail.underway": "Идёт сейчас — отметка открыта",
   "detail.closed": "Запись закрыта",
   "detail.canceled": "Событие отменено",
 
@@ -108,6 +109,14 @@ export const ru = {
   "organizer.noRegistrations": "Пока никто не записался",
   "organizer.edit": "Редактировать событие",
   "organizer.manualToggle": "Отметить вручную",
+  "organizer.live": "Идёт",
+  "organizer.ended": "Завершено",
+  "organizer.endEvent": "Завершить событие",
+  "organizer.reopenEvent": "Возобновить",
+  "organizer.confirmEnd": "Завершить событие? Отметка закроется, записаться больше не получится. Если завершишь раньше времени — событие можно возобновить.",
+  "organizer.endedHint": "Событие завершено. Список всё ещё можно поправить вручную или возобновить событие, чтобы снова принимать отметки.",
+  "organizer.toastEnded": "Событие завершено",
+  "organizer.toastReopened": "Событие возобновлено",
 
   "form.title": "Название",
   "form.description": "Описание",
@@ -178,7 +187,7 @@ export const ru = {
 
   "err.already_joined": "Ты уже записан на это событие",
   "err.banned": "Действие недоступно: аккаунт заблокирован",
-  "err.event_past": "Событие уже прошло",
+  "err.event_over": "Событие завершено",
   "err.not_published": "Запись на событие закрыта",
   "err.event_not_found": "Событие не найдено",
   "err.not_registered": "Ты не записан на это событие",

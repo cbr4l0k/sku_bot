@@ -62,7 +62,8 @@ export const en: Dict = {
   "detail.checkedInHint": "Check-in accepted. Have a great run!",
   "detail.confirmCancel": "Cancel your signup? The spot goes to the next person right away.",
   "detail.fullNoQueue": "No spots left, and this event has no queue",
-  "detail.pastEvent": "This event has already happened",
+  "detail.pastEvent": "This event is over",
+  "detail.underway": "Under way — check-in is open",
   "detail.closed": "Signups are closed",
   "detail.canceled": "Event canceled",
 
@@ -109,6 +110,14 @@ export const en: Dict = {
   "organizer.noRegistrations": "Nobody signed up yet",
   "organizer.edit": "Edit event",
   "organizer.manualToggle": "Check in manually",
+  "organizer.live": "Running",
+  "organizer.ended": "Ended",
+  "organizer.endEvent": "End event",
+  "organizer.reopenEvent": "Reopen event",
+  "organizer.confirmEnd": "End this event? Check-in closes and nobody else can sign up. You can reopen it if you end it too early.",
+  "organizer.endedHint": "This event is over. You can still fix the list by hand, or reopen it to accept check-ins again.",
+  "organizer.toastEnded": "Event ended",
+  "organizer.toastReopened": "Event reopened",
 
   "form.title": "Title",
   "form.description": "Description",
@@ -179,7 +188,7 @@ export const en: Dict = {
 
   "err.already_joined": "You are already signed up",
   "err.banned": "Not available: your account is blocked",
-  "err.event_past": "This event has already happened",
+  "err.event_over": "This event is over",
   "err.not_published": "Signups for this event are closed",
   "err.event_not_found": "Event not found",
   "err.not_registered": "You are not signed up for this event",

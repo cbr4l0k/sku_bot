@@ -5,7 +5,7 @@ import { useI18n } from "../i18n";
 import { bib, errorText, isPast } from "../lib/format";
 import { useResource } from "../lib/useResource";
 import { DateBlock, EventStatusChip } from "../ui/event";
-import { EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
+import { Chip, EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
 
 export const OrganizerScreen = () => {
   const { t } = useI18n();
@@ -31,7 +31,7 @@ export const OrganizerScreen = () => {
             key={event.id}
             to={`/organizer/events/${event.id}`}
             style={{ "--i": index } as React.CSSProperties}
-            className={`card rise flex gap-3.5 px-4 py-4 active:scale-[0.985] ${isPast(event.startsAt) ? "opacity-65" : ""}`}
+            className={`card rise flex gap-3.5 px-4 py-4 active:scale-[0.985] ${event.endedAt ? "opacity-65" : ""}`}
           >
             <DateBlock iso={event.startsAt} />
             <div className="min-w-0 flex-1">
@@ -40,8 +40,11 @@ export const OrganizerScreen = () => {
                 <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
               </div>
               <p className="mb-2.5 truncate text-[13px] text-hint">{event.location}</p>
-              <div className="flex items-center gap-1.5">
-                <EventStatusChip status={event.status} />
+              <div className="flex flex-wrap items-center gap-1.5">
+                {event.endedAt ? <Chip>{t("organizer.ended")}</Chip> : <EventStatusChip status={event.status} />}
+                {/* Started, and still waiting for someone to end it — the one state
+                    an organizer needs to spot from the list. */}
+                {!event.endedAt && isPast(event.startsAt) ? <Chip tone="flare">{t("organizer.live")}</Chip> : null}
                 <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
                   {event.capacity === null ? t("events.freeEntry") : `${t("detail.spots")} ${event.capacity}`}
                 </span>

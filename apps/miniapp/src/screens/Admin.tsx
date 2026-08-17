@@ -83,7 +83,7 @@ const EventsTab = ({ availableGroups }: { availableGroups: readonly Group[] }) =
               </div>
               <p className="mb-2.5 truncate text-[13px] text-hint">{event.location}</p>
               <div className="flex flex-wrap items-center gap-1.5">
-                <EventStatusChip status={event.status} />
+                {event.endedAt ? <Chip>{t("organizer.ended")}</Chip> : <EventStatusChip status={event.status} />}
                 <GroupChips groups={event.groups} />
               </div>
             </div>

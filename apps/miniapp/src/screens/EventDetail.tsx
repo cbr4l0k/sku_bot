@@ -61,8 +61,11 @@ export const EventDetailScreen = () => {
   const left = detail.capacity === null ? null : Math.max(0, detail.capacity - confirmed);
   const offer = card?.myPendingOffer ?? null;
   const status = detail.myRegistrationStatus;
-  const past = isPast(detail.startsAt);
-  const joinable = detail.status === "published" && !past;
+  // "Over" is an organizer's call, not the clock's: an event whose start time has
+  // passed is still live — and still checkable-in — until someone ends it.
+  const over = detail.endedAt !== null;
+  const underway = !over && isPast(detail.startsAt);
+  const joinable = detail.status === "published" && !over;
 
   const celebrate = () => {
     setSweep(true);
@@ -165,6 +168,9 @@ export const EventDetailScreen = () => {
           <div>
             <dt className="eyebrow mb-0.5">{t("detail.when")}</dt>
             <dd className="text-[14px] first-letter:uppercase">{fullDate(detail.startsAt, locale)}</dd>
+            {underway ? (
+              <dd className="mt-1 text-[12px]" style={{ color: "var(--brand-deep)" }}>{t("detail.underway")}</dd>
+            ) : null}
           </div>
           <div className="hairline" />
           <div>
@@ -222,7 +228,7 @@ export const EventDetailScreen = () => {
       <div className="sticky bottom-[calc(6rem_+_env(safe-area-inset-bottom,0px))] flex flex-col gap-2">
         {!joinable ? (
           <div className="card px-4 py-3 text-center text-[13px] text-hint">
-            {past ? t("detail.pastEvent") : detail.status === "canceled" ? t("detail.canceled") : t("detail.closed")}
+            {over ? t("detail.pastEvent") : detail.status === "canceled" ? t("detail.canceled") : t("detail.closed")}
           </div>
         ) : status === "registered" || status === "checked_in" ? (
           <>

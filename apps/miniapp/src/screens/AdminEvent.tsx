@@ -131,6 +131,21 @@ export const AdminEventScreen = () => {
     patch({ waitlistEnabled: !event?.waitlistEnabled });
   };
 
+  // Ending is deliberately separate from the status: it says the event has run, and
+  // it is the only thing that closes check-in.
+  const endOrReopen = async () => {
+    if (event?.endedAt == null && !(await confirm({ text: t("organizer.confirmEnd"), confirmLabel: t("organizer.endEvent"), danger: true }))) return;
+    void action.run(
+      async () => {
+        const ended = event?.endedAt == null;
+        await (ended ? sku.endEvent(id) : sku.reopenEvent(id));
+        toast(t(ended ? "organizer.toastEnded" : "organizer.toastReopened"));
+        await Promise.all([events.reload(true), stats.reload(true)]);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+  };
+
   const cancelEvent = async () => {
     if (!(await confirm({ text: t("admin.confirmCancel"), confirmLabel: t("admin.cancelEvent"), danger: true }))) return;
     patch({ status: "canceled" });
@@ -182,7 +197,7 @@ export const AdminEventScreen = () => {
     <Screen>
       <PageTitle
         title={event.title}
-        aside={<EventStatusChip status={event.status} />}
+        aside={event.endedAt ? <Chip>{t("organizer.ended")}</Chip> : <EventStatusChip status={event.status} />}
       />
 
       <div className="mb-4">
@@ -206,6 +221,11 @@ export const AdminEventScreen = () => {
         ) : (
           <Button size="sm" variant="ghost" loading={action.pending} onClick={() => patch({ status: "closed" })}>
             {t("admin.close")}
+          </Button>
+        )}
+        {event.status === "draft" || event.status === "canceled" ? null : (
+          <Button size="sm" variant="ghost" loading={action.pending} onClick={() => void endOrReopen()}>
+            {event.endedAt ? t("organizer.reopenEvent") : t("organizer.endEvent")}
           </Button>
         )}
         <Button size="sm" variant="ghost" loading={action.pending} onClick={() => void toggleQueue()}>

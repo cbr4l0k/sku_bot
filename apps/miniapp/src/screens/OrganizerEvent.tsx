@@ -9,7 +9,7 @@ import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { CountdownRing, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
-import { Sheet, useOverlayLock, useToast } from "../ui/overlays";
+import { Sheet, useConfirm, useOverlayLock, useToast } from "../ui/overlays";
 import {
   Button,
   Chip,
@@ -137,6 +137,7 @@ export const OrganizerEventScreen = () => {
   const { t, locale } = useI18n();
   const params = useParams();
   const toast = useToast();
+  const confirm = useConfirm();
   const action = useAction();
   useBackButton("/organizer");
 
@@ -150,6 +151,7 @@ export const OrganizerEventScreen = () => {
   const attendance = useResource(useCallback(() => sku.attendance(id), [id]), { pollMs: 15_000 });
 
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
+  const over = event?.endedAt != null;
   const counts = attendance.data?.counts ?? null;
 
   const rows = (attendance.data?.registrations ?? []).filter((person) => {
@@ -178,6 +180,31 @@ export const OrganizerEventScreen = () => {
       )
       .finally(() => setBusyUser(null));
   };
+
+  // The class is over when the person running it says so, so ending it is an action
+  // here rather than something the start time does on its own.
+  const end = async () => {
+    if (!(await confirm({ text: t("organizer.confirmEnd"), confirmLabel: t("organizer.endEvent"), danger: true }))) return;
+    void action.run(
+      async () => {
+        await sku.endEvent(id);
+        toast(t("organizer.toastEnded"));
+        setShowQr(false);
+        await Promise.all([events.reload(true), attendance.reload(true)]);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+  };
+
+  const reopen = () =>
+    void action.run(
+      async () => {
+        await sku.reopenEvent(id);
+        toast(t("organizer.toastReopened"));
+        await Promise.all([events.reload(true), attendance.reload(true)]);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
 
   const save = (draft: EventDraft) =>
     void action.run(
@@ -214,7 +241,11 @@ export const OrganizerEventScreen = () => {
     <Screen>
       <PageTitle
         title={event?.title ?? t("organizer.attendance")}
-        aside={event ? <EventStatusChip status={event.status} /> : null}
+        aside={
+          event ? (
+            over ? <Chip>{t("organizer.ended")}</Chip> : <EventStatusChip status={event.status} />
+          ) : null
+        }
       />
 
       {event ? (
@@ -239,14 +270,28 @@ export const OrganizerEventScreen = () => {
         </div>
       </section>
 
-      <div className="mb-4 flex gap-2">
-        <Button block onClick={() => setShowQr(true)}>
-          {t("organizer.showQr")}
-        </Button>
+      {over ? <p className="mb-4 text-[13px] leading-relaxed text-hint">{t("organizer.endedHint")}</p> : null}
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {over ? (
+          <Button block loading={action.pending} onClick={reopen}>
+            {t("organizer.reopenEvent")}
+          </Button>
+        ) : (
+          <Button block onClick={() => setShowQr(true)}>
+            {t("organizer.showQr")}
+          </Button>
+        )}
         <Button variant="ghost" onClick={() => setEditing(true)}>
           {t("common.edit")}
         </Button>
       </div>
+
+      {over ? null : (
+        <Button variant="ghost" block className="mb-4" loading={action.pending} onClick={() => void end()}>
+          {t("organizer.endEvent")}
+        </Button>
+      )}
 
       <SearchInput
         className="mb-2"

@@ -125,6 +125,8 @@ export const sku = {
   updateEvent: (id: number, body: Partial<EventDraft>) => call(api.organizer.events({ id }).patch(body, auth())),
   attendance: (id: number) => call(api.organizer.events({ id }).attendance.get(auth())),
   checkinToken: (id: number) => call(api.organizer.events({ id })["checkin-token"].get(auth())),
+  endEvent: (id: number) => call(api.organizer.events({ id }).end.post(undefined, auth())),
+  reopenEvent: (id: number) => call(api.organizer.events({ id }).reopen.post(undefined, auth())),
   toggleAttendance: (id: number, userId: number) =>
     call(api.organizer.events({ id }).attendance({ userId }).post(undefined, auth())),
 
