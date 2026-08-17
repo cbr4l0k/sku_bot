@@ -105,6 +105,22 @@ dormant, no further offers are sent, and the admin screen says how many people t
 before the switch is confirmed. Switching it back on resumes the queue immediately, handing
 out any spots that came free while it was off.
 
+## When an event is over
+
+Nothing about the clock ends an event. It runs — listed, joinable, and open for check-in —
+until an organizer or admin presses **End event** on its screen. That is what makes the QR
+usable *after* the class, which is when people actually get around to scanning it, and it
+lets a walk-in sign up mid-session.
+
+Ending an event closes check-in (the QR stops minting, and a scan answers `event_over`),
+stops further signups, retires any pending queue offers, and drops the event out of the
+participant list. Two things deliberately survive it: the attendance list stays editable by
+hand, so the roster can be corrected afterwards, and **Reopen event** undoes an end that came
+too early — check-in starts working again and the queue picks up where it left off.
+
+Organizers see a **Running** chip on any event whose start time has passed but which nobody
+has ended yet, so a forgotten one is easy to spot in the list.
+
 ## Restricted events
 
 An event can be limited to the members of one or more Telegram groups:
