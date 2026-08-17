@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, migrate, type Db } from "@sku/db";
-import { acceptOffer, issueOffers, setCapacity, sweepOffers } from "../../src/core/waitlist";
+import { acceptOffer, endEvent, issueOffers, reopenEvent, setCapacity, sweepOffers } from "../../src/core/waitlist";
 import { cancelRegistration, joinEvent } from "../../src/core/registration";
 import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../../src/core/checkin";
 import { botEventLink, eventStartappPayload, miniAppEventLink, parseStartPayload } from "../../src/core/links";
@@ -64,6 +64,67 @@ describe("switchable queue", () => {
     joinEvent(db, 1, 2, now);
     disableQueue(1);
     expect(setCapacity(db, 1, 5, now)).toEqual([]);
+  });
+});
+
+describe("the organizer decides when the event is over", () => {
+  const afterStart = new Date(now.getTime() + 86_400_000 + 3_600_000);
+  const startedEvent = (capacity: number | null = null) => {
+    const id = event(capacity);
+    // Start time an hour in the past: exactly the class that used to lock people out.
+    db.$client.query("UPDATE events SET starts_at = ? WHERE id = ?").run(unix(new Date(afterStart.getTime() - 3_600_000)), id);
+    return id;
+  };
+
+  test("check-in still works after the start time has passed", () => {
+    startedEvent();
+    joinEvent(db, 1, 1, now);
+    expect(checkIn(db, 1, 1, afterStart)).toEqual({ ok: true });
+  });
+
+  test("a walk-in can still sign up mid-event", () => {
+    startedEvent();
+    expect(joinEvent(db, 1, 1, afterStart)).toEqual({ status: "registered" });
+  });
+
+  test("ending the event closes check-in and sign-ups", () => {
+    startedEvent();
+    joinEvent(db, 1, 1, now);
+    joinEvent(db, 1, 2, now);
+    expect(endEvent(db, 1, afterStart).alreadyEnded).toBe(false);
+    expect(checkIn(db, 1, 1, afterStart)).toEqual({ error: "event_over" });
+    expect(joinEvent(db, 1, 3, afterStart)).toEqual({ error: "event_over" });
+    // The roster is still the organizer's to correct after the fact.
+    expect(manualToggleCheckin(db, 1, 2, afterStart)).toEqual({ status: "checked_in" });
+  });
+
+  test("ending twice is a no-op, and reopening accepts check-ins again", () => {
+    startedEvent();
+    joinEvent(db, 1, 1, now);
+    endEvent(db, 1, afterStart);
+    expect(endEvent(db, 1, afterStart).alreadyEnded).toBe(true);
+    reopenEvent(db, 1, afterStart);
+    expect(checkIn(db, 1, 1, afterStart)).toEqual({ ok: true });
+  });
+
+  test("ending retires the pending offers nobody can answer any more", () => {
+    startedEvent(1);
+    joinEvent(db, 1, 1, now);
+    joinEvent(db, 1, 2, now);
+    cancelRegistration(db, 1, 1, now);
+    const offer = offers()[0]!;
+    expect(offer.status).toBe("pending");
+    expect(endEvent(db, 1, afterStart).effects).toMatchObject([{ kind: "offer_superseded", offerId: offer.id }]);
+    expect(offers()[0]?.status).toBe("superseded");
+  });
+
+  test("reopening hands the freed spot back to the queue", () => {
+    startedEvent(1);
+    joinEvent(db, 1, 1, now);
+    joinEvent(db, 1, 2, now);
+    cancelRegistration(db, 1, 1, now);
+    endEvent(db, 1, afterStart);
+    expect(reopenEvent(db, 1, afterStart).effects).toMatchObject([{ kind: "offer_created", userId: 2 }]);
   });
 });
 

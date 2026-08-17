@@ -1,5 +1,5 @@
 import { InlineKeyboard, bold, format } from "gramio";
-import { and, asc, count, eq, events, inArray, registrations } from "@sku/db";
+import { and, asc, count, eq, events, inArray, isNull, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
@@ -26,6 +26,10 @@ export const formatDate = (startsAt: Date, locale: Locale): string => new Intl.D
   { dateStyle: "long", timeStyle: "short", timeZone: timezone },
 ).format(startsAt);
 
+/**
+ * A deep link to an event its organizers have ended answers "unavailable" rather than
+ * offering a sign-up nothing would accept.
+ */
 const publishedEvent = (eventId: number) => db.select({
   id: events.id,
   title: events.title,
@@ -34,7 +38,7 @@ const publishedEvent = (eventId: number) => db.select({
   locationUrl: events.locationUrl,
   capacity: events.capacity,
   waitlistEnabled: events.waitlistEnabled,
-}).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
+}).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"), isNull(events.endedAt))).get();
 
 const confirmedCount = (eventId: number) => db.select({ count: count() }).from(registrations)
   .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"])))

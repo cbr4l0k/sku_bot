@@ -76,6 +76,24 @@ export const setCapacity = (db: Db, eventId: number, capacity: number | null, no
   return increased ? issue(db, eventId, seconds(now)) : [];
 });
 
+/**
+ * Declaring the event over. Nothing about the clock does this — an organizer does,
+ * which is what keeps check-in open for as long as the class actually runs. Pending
+ * offers go with it: a spot in a finished event is not worth answering.
+ */
+export const endEvent = (db: Db, eventId: number, now: Date): { alreadyEnded: boolean; effects: SupersededEffect[] } => transaction(db, () => {
+  const current = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
+  if (!current || current.ended_at !== null) return { alreadyEnded: true, effects: [] };
+  db.$client.query("UPDATE events SET ended_at = ?, updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), eventId);
+  return { alreadyEnded: false, effects: supersede(db, eventId) };
+});
+
+/** Undo for a premature "end": the event runs again, and the queue picks up where it left off. */
+export const reopenEvent = (db: Db, eventId: number, now: Date): { effects: OfferEffect[] } => transaction(db, () => {
+  db.$client.query("UPDATE events SET ended_at = NULL, updated_at = ? WHERE id = ?").run(seconds(now), eventId);
+  return { effects: issue(db, eventId, seconds(now)) };
+});
+
 export const cancelEvent = (db: Db, eventId: number): { userIds: number[]; effects: SupersededEffect[] } => transaction(db, () => {
   const participants = db.$client.query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in', 'waitlisted')").all(eventId);
   db.$client.query("UPDATE events SET status = 'canceled' WHERE id = ?").run(eventId);

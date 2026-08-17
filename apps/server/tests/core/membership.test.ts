@@ -3,7 +3,7 @@ import { createDb, migrate, type Db } from "@sku/db";
 import {
   MEMBERSHIP_TTL_MS,
   canSeeEvent,
-  chatsGatingUpcomingEvents,
+  chatsGatingLiveEvents,
   chatsOfEvent,
   refreshMemberships,
   setEventChats,
@@ -161,10 +161,10 @@ describe("Telegram-gated events", () => {
     event(1);
     setEventChats(db, 1, [OTHER, CHAT, CHAT]);
     expect(chatsOfEvent(db, 1)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
-    expect(chatsGatingUpcomingEvents(db, now).sort((a, b) => a - b)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
+    expect(chatsGatingLiveEvents(db).sort((a, b) => a - b)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
 
     setEventChats(db, 1, []);
     expect(chatsOfEvent(db, 1)).toEqual([]);
-    expect(chatsGatingUpcomingEvents(db, now)).toEqual([]);
+    expect(chatsGatingLiveEvents(db)).toEqual([]);
   });
 });

@@ -40,6 +40,11 @@ export const events = sqliteTable(
     /** With the queue off, a full event simply stops accepting registrations. */
     waitlistEnabled: integer("waitlist_enabled", { mode: "boolean" }).notNull().default(true),
     status: text("status").$type<EventStatus>().notNull().default("draft"),
+    /**
+     * When an organizer declared the event over. The clock never sets this: an event
+     * stays live — joinable, and open for check-in — until someone running it says so.
+     */
+    endedAt: integer("ended_at", { mode: "timestamp" }),
     createdBy: integer("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),

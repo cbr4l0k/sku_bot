@@ -2,17 +2,19 @@ import type { Db } from "@sku/db";
 import type { NotificationEffect } from "./types";
 import { issueOffers } from "./waitlist";
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_past" | "not_eligible" | "event_full" };
-type EventRow = { capacity: number | null; status: string; starts_at: number; waitlist_enabled: number };
+type JoinResult = { status: "registered" } | { status: "waitlisted"; position: number } | { error: "banned" | "not_published" | "already_joined" | "event_over" | "not_eligible" | "event_full" };
+type EventRow = { capacity: number | null; status: string; ended_at: number | null; waitlist_enabled: number };
 type RegistrationRow = { id: number; status: string };
 
 export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): JoinResult => db.$client.transaction((): JoinResult => {
   const timestamp = seconds(now);
   const banned = db.$client.query<{ is_banned: number }, [number]>("SELECT is_banned FROM users WHERE id = ?").get(userId)?.is_banned;
   if (banned) return { error: "banned" };
-  const event = db.$client.query<EventRow, [number]>("SELECT capacity, status, starts_at, waitlist_enabled FROM events WHERE id = ?").get(eventId);
+  const event = db.$client.query<EventRow, [number]>("SELECT capacity, status, ended_at, waitlist_enabled FROM events WHERE id = ?").get(eventId);
   if (!event || event.status !== "published") return { error: "not_published" };
-  if (event.starts_at <= timestamp) return { error: "event_past" };
+  // A start time in the past is no bar: a walk-in can still sign up mid-class, and
+  // only an organizer ending the event closes the door.
+  if (event.ended_at !== null) return { error: "event_over" };
   const registration = db.$client.query<RegistrationRow, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (registration && registration.status !== "canceled") return { error: "already_joined" };
   // Restricted events admit only members of the listed Telegram chats. This reads the

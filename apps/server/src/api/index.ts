@@ -7,8 +7,8 @@ import {
   eq,
   eventOrganizers,
   events,
-  gt,
   inArray,
+  isNull,
   ne,
   or,
   registrations,
@@ -18,11 +18,11 @@ import {
 } from "@sku/db";
 import { bot } from "../bot";
 import type { EventChange } from "../bot/event-card";
-import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
+import { checkIn, isEventOver, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
 import { chatState, chatTitle, refreshChatStates, telegramMembership } from "../bot/membership";
 import {
   canSeeEvent,
-  chatsGatingUpcomingEvents,
+  chatsGatingLiveEvents,
   chatsOfEvent,
   refreshMemberships,
   setEventChats,
@@ -31,7 +31,7 @@ import {
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
 import { eventStats, globalStats } from "../core/stats";
-import { acceptOffer, cancelEvent, issueOffers, setCapacity } from "../core/waitlist";
+import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { dispatchEffects, notifyEventCanceled, notifyEventUpdated } from "../notify";
@@ -81,6 +81,7 @@ const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
   groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
   startsAt: event.startsAt.toISOString(),
+  endedAt: iso(event.endedAt),
   createdAt: event.createdAt.toISOString(),
   updatedAt: event.updatedAt.toISOString(),
 });
@@ -157,10 +158,11 @@ export const app = new Elysia()
       return updated ? userView(updated) : userView(user);
     }, { body: t.Object({ locale: t.Optional(t.Union([t.Literal("ru"), t.Literal("en")])), firstName: t.Optional(t.String()), lastName: t.Optional(t.String()) }) })
     .get("/events", async ({ user }) => {
-      const current = now();
-      await syncMemberships(user.id, chatsGatingUpcomingEvents(db, current));
+      await syncMemberships(user.id, chatsGatingLiveEvents(db));
+      // A started event stays listed until an organizer ends it, so people can still
+      // find it to sign up late or to check in on their way out.
       return db.select().from(events)
-        .where(and(eq(events.status, "published"), gt(events.startsAt, current), visibleToUser(user.id)))
+        .where(and(eq(events.status, "published"), isNull(events.endedAt), visibleToUser(user.id)))
         .orderBy(asc(events.startsAt)).all().map((event) => {
           const registration = db.select({ status: registrations.status }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
@@ -272,7 +274,24 @@ export const app = new Elysia()
     .get("/organizer/events/:id/checkin-token", ({ params, user, isAdmin, status }) => {
       if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
       if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+      // No point showing a code nobody's scan would be accepted from.
+      if (isEventOver(db, params.id)) return error(status, 409, "event_over");
       return { token: mintCheckinToken(env.CHECKIN_SECRET, params.id, now()), expiresInSeconds: 45 };
+    }, { params: idParams })
+    /** The event is over when whoever is running it says so — never on a timer. */
+    .post("/organizer/events/:id/end", ({ params, user, isAdmin, status }) => {
+      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
+      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+      fireEffects(endEvent(db, params.id, now()).effects);
+      const updated = db.select().from(events).where(eq(events.id, params.id)).get();
+      return updated ? eventView(updated) : error(status, 404, "event_not_found");
+    }, { params: idParams })
+    .post("/organizer/events/:id/reopen", ({ params, user, isAdmin, status }) => {
+      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
+      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+      fireEffects(reopenEvent(db, params.id, now()).effects);
+      const updated = db.select().from(events).where(eq(events.id, params.id)).get();
+      return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams })
     .post("/organizer/events/:id/attendance/:userId", ({ params, user, isAdmin, status }) => {
       if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");

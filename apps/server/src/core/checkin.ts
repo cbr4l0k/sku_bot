@@ -13,13 +13,21 @@ export const verifyCheckinToken = (secret: string, token: string, now: Date): { 
   return expected.length === actual.length && timingSafeEqual(expected, actual) ? { eventId } : null;
 };
 type Registration = { id: number; status: string };
-export const checkIn = (db: Db, eventId: number, userId: number, now: Date): { ok: true } | { error: "not_registered" | "already_checked_in" } => db.$client.transaction((): { ok: true } | { error: "not_registered" | "already_checked_in" } => {
+/** An event nobody has ended yet is still running, however long ago it started. */
+export const isEventOver = (db: Db, eventId: number): boolean => {
+  const event = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
+  return !event || event.ended_at !== null;
+};
+export const checkIn = (db: Db, eventId: number, userId: number, now: Date): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => db.$client.transaction((): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => {
+  // The scan closes when the organizer ends the event, not when its start time passes.
+  if (isEventOver(db, eventId)) return { error: "event_over" };
   const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
   if (registration.status === "checked_in") return { error: "already_checked_in" };
   db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
   return { ok: true };
 })();
+/** Stays open after the event ends: fixing the roster afterwards is part of the job. */
 export const manualToggleCheckin = (db: Db, eventId: number, userId: number, now: Date): { status: "registered" | "checked_in" } | { error: "not_registered" } => db.$client.transaction((): { status: "registered" | "checked_in" } | { error: "not_registered" } => {
   const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) return { error: "not_registered" };

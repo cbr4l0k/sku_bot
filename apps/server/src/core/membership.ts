@@ -1,4 +1,4 @@
-import { and, asc, chatMembers, eq, eventChats, events, gt, inArray, sql, type Db } from "@sku/db";
+import { and, asc, chatMembers, eq, eventChats, events, inArray, isNull, sql, type Db } from "@sku/db";
 
 /**
  * Membership lives in Telegram, so every answer is a getChatMember call. The
@@ -48,11 +48,11 @@ export const chatsOfEvent = (db: Db, eventId: number): number[] => db
   .map((row) => row.chatId);
 
 /** Every chat gating an event the participant list can show — the set worth refreshing. */
-export const chatsGatingUpcomingEvents = (db: Db, now: Date): number[] => db
+export const chatsGatingLiveEvents = (db: Db): number[] => db
   .selectDistinct({ chatId: eventChats.chatId })
   .from(eventChats)
   .innerJoin(events, eq(events.id, eventChats.eventId))
-  .where(and(eq(events.status, "published"), gt(events.startsAt, now)))
+  .where(and(eq(events.status, "published"), isNull(events.endedAt)))
   .all()
   .map((row) => row.chatId);
 

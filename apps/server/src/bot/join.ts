@@ -37,7 +37,7 @@ export const joinHandler = async (context: JoinContext): Promise<void> => {
     const notice = {
       banned: "bannedNotice",
       not_published: "eventUnavailable",
-      event_past: "eventUnavailable",
+      event_over: "eventUnavailable",
       already_joined: "alreadyJoinedNotice",
       not_eligible: "notEligibleNotice",
       event_full: "noSpotsLeft",

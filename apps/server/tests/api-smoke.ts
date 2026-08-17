@@ -87,6 +87,56 @@ const ban = await call("POST", "/api/admin/users/2002/ban", admin);
 const joinBanned = await call("POST", `/api/events/${eventId}/join`, runner);
 check("banned user cannot join", ban.status === 200 && joinBanned.status === 403, joinBanned.json);
 
+/* ------------------------------------------------------- ending an event by hand */
+
+// The event that already started: it stays live, and open for check-in, until an
+// organizer ends it.
+const started = await call("POST", "/api/admin/events", admin, {
+  title: "Уже начался", description: "тест", startsAt: new Date(Date.now() - 3_600_000).toISOString(),
+  location: "Парк", capacity: null, status: "published",
+});
+const startedId = (started.json as { id: number }).id;
+const lateJoiner = initDataFor(6006, "Late");
+
+const lateJoin = await call("POST", `/api/events/${startedId}/join`, lateJoiner);
+check("a walk-in joins an event that already started", lateJoin.status === 200 && (lateJoin.json as { status: string }).status === "registered", lateJoin.json);
+
+const liveList = await call("GET", "/api/events", lateJoiner);
+check("a started event stays in the list", (liveList.json as Array<{ id: number }>).some((entry) => entry.id === startedId));
+
+const liveToken = await call("GET", `/api/organizer/events/${startedId}/checkin-token`, admin);
+check("QR token mints after the start time", liveToken.status === 200, liveToken.json);
+
+const lateCheckin = await call("POST", "/api/checkin", lateJoiner, { code: (liveToken.json as { token: string }).token });
+check("check-in works after the start time", lateCheckin.status === 200, lateCheckin.json);
+
+const ended = await call("POST", `/api/organizer/events/${startedId}/end`, admin);
+check("organizer ends the event", ended.status === 200 && (ended.json as { endedAt: string | null }).endedAt !== null, ended.json);
+
+const staleToken = await call("GET", `/api/organizer/events/${startedId}/checkin-token`, admin);
+check("no QR for an ended event", staleToken.status === 409 && (staleToken.json as { error: string }).error === "event_over", staleToken.json);
+
+const joinEnded = await call("POST", `/api/events/${startedId}/join`, runnerB);
+check("nobody joins an ended event", joinEnded.status === 400 && (joinEnded.json as { error: string }).error === "event_over", joinEnded.json);
+
+const endedList = await call("GET", "/api/events", lateJoiner);
+check("an ended event leaves the list", !(endedList.json as Array<{ id: number }>).some((entry) => entry.id === startedId));
+
+const manual = await call("POST", `/api/organizer/events/${startedId}/attendance/6006`, admin);
+check("the roster stays editable after the event ended", manual.status === 200, manual.json);
+
+const reopened = await call("POST", `/api/organizer/events/${startedId}/reopen`, admin);
+const reopenedList = await call("GET", "/api/events", lateJoiner);
+check(
+  "reopening brings the event back",
+  reopened.status === 200 && (reopened.json as { endedAt: string | null }).endedAt === null
+    && (reopenedList.json as Array<{ id: number }>).some((entry) => entry.id === startedId),
+  reopened.json,
+);
+
+const notOrganizer = await call("POST", `/api/organizer/events/${startedId}/end`, lateJoiner);
+check("a participant cannot end the event", notOrganizer.status === 403, notOrganizer.json);
+
 /* --------------------------------------------------------------- queue switch */
 
 const noQueue = await call("POST", "/api/admin/events", admin, {
