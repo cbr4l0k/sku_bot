@@ -1,4 +1,5 @@
 import { InlineKeyboard, bold, format } from "gramio";
+import { CITIES, type CitySlug } from "@sku/cities";
 import { and, asc, count, eq, events, inArray, isNull, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
@@ -10,7 +11,6 @@ import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
 
 const env = loadEnv();
-const timezone = "Europe/Moscow";
 
 type EventCardContext = {
   send: (text: string | ReturnType<typeof format>, params?: { reply_markup?: InlineKeyboard }) => Promise<unknown>;
@@ -19,11 +19,12 @@ type EventCardContext = {
 export type EventChange = "title" | "description" | "startsAt" | "location" | "capacity";
 export type EventUpdatedFields = { title?: string; description?: true; startsAt?: string; location?: string; capacity?: number | null };
 
-type EventSummary = { title: string; date: string; description: string; location: string; locationUrl: string | null; capacity: number | null };
+type EventSummary = { title: string; startsAt: Date; date: string; description: string; location: string; locationUrl: string | null; capacity: number | null; city: CitySlug };
 
-export const formatDate = (startsAt: Date, locale: Locale): string => new Intl.DateTimeFormat(
+/** A run reads at the time it actually starts, in its own branch's zone. */
+export const formatDate = (startsAt: Date, locale: Locale, city: CitySlug): string => new Intl.DateTimeFormat(
   locale === "ru" ? "ru-RU" : "en-US",
-  { dateStyle: "long", timeStyle: "short", timeZone: timezone },
+  { dateStyle: "long", timeStyle: "short", timeZone: CITIES[city].timezone },
 ).format(startsAt);
 
 /**
@@ -32,6 +33,7 @@ export const formatDate = (startsAt: Date, locale: Locale): string => new Intl.D
  */
 const publishedEvent = (eventId: number) => db.select({
   id: events.id,
+  city: events.city,
   title: events.title,
   startsAt: events.startsAt,
   location: events.location,
@@ -91,18 +93,19 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
   return {
     text: format`${bold(event.title)}
 
-${i18n.t(locale, "eventDate", formatDate(event.startsAt, locale))}
+${i18n.t(locale, "eventCity", CITIES[event.city].name[locale])}
+${i18n.t(locale, "eventDate", formatDate(event.startsAt, locale, event.city))}
 ${i18n.t(locale, "eventLocation", event.location, event.locationUrl)}${lines.length ? `\n${lines.join("\n")}` : ""}`,
     keyboard,
   };
 };
 
 export const eventSummary = (eventId: number, locale: Locale): EventSummary | null => {
-  const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, locationUrl: events.locationUrl, capacity: events.capacity })
+  const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, locationUrl: events.locationUrl, capacity: events.capacity, city: events.city })
     .from(events)
     .where(eq(events.id, eventId))
     .get();
-  return event ? { ...event, date: formatDate(event.startsAt, locale) } : null;
+  return event ? { ...event, date: formatDate(event.startsAt, locale, event.city) } : null;
 };
 
 export const sendEventCard = async (context: EventCardContext, eventId: number, userId: number, locale: Locale): Promise<void> => {

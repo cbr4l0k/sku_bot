@@ -13,6 +13,7 @@ export const en = {
 ${blockquote("Runs, training sessions, and good company — all in one place.")}`,
   openApp: "🏃 Open the app",
   openEvent: "Open event",
+  eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
   spotsLeft: (count: number) => `Spots left: ${count}`,
@@ -57,10 +58,16 @@ ${join([
   queuedNotice: (position: number) => `You are #${position} in the queue. We will message you the moment a spot frees up.`,
   alreadyJoinedNotice: "You are already signed up for this event.",
   notEligibleNotice: "This event is only for members of certain Telegram groups.",
+  chatInvite: (title: string) => format`${bold("Welcome to the event chat")}
+
+${title}
+
+${blockquote("The link is single-use and yours alone. Turn up and check in and the chat is yours to keep. If you never make it, we will quietly remove you after the event.")}`,
+  chatInviteButton: "💬 Join the chat",
   commandStart: "Main menu",
   commandChatId: "Show this group's ID",
   chatId: (chatId: number) => format`This chat's ID is ${code(String(chatId))}
 
-Add it to ${code("EVENT_GROUPS")} to restrict events to this group's members.`,
+The chat is already in the catalog — pick its city under Admin → Chats and events there can use it.`,
   chatIdOnlyInGroups: "Run this command inside the group whose ID you need.",
 } satisfies LanguageMap;

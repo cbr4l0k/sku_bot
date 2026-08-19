@@ -321,9 +321,11 @@ export const OrganizerEventScreen = () => {
       {editing ? (
         <Sheet title={t("organizer.edit")} onClose={() => setEditing(false)}>
           <EventForm
+            cities={event?.city ? [event.city] : []}
             initial={
               event
                 ? {
+                    city: event.city,
                     title: event.title,
                     description: event.description,
                     startsAt: event.startsAt,

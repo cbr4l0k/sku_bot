@@ -1,9 +1,12 @@
 {
   "name": "sku-bot",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "typecheck": "bun run --cwd packages/db typecheck && bun run --cwd apps/server typecheck && bun run --cwd apps/miniapp typecheck",
+    "typecheck": "bun run --cwd packages/cities typecheck && bun run --cwd packages/db typecheck && bun run --cwd apps/server typecheck && bun run --cwd apps/miniapp typecheck",
     "test": "bun test",
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:migrate": "bun run --cwd packages/db db:migrate"

@@ -11,9 +11,12 @@ const adminIds = z.string().transform((raw, ctx): readonly number[] => {
 });
 
 /**
- * A comma-separated catalog of Telegram chat ids events may be restricted to,
- * e.g. "-1001234567890,-1009876543210". Empty disables restrictions entirely.
- * The bot must be an administrator in each chat for membership lookups to work.
+ * DEPRECATED. The chat catalog lives in the `chats` table now — the bot files a
+ * chat when it is added to one, and a general admin says which branch it belongs
+ * to. Anything still listed here is lifted into the table at boot and filed under
+ * the default branch; once that has happened the variable can be deleted.
+ *
+ * A comma-separated list of Telegram chat ids, e.g. "-1001234567890,-100987654321".
  */
 const chatIds = z.string().default("").transform((raw, ctx): readonly number[] => {
   const segments = raw.split(",").map((segment) => segment.trim()).filter((segment) => segment.length > 0);

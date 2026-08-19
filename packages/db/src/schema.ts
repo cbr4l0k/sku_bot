@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 
+import type { CityRole, CitySlug } from "@sku/cities";
+
 export const locales = ["ru", "en"] as const;
 export type Locale = (typeof locales)[number];
 
@@ -13,6 +15,9 @@ export type RegistrationStatus = (typeof registrationStatuses)[number];
 export const waitlistOfferStatuses = ["pending", "accepted", "superseded"] as const;
 export type WaitlistOfferStatus = (typeof waitlistOfferStatuses)[number];
 
+export const chatGuestStatuses = ["invited", "kept", "removed"] as const;
+export type ChatGuestStatus = (typeof chatGuestStatuses)[number];
+
 const createdAt = () => integer("created_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`);
 
 export const users = sqliteTable("users", {
@@ -22,6 +27,8 @@ export const users = sqliteTable("users", {
   username: text("username"),
   phone: text("phone"),
   locale: text("locale").$type<Locale>().notNull().default("ru"),
+  /** The branch whose runs they browse. Null until they have chosen one. */
+  city: text("city").$type<CitySlug>(),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   isBanned: integer("is_banned", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
@@ -31,6 +38,12 @@ export const events = sqliteTable(
   "events",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    /**
+     * The branch putting the run on. The column default exists only so the
+     * migration can add it to live rows — the API always demands one explicitly,
+     * so a Moscow organizer can never quietly file an event under Petersburg.
+     */
+    city: text("city").$type<CitySlug>().notNull().default("spb"),
     title: text("title").notNull(),
     description: text("description").notNull(),
     startsAt: integer("starts_at", { mode: "timestamp" }).notNull(),
@@ -45,11 +58,17 @@ export const events = sqliteTable(
      * stays live — joinable, and open for check-in — until someone running it says so.
      */
     endedAt: integer("ended_at", { mode: "timestamp" }),
+    /**
+     * The chat everyone holding a spot is invited into, independent of the
+     * `event_chats` visibility gate: an event open to the whole world can still
+     * funnel its runners into one group. Null means nobody is invited anywhere.
+     */
+    homeChatId: integer("home_chat_id"),
     createdBy: integer("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
   },
-  (table) => [index("events_status_starts_at_idx").on(table.status, table.startsAt)],
+  (table) => [index("events_city_status_starts_at_idx").on(table.city, table.status, table.startsAt)],
 );
 
 /**
@@ -124,3 +143,77 @@ export const waitlistOffers = sqliteTable(
     index("waitlist_offers_event_id_status_expires_at_idx").on(table.eventId, table.status, table.expiresAt),
   ],
 );
+
+/**
+ * Someone the bot let into a chat who was not there before — a guest on trial.
+ * They stay if they check in and are removed if they never show up, which is why
+ * the row exists at all: it is the only record of who arrived through us, and so
+ * marks the only people we may ever remove. A long-standing member never gets one.
+ *
+ * One row per person per chat, not per event: `eventId` is whichever event the
+ * trial currently hangs on. Someone holding spots at two runs who skips the first
+ * has their trial carried over to the second rather than settled, so booking
+ * repeatedly can never buy a permanent seat without ever turning up.
+ */
+export const chatGuests = sqliteTable(
+  "chat_guests",
+  {
+    chatId: integer("chat_id").notNull(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    /** Kept so an unused single-use link can be revoked once the trial is settled. */
+    inviteLink: text("invite_link").notNull(),
+    status: text("status").$type<ChatGuestStatus>().notNull().default("invited"),
+    createdAt: createdAt(),
+    settledAt: integer("settled_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.chatId, table.userId] }),
+    index("chat_guests_event_id_status_idx").on(table.eventId, table.status),
+  ],
+);
+
+/**
+ * Who runs what, one branch at a time. The primary key allows a single hold per
+ * person per branch, so a role is set rather than accumulated — but nothing stops
+ * the same person running Moscow and helping out in Kazan.
+ *
+ * This sits *beneath* `users.is_admin`: a general admin needs no rows here and is
+ * never restricted by their absence.
+ */
+export const userCityRoles = sqliteTable(
+  "user_city_roles",
+  {
+    city: text("city").$type<CitySlug>().notNull(),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").$type<CityRole>().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.city, table.userId] }),
+    index("user_city_roles_user_id_idx").on(table.userId),
+  ],
+);
+
+/**
+ * The Telegram chats the club can point events at — the catalog that used to be
+ * the EVENT_GROUPS env var, and so used to need a redeploy to change.
+ *
+ * The bot files a row itself the moment it is added to a chat; a general admin
+ * then says which branch it belongs to. Until they do, `city` is null and the
+ * chat cannot be used for anything, which is what makes accidental discovery safe.
+ *
+ * `title`, `problem` and `checkedAt` are the answers Telegram last gave about the
+ * chat. They live here rather than in memory so a restart does not blank every
+ * chat name in the admin UI.
+ */
+export const chats = sqliteTable("chats", {
+  /** The Telegram chat id. Carried over by `migrateChat` when a group is upgraded. */
+  id: integer("id").primaryKey(),
+  city: text("city").$type<CitySlug>(),
+  title: text("title"),
+  /** Why the last lookup failed, for the admin UI's warning state. Null when healthy. */
+  problem: text("problem"),
+  checkedAt: integer("checked_at", { mode: "timestamp" }),
+  createdAt: createdAt(),
+});

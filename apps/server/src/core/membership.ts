@@ -68,14 +68,27 @@ export const setEventChats = (db: Db, eventId: number, chatIds: readonly number[
 /**
  * Telegram silently upgrades a basic group to a supergroup, which changes its id —
  * every later lookup on the old id fails, so events restricted to it would go dark.
- * Carry the restriction over to the new id instead. EVENT_GROUPS still needs editing
- * by hand; the admin UI reports that.
+ * Carry everything that names the chat over to the new id instead.
+ *
+ * The catalog row moves with it, keeping the chat's branch, so the upgrade needs no
+ * admin action at all. It used to need an env var edited by hand and a redeploy.
  */
 export const migrateChat = (db: Db, from: number, to: number): void => {
   db.$client.transaction(() => {
+    // The new id may already be catalogued if the bot met the upgraded chat first;
+    // keep whichever row is there and let the old one go.
+    db.$client.query("UPDATE OR IGNORE chats SET id = ? WHERE id = ?").run(to, from);
+    db.$client.query("DELETE FROM chats WHERE id = ?").run(from);
+
     db.$client.query("INSERT OR IGNORE INTO event_chats (event_id, chat_id) SELECT event_id, ? FROM event_chats WHERE chat_id = ?").run(to, from);
     db.$client.query("DELETE FROM event_chats WHERE chat_id = ?").run(from);
     db.$client.query("DELETE FROM chat_members WHERE chat_id = ?").run(from);
+
+    // The two loose references to a chat id: where confirmed runners get invited,
+    // and who we let in there and may therefore remove again.
+    db.$client.query("UPDATE events SET home_chat_id = ? WHERE home_chat_id = ?").run(to, from);
+    db.$client.query("UPDATE OR IGNORE chat_guests SET chat_id = ? WHERE chat_id = ?").run(to, from);
+    db.$client.query("DELETE FROM chat_guests WHERE chat_id = ?").run(from);
   })();
 };
 

@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { CITIES } from "@sku/cities";
+
 import { sku, type EventCard as EventCardData, type EventDetail } from "../api";
 import { useI18n } from "../i18n";
 import { countdown, errorText, fullDate, isPast } from "../lib/format";
@@ -190,6 +192,14 @@ export const EventDetailScreen = () => {
                   {detail.location}
                 </button>
               ) : <span className="block break-words">{detail.location}</span>}
+            </dd>
+            <dd className="mt-1.5 flex items-center gap-2 text-[12px] text-hint">
+              <span
+                aria-hidden
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: CITIES[detail.city].brandLift, boxShadow: `0 0 0 2px ${CITIES[detail.city].brand}` }}
+              />
+              {CITIES[detail.city].name[locale]}
             </dd>
           </div>
         </dl>

@@ -4,6 +4,7 @@ import { eq, users } from "@sku/db";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { i18n } from "./i18n";
+import { discoverChat } from "./membership";
 
 const env = loadEnv();
 
@@ -28,8 +29,9 @@ const localeOf = (userId: number): Locale =>
   db.select({ locale: users.locale }).from(users).where(eq(users.id, userId)).get()?.locale ?? "ru";
 
 /**
- * Telegram never shows a group's numeric id in the app, but EVENT_GROUPS needs it.
- * Admins run /chatid inside the group to read it off.
+ * Telegram never shows a group's numeric id in the app. The bot files chats it is
+ * added to on its own, so this is the fallback for a chat it joined before it knew
+ * to look — admins run /chatid inside the group to read the id off.
  */
 export const chatIdHandler = async (context: ChatIdContext): Promise<void> => {
   const userId = context.from?.id;
@@ -43,9 +45,14 @@ export const chatIdHandler = async (context: ChatIdContext): Promise<void> => {
   await context.send(i18n.t(locale, "chatId", context.chat.id));
 };
 
-/** Logs the id the moment the bot joins a chat, so setup needs no command at all. */
+/**
+ * Files the chat the moment the bot joins it, so setup needs no command at all.
+ * The row lands with no branch and is inert until a general admin says which one
+ * it belongs to — being discovered grants a chat nothing on its own.
+ */
 export const chatMembershipHandler = (context: ChatMemberContext): void => {
   const { chat, new_chat_member: member } = context.payload;
   if (chat.type === "private") return;
   console.info(`[chat] bot is now "${member.status}" in ${chat.title ?? chat.type} — id ${chat.id}`);
+  discoverChat(chat.id, chat.title ?? null);
 };

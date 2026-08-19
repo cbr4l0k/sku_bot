@@ -2,6 +2,7 @@ import { getBotTokenSecretKey, validateAndParseInitData } from "@gramio/init-dat
 import { Elysia, t } from "elysia";
 
 import { eq, users } from "@sku/db";
+import { loadActor } from "../core/cities";
 import { db } from "../db";
 import { loadEnv } from "../env";
 import { localeFromLanguageCode } from "../bot/i18n";
@@ -38,6 +39,8 @@ export const auth = new Elysia({ name: "auth" })
     const user = db.select().from(users).where(eq(users.id, telegramUser.id)).get();
     if (!user) return status(401, { error: "unauthorized" });
 
-    return { user, isAdmin: user.isAdmin || isConfiguredAdmin };
+    const isAdmin = user.isAdmin || isConfiguredAdmin;
+    // Resolved once here so handlers can answer "may they?" without another query.
+    return { user, isAdmin, actor: loadActor(db, user.id, isAdmin) };
   })
   .as("scoped");

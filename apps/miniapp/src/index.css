@@ -63,38 +63,49 @@
 }
 
 :root {
-  /* --- the brand, straight off the icon ---------------------------------- */
+  /* --- the brand ---------------------------------------------------------
+     These three are the only colours a branch declares. Petersburg's are inlined
+     here so the very first paint is already the club's, before any script runs;
+     `CityProvider` overwrites all three the moment it knows whose app this is.
+     Everything below is mixed out of --brand, so a branch is two hexes and not a
+     palette to maintain three times over. */
   --brand: #0097a8; /* the field */
-  --brand-lift: #3eafbd; /* the swoosh */
+  --brand-lift: #3eafbd; /* the logo mark's second colour */
+  --swoosh: #3eafbd; /* the backdrop wash — see the note in @sku/cities */
 
-  /* Two further rungs of the same hue (186°), for the jobs a 3.5:1 colour
-     cannot do: filled marks that carry small white type, and text on paper. */
-  --brand-deep: #00707d;
-  --brand-ink: #04353c;
+  /* Two further rungs of the same hue, for the jobs a 3.5:1 colour cannot do:
+     filled marks that carry small white type, and text on paper. The mix
+     percentages are the largest that keep white legible on --brand-deep and
+     --ink-deep legible on the field in *every* branch — green binds the first,
+     red the second. */
+  --brand-deep: color-mix(in oklab, var(--brand) 76%, black);
+  --brand-ink: color-mix(in oklab, var(--brand) 48%, black);
 
   /* The one colour that clears AA at any size on the untouched field. */
-  --ink-deep: #022024;
+  --ink-deep: color-mix(in oklab, var(--brand) 35%, black);
 
-  --paper: #eff8f9;
-  --paper-ink-dim: #376a72;
+  --paper: color-mix(in oklab, var(--brand) 8%, white);
+  --paper-ink-dim: color-mix(in oklab, var(--brand-ink) 72%, var(--paper));
   --input-bg: #ffffff;
-  --input-line: #cfe3e6;
-  --input-ph: #4c7b82;
+  --input-line: color-mix(in oklab, var(--brand) 19%, var(--paper));
+  --input-ph: color-mix(in oklab, var(--brand-ink) 70%, white);
   --tabbar-bg: rgb(255 255 255 / 0.93);
 
   /* Destructive is the only warm note in the app, and it is deliberately kept
-     to one small block so the two-colour brand still reads as two colours. */
+     to one small block so the two-colour brand still reads as two colours. It
+     is the one colour that does not follow the branch — a warning that turned
+     red in Moscow and green in Kazan would stop being a warning. */
   --danger: #8a2a16;
   --danger-bg: #ffe9e2;
 
-  /* --- field context (the default, i.e. anything sitting on the teal) ----- */
+  /* --- field context (the default, i.e. anything sitting on the brand) ----- */
   --ink: #ffffff;
   --ink-dim: var(--ink-deep);
   --chip-ink: var(--ink-deep);
 
   /* --flare is "the strongest mark available on the current surface", and
-     --flare-ink is what is legible on top of that mark. On the field the
-     strongest mark is white — exactly the poster's move. */
+     --flare-ink is what is legible on top of that mark. On a dark-enough field
+     the strongest mark is white — exactly the poster's move. */
   --flare: #ffffff;
   --flare-ink: var(--brand-ink);
   --flare-soft: rgb(255 255 255 / 0.16);
@@ -102,8 +113,7 @@
   --hair: color-mix(in oklab, var(--ink-deep) 26%, transparent);
   --veil: color-mix(in oklab, var(--ink-deep) 12%, transparent);
 
-  /* Secondary buttons on the field: a deeper rung of the brand carrying white,
-     which is 5.81:1 — an outline in white would have been 3.5:1. */
+  /* Secondary buttons on the field: a deeper rung of the brand carrying white. */
   --ghost-bg: var(--brand-deep);
   --ghost-ink: #ffffff;
   --ghost-line: transparent;
@@ -111,21 +121,41 @@
   --swoosh-opacity: 1;
 
   /* Every native control in the app (the datetime pickers above all) is
-     rendered on white paper, so the UA must lay them out for a light surface.
-     This is a change from the previous palette, where the fields were dark. */
+     rendered on white paper, so the UA must lay them out for a light surface. */
   color-scheme: light;
+}
+
+/* --------------------------------------------------------------------------
+   A LIGHT FIELD
+   Teal and red are dark enough to carry white type; green is not — white on
+   Kazan's #03c452 is 2.33:1 and fails outright, where Petersburg's field gives
+   3.50:1 and Moscow's 3.85:1. So a branch declares which way its field runs and
+   the whole context inverts: near-black type, and the strongest mark on the
+   field becomes dark rather than white. Everything downstream — .card, .chip,
+   .btn, the tab bar — follows without knowing a thing about it.
+   -------------------------------------------------------------------------- */
+:root[data-field-ink="dark"] {
+  --ink: var(--ink-deep);
+  --ink-dim: var(--ink-deep);
+
+  --flare: var(--ink-deep);
+  --flare-ink: #ffffff;
+  --flare-soft: color-mix(in oklab, var(--ink-deep) 12%, transparent);
+
+  --ghost-bg: var(--ink-deep);
+  --ghost-ink: #ffffff;
 }
 
 /* The club has no night palette and darkening the field is precisely what made
    the previous attempt stop looking like the brand. So dark scheme keeps the
-   field at #0097A8 and dims the reading surface instead: paper drops to
-   #D6E9EB, the swoosh softens, and the ink steps down with it so every ratio
-   above still holds (ink 10.59:1, ink-dim 5.58:1, danger 6.90:1). */
+   field at full strength and dims the reading surface instead: paper drops a
+   couple of rungs, the swoosh softens, and the ink steps down with it so every
+   ratio above still holds in all three branches. */
 :root[data-scheme="dark"] {
-  --paper: #d6e9eb;
-  --paper-ink-dim: #2f6068;
-  --input-bg: #f4fafb;
-  --input-line: #b7d3d7;
+  --paper: color-mix(in oklab, var(--brand) 18%, white);
+  --paper-ink-dim: color-mix(in oklab, var(--brand-ink) 78%, var(--paper));
+  --input-bg: color-mix(in oklab, var(--brand) 5%, white);
+  --input-line: color-mix(in oklab, var(--brand) 39%, white);
   --tabbar-bg: rgb(242 250 251 / 0.94);
   --swoosh-opacity: 0.72;
 
@@ -223,12 +253,12 @@
      it cannot contribute a single pixel of document overflow.
 
      Both shapes start below the header band on purpose. White display type
-     measures 2.60:1 against #3EAFBD but 3.50:1 against #0097A8, so the one
-     white-on-field element in the app — the page title — is guaranteed flat
-     field behind it (46vmin clears a four-line hero on the narrowest phone,
-     and the header scrolls up and away from a fixed layer, never down into
-     it). Small type on the field is --ink-deep, which *gains* contrast over
-     the swoosh (6.54:1 vs 4.85:1), so it may cross it freely. */
+     measures 2.60:1 against Petersburg's #3EAFBD but 3.50:1 against its
+     #0097A8, so the one white-on-field element in the app — the page title —
+     is guaranteed flat field behind it (46vmin clears a four-line hero on the
+     narrowest phone, and the header scrolls up and away from a fixed layer,
+     never down into it). Small type on the field is --ink-deep, which *gains*
+     contrast over the wash (6.54:1 vs 4.85:1), so it may cross it freely. */
   .backdrop {
     position: fixed;
     inset: 0;
@@ -238,9 +268,11 @@
     opacity: var(--swoosh-opacity);
   }
 
+  /* --swoosh, not --brand-lift: the wash has to stay visible against its own
+     field, and a branch's logo colour does not always manage that. */
   .backdrop svg {
     position: absolute;
-    fill: var(--brand-lift);
+    fill: var(--swoosh);
   }
 
   .swoosh-a {

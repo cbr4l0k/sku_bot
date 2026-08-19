@@ -1,3 +1,4 @@
+import type { CitySlug } from "@sku/cities";
 import type { Db } from "@sku/db";
 type Registration = { event_id: number; user_id: number; status: string };
 export const eventStats = (db: Db, eventId: number) => {
@@ -7,9 +8,15 @@ export const eventStats = (db: Db, eventId: number) => {
   const offers = db.$client.query<{ status: string }, [number]>("SELECT status FROM waitlist_offers WHERE event_id = ?").all(eventId);
   return { registered, waitlisted: registrations.filter((row) => row.status === "waitlisted").length, checkedIn, attendanceRate: registered ? checkedIn / registered : 0, offersMade: offers.length, offersAccepted: offers.filter((row) => row.status === "accepted").length };
 };
-export const globalStats = (db: Db) => {
-  const events = db.$client.query<{ id: number; capacity: number | null }, []>("SELECT id, capacity FROM events").all();
-  const registrations = db.$client.query<Registration, []>("SELECT event_id, user_id, status FROM registrations").all();
+/** Narrowed to one branch for a branch admin; the whole club when `city` is null. */
+export const globalStats = (db: Db, city: CitySlug | null = null) => {
+  const events = city === null
+    ? db.$client.query<{ id: number; capacity: number | null }, []>("SELECT id, capacity FROM events").all()
+    : db.$client.query<{ id: number; capacity: number | null }, [string]>("SELECT id, capacity FROM events WHERE city = ?").all(city);
+  const scope = new Set(events.map((row) => row.id));
+  const registrations = db.$client
+    .query<Registration, []>("SELECT event_id, user_id, status FROM registrations").all()
+    .filter((row) => scope.has(row.event_id));
   const confirmed = registrations.filter((row) => row.status === "registered" || row.status === "checked_in");
   const checkedIn = registrations.filter((row) => row.status === "checked_in");
   const capacityEvents = events.filter((row) => row.capacity !== null && row.capacity > 0);

@@ -75,8 +75,8 @@ test("HTTPS map links round-trip, empty links clear, and unsafe links are reject
     body: JSON.stringify(body),
   }));
   const startsAt = new Date("2030-08-06T16:30:00Z").toISOString();
-  const created = await request("POST", "/api/admin/events", {
-    title: "Утренний забег", description: "Лёгкий темп", startsAt, location: "Парк", locationUrl: "https://maps.example.com/park", capacity: null,
+  const created = await request("POST", "/api/organizer/events", {
+    city: "spb", title: "Утренний забег", description: "Лёгкий темп", startsAt, location: "Парк", locationUrl: "https://maps.example.com/park", capacity: null,
   });
   const event = await created.json() as { id: number; locationUrl: string | null };
   expect(created.status).toBe(200);

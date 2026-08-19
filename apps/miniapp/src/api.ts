@@ -1,5 +1,7 @@
 import { treaty } from "@elysiajs/eden";
 
+import type { CityRole, CitySlug } from "@sku/cities";
+
 import type { App } from "../../server/src/api";
 import { initData } from "./telegram";
 
@@ -92,6 +94,7 @@ export type EventStatus = EventSummary["status"];
 export type RegistrationStatus = NonNullable<EventCard["myRegistrationStatus"]>;
 
 export type EventDraft = {
+  city: CitySlug;
   title: string;
   description: string;
   startsAt: string;
@@ -101,18 +104,21 @@ export type EventDraft = {
   waitlistEnabled?: boolean;
 };
 
-/** A Telegram group from EVENT_GROUPS; `title` is null when the bot cannot reach the chat. */
+/** A chat of one branch; `title` is null when the bot cannot reach it. */
 export type Group = Ok<typeof api.admin.groups.get>["groups"][number];
+
+/** A catalogued chat, including the ones still waiting to be filed under a branch. */
+export type CatalogChat = Ok<typeof api.admin.chats.get>["chats"][number];
 
 /** A group already attached to an event, where the id always has a display string. */
 export type EventGroup = EventSummary["groups"][number];
 
-/** Chat restrictions ride along with the event, but only admins may set them. */
-export type AdminEventDraft = EventDraft & { groups?: number[] };
+/** Chat restrictions and the guest chat ride along with the event, but only admins may set them. */
+export type AdminEventDraft = EventDraft & { groups?: number[]; homeChatId?: number | null };
 
 export const sku = {
   me: () => call(api.me.get(auth())),
-  setMe: (body: { locale?: Locale; firstName?: string; lastName?: string }) => call(api.me.patch(body, auth())),
+  setMe: (body: { locale?: Locale; city?: CitySlug; firstName?: string; lastName?: string }) => call(api.me.patch(body, auth())),
 
   events: () => call(api.events.get(auth())),
   event: (id: number) => call(api.events({ id }).get(auth())),
@@ -130,10 +136,12 @@ export const sku = {
   toggleAttendance: (id: number, userId: number) =>
     call(api.organizer.events({ id }).attendance({ userId }).post(undefined, auth())),
 
-  createEvent: (body: AdminEventDraft & { status?: EventStatus }) => call(api.admin.events.post(body, auth())),
+  createEvent: (body: AdminEventDraft & { status?: EventStatus }) => call(api.organizer.events.post(body, auth())),
   adminUpdateEvent: (id: number, body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
     call(api.admin.events({ id }).patch(body, auth())),
-  groupCatalog: () => call(api.admin.groups.get(auth())),
+  groupCatalog: (city: CitySlug) => call(api.admin.groups.get({ ...auth(), query: { city } })),
+  chatCatalog: () => call(api.admin.chats.get(auth())),
+  setChatCity: (id: number, city: CitySlug | null) => call(api.admin.chats({ id }).put({ city }, auth())),
   deleteEvent: (id: number) => call(api.admin.events({ id }).delete(undefined, auth())),
   setOrganizers: (id: number, userIds: number[]) => call(api.admin.events({ id }).organizers.put({ userIds }, auth())),
   eventStats: (id: number) => call(api.admin.events({ id }).stats.get(auth())),
@@ -143,5 +151,7 @@ export const sku = {
   unban: (id: number) => call(api.admin.users({ id }).unban.post(undefined, auth())),
   promote: (id: number) => call(api.admin.users({ id }).promote.post(undefined, auth())),
   demote: (id: number) => call(api.admin.users({ id }).demote.post(undefined, auth())),
-  globalStats: () => call(api.admin.stats.get(auth())),
+  setCityRole: (id: number, city: CitySlug, role: CityRole | null) =>
+    call(api.admin.users({ id }).roles.put({ city, role }, auth())),
+  globalStats: (city?: CitySlug) => call(api.admin.stats.get({ ...auth(), query: city ? { city } : {} })),
 };

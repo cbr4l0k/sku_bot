@@ -1,8 +1,10 @@
 import { Elysia, t } from "elysia";
 
+import { cities, cityRoles, type CitySlug } from "@sku/cities";
 import {
   and,
   asc,
+  chats,
   desc,
   eq,
   eventOrganizers,
@@ -13,6 +15,7 @@ import {
   or,
   registrations,
   sql,
+  userCityRoles,
   users,
   waitlistOffers,
 } from "@sku/db";
@@ -28,6 +31,17 @@ import {
   setEventChats,
   visibleToUser,
 } from "../core/membership";
+import {
+  adminCities,
+  canAdminCity,
+  canCreateEventIn,
+  canGrantRole,
+  canManageEvent,
+  inCityForUser,
+  organizerCities,
+  type Actor,
+} from "../core/cities";
+import { assignableChats, chatById, chatCatalog, setChatCity } from "../core/chats";
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
 import { eventStats, globalStats } from "../core/stats";
@@ -71,6 +85,7 @@ const userView = (user: typeof users.$inferSelect) => ({
   username: user.username,
   phone: user.phone,
   locale: user.locale,
+  city: user.city,
   // Env-configured admins are admins even if their row predates the boot-time sync.
   isAdmin: user.isAdmin || adminIds.has(user.id),
   isBanned: user.isBanned,
@@ -80,15 +95,25 @@ const userView = (user: typeof users.$inferSelect) => ({
 const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
   groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
+  homeChat: event.homeChatId === null ? null : { id: event.homeChatId, title: chatTitle(event.homeChatId) ?? String(event.homeChatId) },
   startsAt: event.startsAt.toISOString(),
   endedAt: iso(event.endedAt),
   createdAt: event.createdAt.toISOString(),
   updatedAt: event.updatedAt.toISOString(),
 });
 
-const configuredChats = new Set(env.EVENT_GROUPS);
-/** Only chats from the EVENT_GROUPS catalog may be assigned; stored rows outlive the catalog. */
-const unknownGroup = (groups: readonly number[]) => groups.some((id) => !configuredChats.has(id));
+/**
+ * A chat belongs to exactly one branch, so an event may only reach chats of its
+ * own. This is what keeps a Kazan admin out of Moscow's groups. Stored rows
+ * outlive the catalog, so an event keeps whatever it was given before a chat moved.
+ */
+const unknownGroup = (city: CitySlug, groups: readonly number[]) => {
+  const allowed = new Set(assignableChats(db, city));
+  return groups.some((id) => !allowed.has(id));
+};
+/** Guests can only be funnelled into a chat of the event's own branch. */
+const unknownHomeChat = (city: CitySlug, chatId: number | null | undefined) =>
+  chatId !== null && chatId !== undefined && !assignableChats(db, city).includes(chatId);
 
 /** Telegram owns membership, so refresh what the caller is about to be filtered against. */
 const syncMemberships = (userId: number, chatIds: readonly number[]) =>
@@ -109,12 +134,27 @@ const parseLocationUrl = (value: string | null): string | null | undefined => {
   }
 };
 
-const requireEventOrganizer = (eventId: number, userId: number, isAdmin: boolean) => isAdmin || Boolean(
-  db.select({ eventId: eventOrganizers.eventId })
-    .from(eventOrganizers)
-    .where(and(eq(eventOrganizers.eventId, eventId), eq(eventOrganizers.userId, userId)))
-    .get(),
-);
+/**
+ * Load an event and settle whether the caller may run it, in one step — every
+ * organizer route needs both and each used to spell the pair out itself.
+ */
+const manageable = (actor: Actor, eventId: number) => {
+  const event = db.select().from(events).where(eq(events.id, eventId)).get();
+  if (!event) return { denied: "event_not_found" as const, code: 404 as const };
+  if (!canManageEvent(db, actor, event)) return { denied: "forbidden" as const, code: 403 as const };
+  return { event };
+};
+
+/** Runs at least one branch, and so has someone to appoint and something to count. */
+const runsAnyBranch = (actor: Actor) => actor.isGlobalAdmin || adminCities(actor).length > 0;
+
+/** The same, for the powers reserved to whoever runs the branch. */
+const administrable = (actor: Actor, eventId: number) => {
+  const event = db.select().from(events).where(eq(events.id, eventId)).get();
+  if (!event) return { denied: "event_not_found" as const, code: 404 as const };
+  if (!canAdminCity(actor, event.city)) return { denied: "forbidden" as const, code: 403 as const };
+  return { event };
+};
 
 const participantEvent = (eventId: number) => db.select().from(events)
   .where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
@@ -125,7 +165,21 @@ const activeParticipantIds = (eventId: number) => db.select({ userId: registrati
   .all()
   .map((row) => row.userId);
 
+/**
+ * UnionEnum keeps the literal union intact through Eden's inference, where
+ * `t.Union` over a mapped array collapses to `never` on the client.
+ *
+ * The explicit `default: undefined` is load-bearing: Elysia's UnionEnum sets
+ * `default: values[0]` "for generating error message", and the body normaliser
+ * then materialises it. Left alone, every PATCH that did not mention a city
+ * would arrive carrying `city: "spb"` and quietly move the event to Petersburg —
+ * and every role change that did not mention a role would arrive as "admin".
+ */
+const citySchema = t.UnionEnum(cities, { default: undefined });
+const cityRoleSchema = t.UnionEnum(cityRoles, { default: undefined });
+
 const eventFields = t.Object({
+  city: citySchema,
   title: t.String({ minLength: 1 }),
   description: t.String(),
   startsAt: t.String(),
@@ -139,30 +193,57 @@ const eventPatchFields = t.Partial(eventFields);
 const eventStatus = t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")]);
 const idParams = t.Object({ id: t.Numeric() });
 
+/**
+ * The fields only someone who runs the branch may set, merged into one flat object
+ * rather than intersected on.
+ *
+ * An intersection puts each member behind its own `additionalProperties: false`, so
+ * once Elysia compiles the route a body carrying `status`, `groups` or `homeChatId`
+ * is rejected as an unexpected property by the *other* member — a 422 that only
+ * shows up once a route is warm, and so never in a cold test.
+ */
+const adminFields = {
+  status: t.Optional(eventStatus),
+  groups: t.Optional(t.Array(t.Integer())),
+  homeChatId: t.Optional(t.Nullable(t.Integer())),
+};
+const eventCreateBody = t.Object({ ...eventFields.properties, ...adminFields });
+const eventPatchBody = t.Object({ ...eventPatchFields.properties, ...adminFields });
+
 export const app = new Elysia()
   .get("/api/health", () => ({ ok: true }))
   .group("/api", (api) => api
     .use(auth)
-    .get("/me", ({ user }) => {
+    .get("/me", ({ user, actor }) => {
       const isOrganizerOfAny = Boolean(db.select({ eventId: eventOrganizers.eventId }).from(eventOrganizers)
         .where(eq(eventOrganizers.userId, user.id)).get());
-      return { ...userView(user), isOrganizerOfAny };
+      return {
+        ...userView(user),
+        isOrganizerOfAny,
+        roles: [...actor.roles].map(([city, role]) => ({ city, role })),
+        adminCities: adminCities(actor),
+        organizerCities: organizerCities(actor),
+      };
     })
     .patch("/me", ({ user, body }) => {
       db.update(users).set({
         ...(body.locale === undefined ? {} : { locale: body.locale }),
+        ...(body.city === undefined ? {} : { city: body.city }),
         ...(body.firstName === undefined ? {} : { firstName: body.firstName }),
         ...(body.lastName === undefined ? {} : { lastName: body.lastName }),
       }).where(eq(users.id, user.id)).run();
       const updated = db.select().from(users).where(eq(users.id, user.id)).get();
       return updated ? userView(updated) : userView(user);
-    }, { body: t.Object({ locale: t.Optional(t.Union([t.Literal("ru"), t.Literal("en")])), firstName: t.Optional(t.String()), lastName: t.Optional(t.String()) }) })
+    }, { body: t.Object({ locale: t.Optional(t.Union([t.Literal("ru"), t.Literal("en")])), city: t.Optional(citySchema), firstName: t.Optional(t.String()), lastName: t.Optional(t.String()) }) })
     .get("/events", async ({ user }) => {
+      // Nothing to show until they have said which branch is theirs; the mini app
+      // puts the picker up in place of the list rather than guessing.
+      if (user.city === null) return [];
       await syncMemberships(user.id, chatsGatingLiveEvents(db));
       // A started event stays listed until an organizer ends it, so people can still
       // find it to sign up late or to check in on their way out.
       return db.select().from(events)
-        .where(and(eq(events.status, "published"), isNull(events.endedAt), visibleToUser(user.id)))
+        .where(and(eq(events.status, "published"), isNull(events.endedAt), visibleToUser(user.id), inCityForUser(user.city, user.id)))
         .orderBy(asc(events.startsAt)).all().map((event) => {
           const registration = db.select({ status: registrations.status }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
@@ -223,17 +304,51 @@ export const app = new Elysia()
       return result;
     }, { body: t.Object({ code: t.String({ minLength: 1 }) }) })
 
-    .get("/organizer/events", ({ user, isAdmin }) => {
-      const selected = isAdmin
-        ? db.select().from(events).orderBy(desc(events.startsAt)).all()
-        : db.select({ event: events }).from(eventOrganizers).innerJoin(events, eq(eventOrganizers.eventId, events.id))
-          .where(eq(eventOrganizers.userId, user.id)).orderBy(desc(events.startsAt)).all().map((row) => row.event);
-      return selected.map(eventView);
+    .get("/organizer/events", ({ user, isAdmin, actor }) => {
+      if (isAdmin) return db.select().from(events).orderBy(desc(events.startsAt)).all().map(eventView);
+      // Everything in the branches they run, plus every event they are named on
+      // elsewhere — the two overlap, so they are merged rather than concatenated.
+      const runs = adminCities(actor);
+      const byCity = runs.length
+        ? db.select().from(events).where(inArray(events.city, runs)).orderBy(desc(events.startsAt)).all()
+        : [];
+      const byName = db.select({ event: events }).from(eventOrganizers)
+        .innerJoin(events, eq(eventOrganizers.eventId, events.id))
+        .where(eq(eventOrganizers.userId, user.id)).orderBy(desc(events.startsAt)).all().map((row) => row.event);
+      const merged = new Map([...byCity, ...byName].map((event) => [event.id, event]));
+      return [...merged.values()].sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime()).map(eventView);
     })
-    .patch("/organizer/events/:id", ({ params, body, user, isAdmin, status }) => {
-      const event = db.select().from(events).where(eq(events.id, params.id)).get();
-      if (!event) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    /**
+     * Raising an event is an organizer's job, not an admin's — a branch organizer
+     * exists precisely so someone can put a run on without the club's keys. The
+     * fields that reach beyond the event itself stay admin-only, as they were.
+     */
+    .post("/organizer/events", ({ body, user, actor, status }) => {
+      if (!canCreateEventIn(actor, body.city)) return error(status, 403, "forbidden");
+      const startsAt = parseDate(body.startsAt);
+      if (!startsAt) return error(status, 400, "invalid_starts_at");
+      const locationUrl = body.locationUrl === undefined ? null : parseLocationUrl(body.locationUrl);
+      if (locationUrl === undefined) return error(status, 400, "invalid_location_url");
+      const asAdmin = canAdminCity(actor, body.city);
+      if (!asAdmin && (body.groups?.length || body.homeChatId != null || body.status !== undefined)) {
+        return error(status, 403, "forbidden");
+      }
+      if (body.groups && unknownGroup(body.city, body.groups)) return error(status, 400, "unknown_group");
+      if (unknownHomeChat(body.city, body.homeChatId)) return error(status, 400, "unknown_home_chat");
+      const { groups, ...fields } = body;
+      const created = db.$client.transaction(() => {
+        const row = db.insert(events).values({ ...fields, locationUrl, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
+        // Whoever raised it runs it, or they could not reopen the form they just left.
+        db.insert(eventOrganizers).values({ eventId: row.id, userId: user.id }).onConflictDoNothing().run();
+        return row;
+      })();
+      if (groups) setEventChats(db, created.id, groups);
+      return eventView(created);
+    }, { body: eventCreateBody })
+    .patch("/organizer/events/:id", ({ params, body, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const { event } = found;
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
       const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
@@ -263,64 +378,59 @@ export const app = new Elysia()
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams, body: eventPatchFields })
-    .get("/organizer/events/:id/attendance", ({ params, user, isAdmin, status }) => {
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    .get("/organizer/events/:id/attendance", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       const attendance = db.select({ userId: users.id, firstName: users.firstName, lastName: users.lastName, username: users.username, phone: users.phone, status: registrations.status, checkedInAt: registrations.checkedInAt })
         .from(registrations).innerJoin(users, eq(registrations.userId, users.id)).where(eq(registrations.eventId, params.id)).orderBy(asc(registrations.createdAt)).all()
         .map((row) => ({ ...row, checkedInAt: iso(row.checkedInAt) }));
       return { registrations: attendance, counts: eventStats(db, params.id) };
     }, { params: idParams })
-    .get("/organizer/events/:id/checkin-token", ({ params, user, isAdmin, status }) => {
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    .get("/organizer/events/:id/checkin-token", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       // No point showing a code nobody's scan would be accepted from.
       if (isEventOver(db, params.id)) return error(status, 409, "event_over");
       return { token: mintCheckinToken(env.CHECKIN_SECRET, params.id, now()), expiresInSeconds: 45 };
     }, { params: idParams })
     /** The event is over when whoever is running it says so — never on a timer. */
-    .post("/organizer/events/:id/end", ({ params, user, isAdmin, status }) => {
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    .post("/organizer/events/:id/end", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       fireEffects(endEvent(db, params.id, now()).effects);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams })
-    .post("/organizer/events/:id/reopen", ({ params, user, isAdmin, status }) => {
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    .post("/organizer/events/:id/reopen", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       fireEffects(reopenEvent(db, params.id, now()).effects);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams })
-    .post("/organizer/events/:id/attendance/:userId", ({ params, user, isAdmin, status }) => {
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
-      if (!requireEventOrganizer(params.id, user.id, isAdmin)) return error(status, 403, "forbidden");
+    .post("/organizer/events/:id/attendance/:userId", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       const result = manualToggleCheckin(db, params.id, params.userId, now());
       return "error" in result ? error(status, 400, result.error) : result;
     }, { params: t.Object({ id: t.Numeric(), userId: t.Numeric() }) })
 
-    .post("/admin/events", ({ body, user, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      const startsAt = parseDate(body.startsAt);
-      if (!startsAt) return error(status, 400, "invalid_starts_at");
-      const locationUrl = body.locationUrl === undefined ? null : parseLocationUrl(body.locationUrl);
-      if (locationUrl === undefined) return error(status, 400, "invalid_location_url");
-      if (body.groups && unknownGroup(body.groups)) return error(status, 400, "unknown_group");
-      const { groups, ...fields } = body;
-      const created = db.insert(events).values({ ...fields, locationUrl, startsAt, createdBy: user.id, status: body.status ?? "draft" }).returning().get();
-      if (groups) setEventChats(db, created.id, groups);
-      return eventView(created);
-    }, { body: t.Intersect([eventFields, t.Object({ status: t.Optional(eventStatus), groups: t.Optional(t.Array(t.Integer())) })]) })
-    .patch("/admin/events/:id", ({ params, body, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      const event = db.select().from(events).where(eq(events.id, params.id)).get();
-      if (!event) return error(status, 404, "event_not_found");
+    .patch("/admin/events/:id", ({ params, body, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const { event } = found;
+      // Moving a run between branches means handing it to people you may not be;
+      // it takes authority over both ends.
+      if (body.city !== undefined && body.city !== event.city && !canAdminCity(actor, body.city)) {
+        return error(status, 403, "forbidden");
+      }
+      const targetCity = body.city ?? event.city;
       const startsAt = body.startsAt === undefined ? undefined : parseDate(body.startsAt);
       if (body.startsAt !== undefined && !startsAt) return error(status, 400, "invalid_starts_at");
       const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
       if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
-      if (body.groups && unknownGroup(body.groups)) return error(status, 400, "unknown_group");
+      if (body.groups && unknownGroup(targetCity, body.groups)) return error(status, 400, "unknown_group");
+      if (unknownHomeChat(targetCity, body.homeChatId)) return error(status, 400, "unknown_home_chat");
       const changes: EventChange[] = [
         body.title !== undefined && body.title !== event.title ? "title" : null,
         body.description !== undefined && body.description !== event.description ? "description" : null,
@@ -329,8 +439,9 @@ export const app = new Elysia()
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
       if (body.groups !== undefined) setEventChats(db, params.id, body.groups);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined) db.update(events).set({
-        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), updatedAt: now(),
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined || body.homeChatId !== undefined || body.city !== undefined) db.update(events).set({
+        ...(body.city === undefined ? {} : { city: body.city }),
+        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
       // Switching the queue back on hands out the spots the dormant queue missed.
@@ -343,27 +454,27 @@ export const app = new Elysia()
       if (event.status !== "draft" && body.status !== "canceled" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
-    }, { params: idParams, body: t.Intersect([eventPatchFields, t.Object({ status: t.Optional(eventStatus), groups: t.Optional(t.Array(t.Integer())) })]) })
-    .delete("/admin/events/:id", ({ params, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      const event = db.select().from(events).where(eq(events.id, params.id)).get();
-      if (!event) return error(status, 404, "event_not_found");
+    }, { params: idParams, body: eventPatchBody })
+    .delete("/admin/events/:id", ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const { event } = found;
       if (event.status !== "draft") return error(status, 409, "only_drafts_can_be_deleted");
       db.delete(events).where(eq(events.id, params.id)).run();
       return { ok: true };
     }, { params: idParams })
-    .put("/admin/events/:id/organizers", ({ params, body, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
+    .put("/admin/events/:id/organizers", ({ params, body, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       db.$client.transaction(() => {
         db.delete(eventOrganizers).where(eq(eventOrganizers.eventId, params.id)).run();
         for (const userId of [...new Set(body.userIds)]) db.insert(eventOrganizers).values({ eventId: params.id, userId }).run();
       })();
       return { userIds: [...new Set(body.userIds)] };
     }, { params: idParams, body: t.Object({ userIds: t.Array(t.Integer()) }) })
-    .get("/admin/events/:id/stats", ({ params, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
+    .get("/admin/events/:id/stats", ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       const stats = eventStats(db, params.id);
       return {
         ...stats,
@@ -371,20 +482,22 @@ export const app = new Elysia()
         waitlistConversion: stats.offersMade ? stats.offersAccepted / stats.offersMade : 0,
       };
     }, { params: idParams })
-    .get("/admin/events/:id/link", async ({ params, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      if (!db.select({ id: events.id }).from(events).where(eq(events.id, params.id)).get()) return error(status, 404, "event_not_found");
+    .get("/admin/events/:id/link", async ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
       const username = bot.info?.username ?? (await bot.api.getMe()).username;
       if (!username) return error(status, 400, "bot_username_unavailable");
       return { miniAppLink: miniAppEventLink(username, "app", params.id), botLink: botEventLink(username, params.id) };
     }, { params: idParams })
-    .get("/admin/users", ({ query, isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
+    .get("/admin/users", ({ query, actor, status }) => {
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       const term = query.query?.trim();
       const predicate = term ? or(sql`${users.firstName} LIKE ${`%${term}%`}`, sql`${users.lastName} LIKE ${`%${term}%`}`, sql`${users.username} LIKE ${`%${term}%`}`, sql`${users.phone} LIKE ${`%${term}%`}`) : undefined;
       return db.select().from(users).where(predicate).orderBy(asc(users.firstName)).all().map((person) => ({
         ...userView(person),
         isConfiguredAdmin: adminIds.has(person.id),
+        roles: db.select({ city: userCityRoles.city, role: userCityRoles.role }).from(userCityRoles)
+          .where(eq(userCityRoles.userId, person.id)).orderBy(asc(userCityRoles.city)).all(),
         registrationCount: db.select({ value: sql<number>`count(*)` }).from(registrations).where(and(eq(registrations.userId, person.id), ne(registrations.status, "canceled"))).get()?.value ?? 0,
       }));
     }, { query: t.Object({ query: t.Optional(t.String()) }) })
@@ -398,11 +511,55 @@ export const app = new Elysia()
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isBanned: false }).where(eq(users.id, params.id)).run(); return { ok: true };
     }, { params: idParams })
-    .get("/admin/groups", async ({ isAdmin, status }) => {
-      if (!isAdmin) return error(status, 403, "forbidden");
-      await refreshChatStates(env.EVENT_GROUPS);
-      return { groups: env.EVENT_GROUPS.map((id) => ({ id, ...chatState(id) })) };
+    /**
+     * Appoint or unappoint someone in one branch. A general admin may set anything;
+     * a branch admin may only hand out and take back the organizer role in their own
+     * branch, so nobody can mint a peer or unseat one.
+     */
+    .put("/admin/users/:id/roles", ({ params, body, actor, status }) => {
+      if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
+      const current = db.select({ role: userCityRoles.role }).from(userCityRoles)
+        .where(and(eq(userCityRoles.city, body.city), eq(userCityRoles.userId, params.id))).get()?.role ?? null;
+      if (!canGrantRole(actor, body.city, body.role, current)) return error(status, 403, "forbidden");
+      if (body.role === null) {
+        db.delete(userCityRoles).where(and(eq(userCityRoles.city, body.city), eq(userCityRoles.userId, params.id))).run();
+      } else {
+        db.insert(userCityRoles).values({ city: body.city, userId: params.id, role: body.role })
+          .onConflictDoUpdate({ target: [userCityRoles.city, userCityRoles.userId], set: { role: body.role } }).run();
+      }
+      return {
+        roles: db.select({ city: userCityRoles.city, role: userCityRoles.role }).from(userCityRoles)
+          .where(eq(userCityRoles.userId, params.id)).orderBy(asc(userCityRoles.city)).all(),
+      };
+    }, { params: idParams, body: t.Object({ city: citySchema, role: t.Nullable(cityRoleSchema) }) })
+    /** The chats an event in this branch may be gated to or funnelled into. */
+    .get("/admin/groups", async ({ query, actor, status }) => {
+      if (!canAdminCity(actor, query.city)) return error(status, 403, "forbidden");
+      const ids = assignableChats(db, query.city);
+      await refreshChatStates(ids);
+      return { groups: ids.map((id) => ({ id, ...chatState(id) })) };
+    }, { query: t.Object({ city: citySchema }) })
+    /**
+     * The catalog itself. The bot files chats as it meets them; a general admin says
+     * which branch each belongs to. Branch admins get a read-only view of their own.
+     */
+    .get("/admin/chats", async ({ actor, status }) => {
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
+      const catalog = chatCatalog(db, adminCities(actor), actor.isGlobalAdmin);
+      await refreshChatStates(catalog.map((chat) => chat.id));
+      return {
+        chats: catalog.map((chat) => ({ ...chat, ...chatState(chat.id), createdAt: iso(chat.createdAt), checkedAt: iso(chat.checkedAt) })),
+        canAssign: actor.isGlobalAdmin,
+      };
     })
+    .put("/admin/chats/:id", ({ params, body, actor, status }) => {
+      // Filing a chat under a branch is a club-wide act: it decides which admins
+      // gain reach into that group.
+      if (!actor.isGlobalAdmin) return error(status, 403, "forbidden");
+      if (!chatById(db, params.id)) return error(status, 404, "chat_not_found");
+      setChatCity(db, params.id, body.city);
+      return { ok: true };
+    }, { params: idParams, body: t.Object({ city: t.Nullable(citySchema) }) })
     .post("/admin/users/:id/promote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
@@ -414,7 +571,15 @@ export const app = new Elysia()
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run(); return { ok: true };
     }, { params: idParams })
-    .get("/admin/stats", ({ isAdmin, status }) => isAdmin ? globalStats(db) : error(status, 403, "forbidden")))
+    .get("/admin/stats", ({ query, actor, status }) => {
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
+      // A general admin sees the whole club unless they ask for one branch; a branch
+      // admin only ever sees theirs, and sees it without having to ask.
+      const runs = adminCities(actor);
+      const city = query.city ?? (actor.isGlobalAdmin ? null : runs[0] ?? null);
+      if (city !== null && !canAdminCity(actor, city)) return error(status, 403, "forbidden");
+      return globalStats(db, city);
+    }, { query: t.Object({ city: t.Optional(citySchema) }) }))
   .get("/*", ({ request }) => staticFile(new URL(request.url).pathname));
 
 export type App = typeof app;

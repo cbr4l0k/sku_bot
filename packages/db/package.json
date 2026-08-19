@@ -12,6 +12,7 @@
     "db:migrate": "bun run src/migrate.ts"
   },
   "dependencies": {
+    "@sku/cities": "workspace:*",
     "drizzle-orm": "0.45.2"
   },
   "devDependencies": {

@@ -45,15 +45,15 @@ check("unauthed /me rejected", noAuth.status === 401 || noAuth.status === 422);
 const me = await call("GET", "/api/me", admin);
 check("admin /me isAdmin", me.status === 200 && (me.json as { isAdmin: boolean }).isAdmin === true);
 
-const created = await call("POST", "/api/admin/events", admin, {
-  title: "Смоук-забег", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
+const created = await call("POST", "/api/organizer/events", admin, {
+  city: "spb", title: "Смоук-забег", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   location: "Парк", capacity: 1, status: "published",
 });
 const eventId = (created.json as { id: number }).id;
 check("admin creates event", created.status === 200 && typeof eventId === "number", created.json);
 
-const runnerForbidden = await call("POST", "/api/admin/events", runner, {
-  title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(), location: "x", capacity: null,
+const runnerForbidden = await call("POST", "/api/organizer/events", runner, {
+  city: "spb", title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(), location: "x", capacity: null,
 });
 check("non-admin create forbidden", runnerForbidden.status === 403);
 
@@ -91,8 +91,8 @@ check("banned user cannot join", ban.status === 200 && joinBanned.status === 403
 
 // The event that already started: it stays live, and open for check-in, until an
 // organizer ends it.
-const started = await call("POST", "/api/admin/events", admin, {
-  title: "Уже начался", description: "тест", startsAt: new Date(Date.now() - 3_600_000).toISOString(),
+const started = await call("POST", "/api/organizer/events", admin, {
+  city: "spb", title: "Уже начался", description: "тест", startsAt: new Date(Date.now() - 3_600_000).toISOString(),
   location: "Парк", capacity: null, status: "published",
 });
 const startedId = (started.json as { id: number }).id;
@@ -139,8 +139,8 @@ check("a participant cannot end the event", notOrganizer.status === 403, notOrga
 
 /* --------------------------------------------------------------- queue switch */
 
-const noQueue = await call("POST", "/api/admin/events", admin, {
-  title: "Без очереди", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
+const noQueue = await call("POST", "/api/organizer/events", admin, {
+  city: "spb", title: "Без очереди", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   location: "Парк", capacity: 1, status: "published", waitlistEnabled: false,
 });
 const noQueueId = (noQueue.json as { id: number }).id;
@@ -171,15 +171,15 @@ await call("GET", "/api/me", outsider);
 setMembership(5005, false);
 setMembership(3003, true);
 
-const restricted = await call("POST", "/api/admin/events", admin, {
-  title: "Только свои", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
+const restricted = await call("POST", "/api/organizer/events", admin, {
+  city: "spb", title: "Только свои", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   location: "Парк", capacity: null, status: "published", groups: [groupChat],
 });
 const restrictedId = (restricted.json as { id: number }).id;
 check("admin restricts an event to a chat", restricted.status === 200 && (restricted.json as { groups: Array<{ id: number }> }).groups[0]?.id === groupChat, restricted.json);
 
-const badGroup = await call("POST", "/api/admin/events", admin, {
-  title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
+const badGroup = await call("POST", "/api/organizer/events", admin, {
+  city: "spb", title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   location: "x", capacity: null, groups: [-1000000000001],
 });
 check("chat outside EVENT_GROUPS rejected", badGroup.status === 400, badGroup.json);

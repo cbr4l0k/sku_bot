@@ -1,8 +1,11 @@
 import { Link } from "react-router";
 
+import { CITIES } from "@sku/cities";
+
 import type { EventCard as EventCardData, EventStatus, RegistrationStatus } from "../api";
 import { useI18n } from "../i18n";
 import { dayNumber, monthNumber, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
+import { useSession } from "../session";
 import { GroupChips } from "./groups";
 import { Chip, Track } from "./primitives";
 
@@ -55,8 +58,12 @@ export const DateBlock = ({ iso }: { iso: string }) => {
 };
 
 export const EventCard = ({ event, index }: { event: EventCardData; index: number }) => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const { me } = useSession();
   const mine = event.myRegistrationStatus !== null && event.myRegistrationStatus !== "canceled";
+  // A run only names its branch when it is not the one you are browsing — which
+  // happens when you followed a link from elsewhere, or kept a spot after moving.
+  const elsewhere = me?.city && event.city !== me.city ? CITIES[event.city] : null;
   const left = event.capacity === null ? null : Math.max(0, event.capacity - event.confirmedCount);
 
   return (
@@ -86,6 +93,11 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
           />
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             <StatusBadge status={event.myRegistrationStatus} hasOffer={event.myPendingOffer !== null} />
+            {elsewhere ? (
+              <span className="chip" style={{ background: elsewhere.brand, color: elsewhere.fieldInk === "light" ? "#ffffff" : "var(--ink-deep)" }}>
+                {elsewhere.name[locale]}
+              </span>
+            ) : null}
             <GroupChips groups={event.groups} />
             {event.waitlistSize > 0 && !mine ? (
               <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">

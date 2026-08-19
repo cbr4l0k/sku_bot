@@ -14,6 +14,7 @@ export const ru = {
 ${blockquote("Пробежки, тренировки и хорошая компания — всё в одном месте.")}`,
   openApp: "🏃 Открыть приложение",
   openEvent: "Открыть событие",
+  eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
   spotsLeft: (count: number) => `Осталось мест: ${count}`,
@@ -60,10 +61,16 @@ ${join([
   queuedNotice: (position: number) => `Ты в очереди №${position}. Напишем, как только освободится место.`,
   alreadyJoinedNotice: "Ты уже записан на это событие.",
   notEligibleNotice: "Событие только для участников определённых Telegram-групп.",
+  chatInvite: (title: string) => format`${bold("Добро пожаловать в чат события")}
+
+${title}
+
+${blockquote("Ссылка одноразовая и только для тебя. Придёшь на тренировку и отметишься — останешься в чате. Если не придёшь, мы тихо уберём тебя после события.")}`,
+  chatInviteButton: "💬 Войти в чат",
   commandStart: "Главное меню",
   commandChatId: "Показать ID этой группы",
   chatId: (chatId: number) => format`ID этого чата — ${code(String(chatId))}
 
-Добавьте его в ${code("EVENT_GROUPS")}, чтобы ограничить события участниками этой группы.`,
+Чат уже в каталоге — выберите его филиал в «Админ → Чаты», и события этого города смогут его использовать.`,
   chatIdOnlyInGroups: "Отправьте эту команду в самой группе, ID которой нужен.",
 } satisfies ShouldFollowLanguage<typeof en>;

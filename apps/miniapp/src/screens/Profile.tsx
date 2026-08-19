@@ -1,8 +1,11 @@
-import type { Locale } from "../api";
+import { CITIES } from "@sku/cities";
+
+import { sku, type Locale } from "../api";
 import { useI18n } from "../i18n";
 import { bib, fullName } from "../lib/format";
 import { useSession } from "../session";
 import { haptic, telegramUser } from "../telegram";
+import { CityPicker } from "../ui/cityPicker";
 import { Chip, EmptyState, PageTitle, Screen } from "../ui/primitives";
 
 const LOCALES: { value: Locale; labelKey: "profile.ru" | "profile.en" }[] = [
@@ -12,7 +15,7 @@ const LOCALES: { value: Locale; labelKey: "profile.ru" | "profile.en" }[] = [
 
 export const ProfileScreen = () => {
   const { t, locale, setLocale } = useI18n();
-  const { me } = useSession();
+  const { me, reload } = useSession();
 
   const fallbackName = telegramUser();
   const name = me
@@ -36,6 +39,11 @@ export const ProfileScreen = () => {
 
         <div className="mt-3 flex flex-wrap gap-1.5">
           {me?.isAdmin ? <Chip tone="flare">{t("profile.roleAdmin")}</Chip> : null}
+          {me?.roles.map((role) => (
+            <Chip key={`${role.city}-${role.role}`} tone={role.role === "admin" ? "flare" : "soft"}>
+              {`${CITIES[role.city].name[locale]} · ${t(role.role === "admin" ? "role.admin" : "role.organizer")}`}
+            </Chip>
+          ))}
           {me?.isOrganizerOfAny ? <Chip tone="soft">{t("profile.roleOrganizer")}</Chip> : null}
         </div>
 
@@ -55,7 +63,17 @@ export const ProfileScreen = () => {
         </dl>
       </section>
 
-      <section className="rise card px-5 py-5" style={{ "--i": 1 } as React.CSSProperties}>
+      <section className="rise card mb-4 px-5 py-5" style={{ "--i": 1 } as React.CSSProperties}>
+        <div className="eyebrow mb-3">{t("profile.city")}</div>
+        <CityPicker
+          value={me?.city ?? null}
+          onPick={(city) => {
+            void sku.setMe({ city }).then(reload).catch(() => undefined);
+          }}
+        />
+      </section>
+
+      <section className="rise card px-5 py-5" style={{ "--i": 2 } as React.CSSProperties}>
         <div className="eyebrow mb-3">{t("profile.language")}</div>
         <div className="flex gap-2">
           {LOCALES.map((option) => (

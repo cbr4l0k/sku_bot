@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 
+import { CITIES, cityList, type CitySlug } from "@sku/cities";
+
 import { sku, type AdminEventDraft, type AdminUser, type Group } from "../api";
 import { useI18n } from "../i18n";
+import { useSession } from "../session";
 import { bib, errorText, fullName, percent } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { DateBlock, EventStatusChip } from "../ui/event";
@@ -23,17 +26,35 @@ import {
   StatTile,
 } from "../ui/primitives";
 
-type Tab = "events" | "users" | "stats";
+type Tab = "events" | "users" | "chats" | "stats";
 
-const TABS: { id: Tab; key: "admin.tabEvents" | "admin.tabUsers" | "admin.tabStats" }[] = [
+const TABS: { id: Tab; key: "admin.tabEvents" | "admin.tabUsers" | "admin.tabChats" | "admin.tabStats" }[] = [
   { id: "events", key: "admin.tabEvents" },
   { id: "users", key: "admin.tabUsers" },
+  { id: "chats", key: "admin.tabChats" },
   { id: "stats", key: "admin.tabStats" },
 ];
 
+/** The branch dot every city-bearing row wears, so a list scans by colour. */
+const CityDot = ({ city }: { city: CitySlug }) => (
+  <span
+    aria-hidden
+    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+    style={{ background: CITIES[city].brandLift, boxShadow: `0 0 0 2px ${CITIES[city].brand}` }}
+  />
+);
+
 /* --------------------------------------------------------------- events tab */
 
-const EventsTab = ({ availableGroups }: { availableGroups: readonly Group[] }) => {
+const EventsTab = ({
+  availableGroups,
+  cities,
+  onCityChange,
+}: {
+  availableGroups: readonly Group[];
+  cities: readonly CitySlug[];
+  onCityChange: (city: CitySlug) => void;
+}) => {
   const { t } = useI18n();
   const toast = useToast();
   const action = useAction();
@@ -97,6 +118,8 @@ const EventsTab = ({ availableGroups }: { availableGroups: readonly Group[] }) =
             submitLabel={t("form.create")}
             pending={action.pending}
             availableGroups={availableGroups}
+            cities={cities}
+            onCityChange={onCityChange}
             onSubmit={create}
           />
         </Sheet>
@@ -107,8 +130,58 @@ const EventsTab = ({ availableGroups }: { availableGroups: readonly Group[] }) =
 
 /* ---------------------------------------------------------------- users tab */
 
-const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: number; onChanged: () => void }) => {
-  const { t } = useI18n();
+/**
+ * Appointing someone to a branch. Only the branches the viewer runs are offered,
+ * and a branch admin is never editable here — unseating one is the club's call,
+ * which the server enforces regardless of what this renders.
+ */
+const RoleEditor = ({ person, cities, onChanged }: { person: AdminUser; cities: readonly CitySlug[]; onChanged: () => void }) => {
+  const { t, locale } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const roleIn = (city: CitySlug) => person.roles.find((role) => role.city === city)?.role ?? null;
+
+  const set = (city: CitySlug, role: "admin" | "organizer" | null) =>
+    void action.run(
+      async () => {
+        await sku.setCityRole(person.id, city, role);
+        toast(t("toast.roleSaved"), "ok");
+        onChanged();
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  if (cities.length === 0) return null;
+
+  return (
+    <div className="mt-2.5 flex flex-col gap-1.5">
+      {cities.map((city) => {
+        const current = roleIn(city);
+        return (
+          <div key={city} className="flex items-center gap-2">
+            <CityDot city={city} />
+            <span className="min-w-0 flex-1 truncate text-[12px] text-hint">{CITIES[city].name[locale]}</span>
+            {(["admin", "organizer", null] as const).map((role) => (
+              <button
+                key={role ?? "none"}
+                type="button"
+                disabled={action.pending}
+                aria-pressed={current === role}
+                onClick={() => (current === role ? undefined : set(city, role))}
+                className={`chip ${current === role ? "chip-flare" : ""} disabled:opacity-50`}
+              >
+                {t(role === "admin" ? "role.admin" : role === "organizer" ? "role.organizer" : "role.none")}
+              </button>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+const UserRow = ({ person, index, cities, onChanged }: { person: AdminUser; index: number; cities: readonly CitySlug[]; onChanged: () => void }) => {
+  const { t, locale } = useI18n();
   const toast = useToast();
   const confirm = useConfirm();
   const action = useAction();
@@ -141,6 +214,11 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {person.isAdmin ? <Chip tone="flare">{t("admin.admin")}</Chip> : null}
+          {person.roles.map((role) => (
+            <Chip key={role.city} tone={role.role === "admin" ? "flare" : "soft"}>
+              {`${CITIES[role.city].name[locale]} · ${t(role.role === "admin" ? "role.admin" : "role.organizer")}`}
+            </Chip>
+          ))}
           {person.isBanned ? <Chip tone="plain">{t("admin.banned")}</Chip> : null}
         </div>
       </div>
@@ -160,11 +238,12 @@ const UserRow = ({ person, index, onChanged }: { person: AdminUser; index: numbe
           </Button>
         )}
       </div>
+      <RoleEditor person={person} cities={cities} onChanged={onChanged} />
     </div>
   );
 };
 
-const UsersTab = () => {
+const UsersTab = ({ cities }: { cities: readonly CitySlug[] }) => {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -192,7 +271,7 @@ const UsersTab = () => {
       {users.data && users.data.length > 0 ? (
         <section className="card px-4 py-1">
           {users.data.map((person, index) => (
-            <UserRow key={person.id} person={person} index={index} onChanged={() => void users.reload(true)} />
+            <UserRow key={person.id} person={person} index={index} cities={cities} onChanged={() => void users.reload(true)} />
           ))}
         </section>
       ) : null}
@@ -244,12 +323,101 @@ const StatsTab = () => {
   );
 };
 
+/* ---------------------------------------------------------------- chats tab */
+
+/**
+ * The chat catalog. The bot files a chat the moment it is added to one, so this
+ * list fills itself; the job here is only to say which branch each belongs to.
+ * Until it has one, a chat is inert — no event can reach it.
+ */
+const ChatsTab = () => {
+  const { t, locale } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const catalog = useResource(sku.chatCatalog);
+  const chats = catalog.data?.chats ?? [];
+  const canAssign = catalog.data?.canAssign ?? false;
+
+  const file = (id: number, city: CitySlug | null) =>
+    void action.run(
+      async () => {
+        await sku.setChatCity(id, city);
+        toast(t("toast.chatFiled"), "ok");
+        await catalog.reload(true);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  const unassigned = chats.filter((chat) => chat.city === null);
+  const filed = chats.filter((chat) => chat.city !== null);
+
+  const row = (chat: (typeof chats)[number], index: number) => (
+    <div key={chat.id} style={{ "--i": index } as React.CSSProperties} className="rise border-b border-hair px-1 py-3 last:border-b-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            {chat.city ? <CityDot city={chat.city} /> : null}
+            <span className="truncate text-[14px]">{chat.title ?? String(chat.id)}</span>
+          </div>
+          <div className="num mt-0.5 text-[11px] text-hint">{chat.id}</div>
+          {chat.problem ? <div className="mt-1 text-[11px]" style={{ color: "var(--danger)" }}>{chat.problem}</div> : null}
+        </div>
+      </div>
+      {canAssign ? (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {cityList.map((city) => (
+            <button
+              key={city.slug}
+              type="button"
+              disabled={action.pending}
+              aria-pressed={chat.city === city.slug}
+              onClick={() => (chat.city === city.slug ? undefined : file(chat.id, city.slug))}
+              className={`chip ${chat.city === city.slug ? "chip-flare" : ""} disabled:opacity-50`}
+            >
+              {city.name[locale]}
+            </button>
+          ))}
+          {chat.city ? (
+            <button type="button" disabled={action.pending} onClick={() => file(chat.id, null)} className="chip disabled:opacity-50">
+              {t("admin.chatUnfile")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  if (catalog.loading && !catalog.data) return <Loader label={t("common.loading")} />;
+  if (chats.length === 0) return <EmptyState text={t("admin.chatsEmpty")} />;
+
+  return (
+    <>
+      {canAssign ? null : <p className="mb-4 text-[12px] text-hint">{t("admin.chatsReadOnly")}</p>}
+      {unassigned.length ? (
+        <section className="mb-5">
+          <SectionRule label={t("admin.chatsUnassigned")} />
+          <p className="mb-2 text-[12px] text-hint">{t("admin.chatsUnassignedHint")}</p>
+          {unassigned.map(row)}
+        </section>
+      ) : null}
+      {filed.map(row)}
+    </>
+  );
+};
+
 /* -------------------------------------------------------------------- screen */
 
 export const AdminScreen = () => {
   const { t } = useI18n();
+  const { me } = useSession();
   const [tab, setTab] = useState<Tab>("events");
-  const catalog = useResource(sku.groupCatalog);
+  // The branches this admin runs; a general admin runs all of them.
+  const myCities = me?.adminCities ?? [];
+  const [formCity, setFormCity] = useState<CitySlug | null>(null);
+  const activeCity = formCity ?? myCities[0] ?? null;
+  const catalog = useResource(
+    useCallback(() => (activeCity ? sku.groupCatalog(activeCity) : Promise.resolve({ groups: [] })), [activeCity]),
+  );
   const availableGroups = catalog.data?.groups ?? [];
 
   return (
@@ -270,8 +438,9 @@ export const AdminScreen = () => {
         ))}
       </div>
 
-      {tab === "events" ? <EventsTab availableGroups={availableGroups} /> : null}
-      {tab === "users" ? <UsersTab /> : null}
+      {tab === "events" ? <EventsTab availableGroups={availableGroups} cities={myCities} onCityChange={setFormCity} /> : null}
+      {tab === "users" ? <UsersTab cities={myCities} /> : null}
+      {tab === "chats" ? <ChatsTab /> : null}
       {tab === "stats" ? <StatsTab /> : null}
     </Screen>
   );

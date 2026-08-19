@@ -107,9 +107,14 @@ export const AdminEventScreen = () => {
 
   const events = useResource(sku.organizerEvents);
   const stats = useResource(useCallback(() => sku.eventStats(id), [id]));
-  const catalog = useResource(sku.groupCatalog);
 
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
+
+  // Only this event's own branch has chats it may use.
+  const eventCity = event?.city ?? null;
+  const catalog = useResource(
+    useCallback(() => (eventCity ? sku.groupCatalog(eventCity) : Promise.resolve({ groups: [] })), [eventCity]),
+  );
 
   const patch = (body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
     void action.run(
@@ -204,10 +209,16 @@ export const AdminEventScreen = () => {
         <p className="block truncate text-[13px] text-hint first-letter:uppercase">
           {fullDate(event.startsAt, locale)} · {event.location}
         </p>
-        {event.groups.length > 0 || !event.waitlistEnabled ? (
+        {event.groups.length > 0 || event.homeChat !== null || !event.waitlistEnabled ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {event.groups.length > 0 ? <span className="text-[11px] text-hint">{t("form.groups")}</span> : null}
             <GroupChips groups={event.groups} />
+            {event.homeChat === null ? null : (
+              <>
+                <span className="text-[11px] text-hint">{t("form.homeChat")}</span>
+                <Chip tone="soft">{event.homeChat.title}</Chip>
+              </>
+            )}
             {event.waitlistEnabled ? null : <Chip tone="plain">{t("admin.queueOff")}</Chip>}
           </div>
         ) : null}
@@ -285,7 +296,9 @@ export const AdminEventScreen = () => {
       {editing ? (
         <Sheet title={t("common.edit")} onClose={() => setEditing(false)}>
           <EventForm
+            cities={event.city ? [event.city] : []}
             initial={{
+              city: event.city,
               title: event.title,
               description: event.description,
               startsAt: event.startsAt,
@@ -293,6 +306,7 @@ export const AdminEventScreen = () => {
               locationUrl: event.locationUrl,
               capacity: event.capacity,
               groups: event.groups.map((group) => group.id),
+              homeChatId: event.homeChat?.id ?? null,
             }}
             submitLabel={t("common.save")}
             pending={action.pending}

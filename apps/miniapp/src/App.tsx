@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
+import type { CitySlug } from "@sku/cities";
+
 import { onBlocked, sku, type Locale } from "./api";
+import { CityProvider } from "./city";
 import { I18nProvider, useI18n } from "./i18n";
 import { useResource } from "./lib/useResource";
 import { AdminScreen } from "./screens/Admin";
@@ -15,6 +18,7 @@ import { OrganizerEventScreen } from "./screens/OrganizerEvent";
 import { ProfileScreen } from "./screens/Profile";
 import { SessionProvider, useSession } from "./session";
 import { initViewport, insideTelegram, startParam } from "./telegram";
+import { CityPicker } from "./ui/cityPicker";
 import { ConfirmProvider, ToastProvider } from "./ui/overlays";
 import { Spinner } from "./ui/primitives";
 import { Backdrop, SwooshMark } from "./ui/swoosh";
@@ -36,8 +40,8 @@ const TabBar = () => {
   const navigate = useNavigate();
 
   const visible = TABS.filter((tab) => {
-    if (tab.to === "/organizer") return Boolean(me?.isOrganizerOfAny || me?.isAdmin);
-    if (tab.to === "/admin") return Boolean(me?.isAdmin);
+    if (tab.to === "/organizer") return Boolean(me?.isOrganizerOfAny || me?.isAdmin || me?.organizerCities.length);
+    if (tab.to === "/admin") return Boolean(me?.isAdmin || me?.adminCities.length);
     return true;
   });
 
@@ -87,6 +91,33 @@ const BlockedScreen = ({ reason }: { reason: "banned" | "unauthorized" }) => {
       <p className="text-[14px] leading-relaxed text-hint">
         {reason === "banned" ? t("app.blocked.banned") : t("app.blocked.unauthorized")}
       </p>
+    </div>
+  );
+};
+
+/**
+ * Nobody sees a list of runs before saying which branch is theirs — a merged
+ * three-city list would be worse than asking. Shown in place of the whole shell,
+ * the way BlockedScreen is, because there is nothing useful behind it yet.
+ */
+const CityGate = ({ onPick }: { onPick: (city: CitySlug) => void }) => {
+  const { t } = useI18n();
+  const [saving, setSaving] = useState(false);
+  return (
+    <div className="relative z-10 mx-auto flex min-h-full max-w-[460px] flex-col items-center justify-center px-7 text-center">
+      <SwooshMark className="mb-6 h-14 w-14" />
+      <h1 className="hero mb-3">{t("city.chooseTitle")}</h1>
+      <p className="mb-6 text-[14px] leading-relaxed text-hint">{t("city.chooseHint")}</p>
+      <div className="w-full">
+        <CityPicker
+          value={null}
+          disabled={saving}
+          onPick={(city) => {
+            setSaving(true);
+            onPick(city);
+          }}
+        />
+      </div>
     </div>
   );
 };
@@ -168,16 +199,25 @@ const Boot = () => {
   }
 
   const reloadSession = () => void reload(true);
+  const chooseCity = (city: CitySlug) => {
+    void sku.setMe({ city }).then(() => reload(true)).catch(() => undefined);
+  };
+
+  // Outside Telegram there is no session to read a branch off, so the app stays
+  // browsable on the default rather than stalling on a choice it cannot save.
+  const needsCity = Boolean(me) && me?.city === null;
 
   return (
     <I18nProvider locale={locale} onLocaleChange={changeLocale}>
-      <ToastProvider>
-        <ConfirmProvider>
-          <SessionProvider value={{ me, reload: reloadSession, live: insideTelegram() }}>
-            {blocked ? <BlockedScreen reason={blocked} /> : <Shell />}
-          </SessionProvider>
-        </ConfirmProvider>
-      </ToastProvider>
+      <CityProvider city={me?.city ?? null}>
+        <ToastProvider>
+          <ConfirmProvider>
+            <SessionProvider value={{ me, reload: reloadSession, live: insideTelegram() }}>
+              {blocked ? <BlockedScreen reason={blocked} /> : needsCity ? <CityGate onPick={chooseCity} /> : <Shell />}
+            </SessionProvider>
+          </ConfirmProvider>
+        </ToastProvider>
+      </CityProvider>
     </I18nProvider>
   );
 };

@@ -1,9 +1,12 @@
 import { useState } from "react";
 
+import { CITIES, type CitySlug } from "@sku/cities";
+
 import type { AdminEventDraft, Group } from "../api";
 import { useI18n } from "../i18n";
 import { fromLocalInput, toLocalInput } from "../lib/format";
-import { GroupPicker } from "./groups";
+import { CityPicker } from "./cityPicker";
+import { GroupPicker, HomeChatPicker } from "./groups";
 import { SheetFooter } from "./overlays";
 import { Button, Field, TextArea, TextInput } from "./primitives";
 
@@ -23,6 +26,8 @@ export const EventForm = ({
   submitLabel,
   pending = false,
   availableGroups,
+  cities,
+  onCityChange,
   onSubmit,
 }: {
   initial?: Initial;
@@ -30,36 +35,73 @@ export const EventForm = ({
   pending?: boolean;
   /** Omitted for organizers — only admins may restrict an event to groups. */
   availableGroups?: readonly Group[];
+  /**
+   * The branches this person may raise a run in. One is shown as a fact rather
+   * than a choice; an existing event's branch is not editable here at all, since
+   * moving one is an admin action with its own consequences.
+   */
+  cities: readonly CitySlug[];
+  /** Fired so the caller can fetch the chat catalog of whichever branch is picked. */
+  onCityChange?: (city: CitySlug) => void;
   onSubmit: (draft: AdminEventDraft) => void;
 }) => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [form, setForm] = useState(() => emptyDraft(initial));
+  const [city, setCity] = useState<CitySlug | null>(() => initial.city ?? cities[0] ?? null);
   const [groups, setGroups] = useState<number[]>(() => [...(initial.groups ?? [])]);
+  const [homeChatId, setHomeChatId] = useState<number | null>(() => initial.homeChatId ?? null);
   const [touched, setTouched] = useState(false);
 
   const locationUrlValid = form.locationUrl.trim() === "" || (() => {
     try { return new URL(form.locationUrl.trim()).protocol === "https:"; } catch { return false; }
   })();
-  const valid = form.title.trim() !== "" && form.location.trim() !== "" && form.startsAt !== "" && locationUrlValid;
+  const valid = city !== null && form.title.trim() !== "" && form.location.trim() !== "" && form.startsAt !== "" && locationUrlValid;
 
   const submit = () => {
     setTouched(true);
-    if (!valid) return;
+    if (!valid || city === null) return;
     onSubmit({
+      city,
       title: form.title.trim(),
       description: form.description.trim(),
       location: form.location.trim(),
       locationUrl: form.locationUrl.trim() === "" ? null : form.locationUrl.trim(),
       startsAt: fromLocalInput(form.startsAt),
       capacity: form.capacity.trim() === "" ? null : Math.max(0, Number(form.capacity)),
-      ...(availableGroups === undefined ? {} : { groups }),
+      ...(availableGroups === undefined ? {} : { groups, homeChatId }),
     });
   };
 
   const set = (key: keyof typeof form) => (value: string) => setForm((prev) => ({ ...prev, [key]: value }));
 
+  // An event already has a branch and keeps it; only a new one is still asking.
+  const lockedCity = initial.city ?? (cities.length === 1 ? cities[0] : undefined);
+
   return (
     <div className="flex flex-col gap-4">
+      <Field label={t("form.city")} hint={lockedCity ? undefined : t("form.cityHint")}>
+        {lockedCity ? (
+          <div className="flex items-center gap-2 text-[14px]">
+            <span
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ background: CITIES[lockedCity].brandLift, boxShadow: `0 0 0 2px ${CITIES[lockedCity].brand}` }}
+            />
+            {CITIES[lockedCity].name[locale]}
+          </div>
+        ) : (
+          <CityPicker
+            value={city}
+            onPick={(next) => {
+              setCity(next);
+              // The chats on offer below belong to the branch, so they change with it.
+              setGroups([]);
+              setHomeChatId(null);
+              onCityChange?.(next);
+            }}
+          />
+        )}
+      </Field>
       <Field label={t("form.title")}>
         <TextInput value={form.title} onChange={(event) => set("title")(event.target.value)} maxLength={120} />
       </Field>
@@ -88,9 +130,14 @@ export const EventForm = ({
         <TextArea value={form.description} onChange={(event) => set("description")(event.target.value)} />
       </Field>
       {availableGroups === undefined ? null : (
-        <Field label={t("form.groups")} hint={t("form.groupsHint")}>
-          <GroupPicker available={availableGroups} value={groups} onChange={setGroups} />
-        </Field>
+        <>
+          <Field label={t("form.groups")} hint={t("form.groupsHint")}>
+            <GroupPicker available={availableGroups} value={groups} onChange={setGroups} />
+          </Field>
+          <Field label={t("form.homeChat")} hint={t("form.homeChatHint")}>
+            <HomeChatPicker available={availableGroups} value={homeChatId} onChange={setHomeChatId} />
+          </Field>
+        </>
       )}
 
       {touched && !valid ? (
