@@ -7,12 +7,14 @@ FROM base AS install
 COPY package.json bun.lock ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/miniapp/package.json ./apps/miniapp/package.json
+COPY packages/cities/package.json ./packages/cities/package.json
 COPY packages/db/package.json ./packages/db/package.json
 RUN bun install --frozen-lockfile
 
 FROM install AS build
 
 COPY tsconfig.json ./
+COPY packages/cities/src ./packages/cities/src
 COPY packages/db/src ./packages/db/src
 COPY apps/server/src ./apps/server/src
 COPY apps/server/tsconfig.json ./apps/server/tsconfig.json
@@ -26,10 +28,12 @@ ENV NODE_ENV=production
 COPY package.json bun.lock ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/miniapp/package.json ./apps/miniapp/package.json
+COPY packages/cities/package.json ./packages/cities/package.json
 COPY packages/db/package.json ./packages/db/package.json
 RUN bun install --frozen-lockfile --production
 
 COPY apps/server/src ./apps/server/src
+COPY packages/cities/src ./packages/cities/src
 COPY packages/db/src ./packages/db/src
 COPY packages/db/drizzle ./packages/db/drizzle
 COPY scripts ./scripts
