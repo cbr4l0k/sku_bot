@@ -10,5 +10,8 @@ export const parseStartPayload = (payload: string): { type: "event"; eventId: nu
 export const miniAppEventLink = (botUsername: string, appName: string, eventId: number): string =>
   `https://t.me/${botUsername}/${appName}?startapp=${eventStartappPayload(eventId)}`;
 
+// export const botEventLink = (botUsername: string, eventId: number): string =>
+//   `https://t.me/${botUsername}?start=${eventStartappPayload(eventId)}`;
+
 export const botEventLink = (botUsername: string, eventId: number): string =>
-  `https://t.me/${botUsername}?start=${eventStartappPayload(eventId)}`;
+  `tg://resolve?domain=${encodeURIComponent(botUsername)}&start=${encodeURIComponent(eventStartappPayload(eventId))}`;
