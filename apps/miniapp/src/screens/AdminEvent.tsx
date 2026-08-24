@@ -113,7 +113,11 @@ export const AdminEventScreen = () => {
   // Only this event's own branch has chats it may use.
   const eventCity = event?.city ?? null;
   const catalog = useResource(
-    useCallback(() => (eventCity ? sku.groupCatalog(eventCity) : Promise.resolve({ groups: [] })), [eventCity]),
+      useCallback(
+          () => (eventCity ? sku.groupCatalog(eventCity) : Promise.resolve({ groups: [] })),
+          [eventCity],
+      ),
+      { enabled: eventCity !== null },
   );
 
   const patch = (body: Partial<AdminEventDraft> & { status?: EventStatus }) =>
