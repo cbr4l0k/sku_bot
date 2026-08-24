@@ -458,8 +458,6 @@ export const app = new Elysia()
     .delete("/admin/events/:id", ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const { event } = found;
-      if (event.status !== "draft") return error(status, 409, "only_drafts_can_be_deleted");
       db.delete(events).where(eq(events.id, params.id)).run();
       return { ok: true };
     }, { params: idParams })

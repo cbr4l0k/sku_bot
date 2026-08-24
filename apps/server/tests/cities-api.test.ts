@@ -89,6 +89,16 @@ test("a branch admin raises and edits events in their branch only", async () => 
   expect((await call("PATCH", `/api/admin/events/${mine.id}`, MSK_ADMIN, { title: "x" })).status).toBe(200);
 });
 
+test("an admin permanently deletes a published event in their branch only", async () => {
+  const mine = (await call("POST", "/api/organizer/events", MSK_ADMIN, draft("msk", "Моя"))).json;
+  const theirs = (await call("POST", "/api/organizer/events", GENERAL, draft("kzn", "Казань"))).json;
+
+  expect((await call("DELETE", `/api/admin/events/${theirs.id}`, MSK_ADMIN)).status).toBe(403);
+  expect((await call("DELETE", `/api/admin/events/${mine.id}`, MSK_ADMIN)).status).toBe(200);
+  expect((await call("GET", `/api/events/${mine.id}`, MSK_ADMIN)).status).toBe(404);
+  expect((await call("GET", `/api/events/${theirs.id}`, GENERAL)).status).toBe(200);
+});
+
 test("an organizer may raise a run and then run it, but not the branch's other runs", async () => {
   const mine = (await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "Моя"), status: undefined })).json;
   expect(mine.city).toBe("kzn");

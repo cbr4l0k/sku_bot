@@ -147,9 +147,9 @@ export const ru = {
   "admin.publish": "Опубликовать",
   "admin.close": "Закрыть запись",
   "admin.cancelEvent": "Отменить событие",
-  "admin.deleteDraft": "Удалить черновик",
+  "admin.deleteEvent": "Удалить событие",
   "admin.confirmCancel": "Отменить событие? Всем записанным придёт уведомление.",
-  "admin.confirmDelete": "Удалить черновик безвозвратно?",
+  "admin.confirmDelete": "Удалить событие безвозвратно? Записи участников и данные события тоже будут удалены.",
   "admin.confirmBan": "Заблокировать пользователя?",
   "admin.confirmUnban": "Снять блокировку?",
   "admin.copyLink": "Ссылка для записи",
@@ -201,7 +201,6 @@ export const ru = {
   "err.invalid_or_stale_code": "Код устарел. Попроси организатора обновить QR",
   "err.spot_taken": "Место уже заняли",
   "err.forbidden": "Недостаточно прав",
-  "err.only_drafts_can_be_deleted": "Удалять можно только черновики",
   "err.configured_admin_cannot_be_demoted": "Этот админ задан в настройках сервера",
   "err.invalid_starts_at": "Неверная дата",
   "err.request_failed": "Не получилось. Попробуй ещё раз",
@@ -228,4 +227,3 @@ export const ru = {
 
 export type Dict = { [K in keyof typeof ru]: string };
 export type MessageKey = keyof typeof ru;
-

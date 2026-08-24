@@ -160,7 +160,7 @@ export const AdminEventScreen = () => {
     patch({ status: "canceled" });
   };
 
-  const removeDraft = async () => {
+  const removeEvent = async () => {
     if (!(await confirm({ text: t("admin.confirmDelete"), confirmLabel: t("common.delete"), danger: true }))) return;
     void action.run(
       async () => {
@@ -255,11 +255,9 @@ export const AdminEventScreen = () => {
         <Button size="sm" variant="ghost" loading={action.pending} onClick={copyLink}>
           ⧉ {t("admin.copyLink")}
         </Button>
-        {event.status === "draft" ? (
-          <Button size="sm" variant="danger" loading={action.pending} onClick={() => void removeDraft()}>
-            {t("admin.deleteDraft")}
-          </Button>
-        ) : null}
+        <Button size="sm" variant="danger" loading={action.pending} onClick={() => void removeEvent()}>
+          {t("admin.deleteEvent")}
+        </Button>
         {event.status !== "canceled" ? (
           <Button size="sm" variant="danger" loading={action.pending} onClick={() => void cancelEvent()}>
             {t("admin.cancelEvent")}
