@@ -57,11 +57,12 @@ describe("bot event card", () => {
     expect(cardText(1, 2)).toContain("You are signed up");
   });
 
-  test("shows a queued user their place", () => {
+  test("shows that a user is queued without exposing their place", () => {
     joinEvent(db, 1, 2, now);
     joinEvent(db, 1, 3, now);
     expect(actions(1, 3)).toEqual([]);
-    expect(cardText(1, 3)).toContain("#1 in the queue");
+    expect(cardText(1, 3)).toContain("You are in the queue");
+    expect(cardText(1, 3)).not.toContain("#1");
   });
 
   test("hides an event the viewer's groups exclude them from", () => {

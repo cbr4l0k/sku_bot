@@ -46,7 +46,7 @@ export const joinHandler = async (context: JoinContext): Promise<void> => {
   } else {
     await context.send(result.status === "registered"
       ? i18n.t(locale, "joinedNotice")
-      : i18n.t(locale, "queuedNotice", result.position));
+      : i18n.t(locale, "queuedNotice"));
   }
 
   // Repaint the card so its buttons match the new state.

@@ -38,7 +38,6 @@ export const ru = {
 
   "status.registered": "Записан",
   "status.waitlisted": "В очереди",
-  "status.waitlistedPos": "В очереди №{n}",
   "status.checked_in": "Отмечен",
   "status.canceled": "Отменено",
   "status.offer": "Место свободно",
@@ -55,7 +54,6 @@ export const ru = {
   "detail.where": "Где",
   "detail.openMap": "Открыть карту: {location}",
   "detail.spots": "Места",
-  "detail.waitlistPosition": "Ты №{n} в очереди",
   "detail.waitlistHint": "Когда место освободится, придёт приглашение — у тебя будет 20 минут, чтобы его принять.",
   "detail.registeredHint": "Ты в составе. Приходи вовремя и отметься по QR на старте.",
   "detail.checkedInHint": "Отметка принята. Хорошей тренировки!",
@@ -72,7 +70,7 @@ export const ru = {
   "offer.accepted": "Готово, ты в составе!",
 
   "toast.joined": "Ты записан",
-  "toast.waitlisted": "Ты в очереди №{n}",
+  "toast.waitlisted": "Ты в очереди",
   "toast.canceled": "Запись отменена",
 
   "mine.title": "Мои события",

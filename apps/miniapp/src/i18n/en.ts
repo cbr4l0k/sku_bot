@@ -39,7 +39,6 @@ export const en: Dict = {
 
   "status.registered": "Going",
   "status.waitlisted": "Waitlist",
-  "status.waitlistedPos": "Waitlist #{n}",
   "status.checked_in": "Checked in",
   "status.canceled": "Canceled",
   "status.offer": "Spot open",
@@ -56,7 +55,6 @@ export const en: Dict = {
   "detail.where": "Where",
   "detail.openMap": "Open map for {location}",
   "detail.spots": "Spots",
-  "detail.waitlistPosition": "You are #{n} in line",
   "detail.waitlistHint": "When a spot frees up you get an invite — you will have 20 minutes to take it.",
   "detail.registeredHint": "You are in. Come on time and check in with the QR at the start.",
   "detail.checkedInHint": "Check-in accepted. Have a great run!",
@@ -73,7 +71,7 @@ export const en: Dict = {
   "offer.accepted": "Done — you are in!",
 
   "toast.joined": "You are signed up",
-  "toast.waitlisted": "You are #{n} in line",
+  "toast.waitlisted": "You are in the queue",
   "toast.canceled": "Signup canceled",
 
   "mine.title": "My events",

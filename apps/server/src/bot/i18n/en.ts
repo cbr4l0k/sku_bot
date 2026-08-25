@@ -52,10 +52,10 @@ ${join([
   joinQueueButton: "⏳ Join the queue",
   noSpotsLeft: "No spots left.",
   cardRegistered: "You are signed up.",
-  cardWaitlisted: (position: number) => `You are #${position} in the queue.`,
+  cardWaitlisted: "You are in the queue.",
   cardCheckedIn: "You are checked in.",
   joinedNotice: "Done — you are signed up!",
-  queuedNotice: (position: number) => `You are #${position} in the queue. We will message you the moment a spot frees up.`,
+  queuedNotice: "You are in the queue. We will message you the moment a spot frees up.",
   alreadyJoinedNotice: "You are already signed up for this event.",
   notEligibleNotice: "This event is only for members of certain Telegram groups.",
   chatInvite: (title: string) => format`${bold("Welcome to the event chat")}

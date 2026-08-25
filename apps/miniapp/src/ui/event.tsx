@@ -11,18 +11,16 @@ import { Chip, Track } from "./primitives";
 
 export const StatusBadge = ({
   status,
-  position,
   hasOffer,
 }: {
   status: RegistrationStatus | null;
-  position?: number | null;
   hasOffer?: boolean;
 }) => {
   const { t } = useI18n();
   if (hasOffer) return <Chip tone="flare">{t("status.offer")}</Chip>;
   if (status === null || status === "canceled") return null;
   if (status === "waitlisted") {
-    return <Chip tone="soft">{position ? t("status.waitlistedPos", { n: position }) : t("status.waitlisted")}</Chip>;
+    return <Chip tone="soft">{t("status.waitlisted")}</Chip>;
   }
   if (status === "checked_in") return <Chip tone="flare">{t("status.checked_in")}</Chip>;
   return <Chip tone="soft">{t("status.registered")}</Chip>;

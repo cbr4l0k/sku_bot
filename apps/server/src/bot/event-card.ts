@@ -1,6 +1,6 @@
 import { InlineKeyboard, bold, format } from "gramio";
 import { CITIES, type CitySlug } from "@sku/cities";
-import { and, asc, count, eq, events, inArray, isNull, registrations } from "@sku/db";
+import { and, count, eq, events, inArray, isNull, registrations } from "@sku/db";
 import type { Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
@@ -52,14 +52,6 @@ const myRegistration = (eventId: number, userId: number) => db
   .where(and(eq(registrations.eventId, eventId), eq(registrations.userId, userId)))
   .get();
 
-const queuePosition = (eventId: number, userId: number) => db
-  .select({ userId: registrations.userId })
-  .from(registrations)
-  .where(and(eq(registrations.eventId, eventId), eq(registrations.status, "waitlisted")))
-  .orderBy(asc(registrations.createdAt), asc(registrations.id))
-  .all()
-  .findIndex((row) => row.userId === userId) + 1;
-
 /**
  * The card doubles as the bot's join screen: it states where the user stands and
  * carries the one action open to them — sign up, take a queue place, or nothing
@@ -80,7 +72,7 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
     spots === null ? null : i18n.t(locale, "spotsLeft", spots),
     status === "registered" ? i18n.t(locale, "cardRegistered") : null,
     status === "checked_in" ? i18n.t(locale, "cardCheckedIn") : null,
-    status === "waitlisted" ? i18n.t(locale, "cardWaitlisted", queuePosition(event.id, userId)) : null,
+    status === "waitlisted" ? i18n.t(locale, "cardWaitlisted") : null,
     !mine && full && !event.waitlistEnabled ? i18n.t(locale, "noSpotsLeft") : null,
   ].filter((line): line is string => line !== null);
 

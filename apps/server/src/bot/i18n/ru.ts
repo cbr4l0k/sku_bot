@@ -55,10 +55,10 @@ ${join([
   joinQueueButton: "⏳ Встать в очередь",
   noSpotsLeft: "Мест больше нет.",
   cardRegistered: "Ты записан.",
-  cardWaitlisted: (position: number) => `Ты в очереди №${position}.`,
+  cardWaitlisted: "Ты в очереди.",
   cardCheckedIn: "Ты отмечен.",
   joinedNotice: "Готово — ты записан!",
-  queuedNotice: (position: number) => `Ты в очереди №${position}. Напишем, как только освободится место.`,
+  queuedNotice: "Ты в очереди. Напишем, как только освободится место.",
   alreadyJoinedNotice: "Ты уже записан на это событие.",
   notEligibleNotice: "Событие только для участников определённых Telegram-групп.",
   chatInvite: (title: string) => format`${bold("Добро пожаловать в чат события")}

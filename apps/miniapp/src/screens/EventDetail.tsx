@@ -79,8 +79,8 @@ export const EventDetailScreen = () => {
       async () => {
         const result = await sku.join(id);
         celebrate();
-        if ("position" in result && result.status === "waitlisted") {
-          toast(t("toast.waitlisted", { n: result.position }));
+        if (result.status === "waitlisted") {
+          toast(t("toast.waitlisted"));
         } else {
           toast(t("toast.joined"));
         }
@@ -128,7 +128,7 @@ export const EventDetailScreen = () => {
         <div className="mb-2 flex items-center gap-2.5">
           <span className="hairline min-w-4 flex-1" />
           <GroupChips groups={detail.groups} />
-          <StatusBadge status={status} position={detail.myWaitlistPosition} hasOffer={offer !== null} />
+          <StatusBadge status={status} hasOffer={offer !== null} />
         </div>
         <h1 className="hero mb-3 break-words">{detail.title}</h1>
       </div>
@@ -229,7 +229,7 @@ export const EventDetailScreen = () => {
         </section>
       ) : null}
 
-      {status === "waitlisted" && detail.myWaitlistPosition ? (
+      {status === "waitlisted" ? (
         <p className="mb-4 text-[13px] leading-relaxed text-hint">{t("detail.waitlistHint")}</p>
       ) : null}
       {status === "registered" ? <p className="mb-4 text-[13px] text-hint">{t("detail.registeredHint")}</p> : null}
@@ -252,15 +252,9 @@ export const EventDetailScreen = () => {
             </Button>
           </>
         ) : status === "waitlisted" ? (
-          <>
-            <div className="card flex items-center justify-between px-4 py-3">
-              <span className="text-[13px]">{t("detail.waitlistPosition", { n: detail.myWaitlistPosition ?? 0 })}</span>
-              <span className="display text-[20px]">№{detail.myWaitlistPosition ?? "—"}</span>
-            </div>
-            <Button variant="ghost" block loading={action.pending} onClick={() => void cancel()}>
-              {t("action.cancel")}
-            </Button>
-          </>
+          <Button variant="ghost" block loading={action.pending} onClick={() => void cancel()}>
+            {t("action.cancel")}
+          </Button>
         ) : left === 0 && !detail.waitlistEnabled ? (
           // No queue on this event: once the spots are gone, they are gone.
           <div className="card px-4 py-3 text-center text-[13px] text-hint">{t("detail.fullNoQueue")}</div>
