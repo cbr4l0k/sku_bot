@@ -4,6 +4,8 @@ export type OfferEffect = {
   userId: number;
   eventId: number;
   expiresAt: Date;
+  /** Inside the final 90 minutes, every waitlister races for the open spot. */
+  broadcast?: true;
 };
 
 export type SupersededEffect = {

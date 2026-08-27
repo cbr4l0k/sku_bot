@@ -27,6 +27,12 @@ ${bold(title)}
 ${date}
 
 У вас есть 20 минут, чтобы принять приглашение.`,
+  offerBroadcast: (title: string, date: string) => format`${bold("Место освободилось!")}
+
+${bold(title)}
+${date}
+
+Событие скоро начнётся, поэтому мы написали всем в очереди. Место получит тот, кто примет приглашение первым.`,
   offerAccept: "Принять",
   offerAccepted: (title: string, date: string) => format`${bold("✅ Вы в списке участников!")}
 

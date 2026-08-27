@@ -26,6 +26,12 @@ ${bold(title)}
 ${date}
 
 You have 20 minutes to accept it.`,
+  offerBroadcast: (title: string, date: string) => format`${bold("A spot has opened up!")}
+
+${bold(title)}
+${date}
+
+The event starts soon, so everyone in the queue has been notified. The first to accept gets the spot.`,
   offerAccept: "Accept",
   offerAccepted: (title: string, date: string) => format`${bold("You're confirmed!")}
 

@@ -36,7 +36,9 @@ const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
     );
     const response = await bot.api.sendMessage({
       chat_id: effect.userId,
-      text: i18n.t(locale, "offer", event.title, event.date),
+      text: effect.broadcast
+        ? i18n.t(locale, "offerBroadcast", event.title, event.date)
+        : i18n.t(locale, "offer", event.title, event.date),
       reply_markup: replyMarkup,
       suppress: true,
     });

@@ -1,13 +1,14 @@
 import type { Db } from "@sku/db";
 import type { NotificationEffect, OfferEffect, SupersededEffect } from "./types";
 
-const OFFER_WINDOW_SECONDS = 20 * 60;
+const OFFER_WINDOW_SECONDS = 20 * 60; // 20 minutes
+export const QUEUE_BROADCAST_LEAD_SECONDS = 2 * 60 * 60; // 2 hours
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type EventRow = { id: number; capacity: number | null; waitlist_enabled: number };
+type EventRow = { id: number; capacity: number | null; waitlist_enabled: number; starts_at: number };
 type OfferRow = { id: number; event_id: number; user_id: number; expires_at: number; message_id: number | null };
 
 const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
-const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled FROM events WHERE id = ?").get(eventId);
+const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled, starts_at FROM events WHERE id = ?").get(eventId);
 const confirmed = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
 const reserved = (db: Db, eventId: number, now: number) => db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, now)?.count ?? 0;
 const free = (db: Db, eventId: number, now: number) => {
@@ -29,8 +30,34 @@ const supersede = (db: Db, eventId: number, exceptOfferId?: number): SupersededE
 const issue = (db: Db, eventId: number, now: number): OfferEffect[] => {
   // With the queue off, a freed spot is not handed on. Anyone queued before it was
   // switched off keeps their place, dormant, in case it is switched back on.
-  if (!event(db, eventId)?.waitlist_enabled) return [];
+  const current = event(db, eventId);
+  if (!current?.waitlist_enabled) return [];
   const effects: OfferEffect[] = [];
+
+  // Close to the start, an empty spot is too urgent to walk down the queue in
+  // 20-minute turns. Everyone still waiting gets the button and acceptance stays
+  // transactional, so the first people to claim the available spots win without
+  // allowing the event to exceed capacity.
+  if (now >= current.starts_at - QUEUE_BROADCAST_LEAD_SECONDS) {
+    const hasRoom = current.capacity === null || confirmed(db, eventId) < current.capacity;
+    if (!hasRoom) return [];
+    const candidates = db.$client.query<{ user_id: number }, [number]>(`
+      SELECT r.user_id FROM registrations r
+      WHERE r.event_id = ? AND r.status = 'waitlisted'
+        AND NOT EXISTS (
+          SELECT 1 FROM waitlist_offers o
+          WHERE o.event_id = r.event_id AND o.user_id = r.user_id AND o.status = 'pending'
+        )
+      ORDER BY r.created_at, r.id
+    `).all(eventId);
+    const expiresAt = now + OFFER_WINDOW_SECONDS;
+    for (const candidate of candidates) {
+      const result = db.$client.query("INSERT INTO waitlist_offers (event_id, user_id, offered_at, expires_at) VALUES (?, ?, ?, ?) RETURNING id").get(eventId, candidate.user_id, now, expiresAt) as { id: number };
+      effects.push({ kind: "offer_created", offerId: result.id, userId: candidate.user_id, eventId, expiresAt: new Date(expiresAt * 1000), broadcast: true });
+    }
+    return effects;
+  }
+
   while (free(db, eventId, now) === null || (free(db, eventId, now) ?? 0) > 0) {
     const candidate = db.$client.query<{ user_id: number }, [number]>(`SELECT r.user_id FROM registrations r WHERE r.event_id = ? AND r.status = 'waitlisted' AND NOT EXISTS (SELECT 1 FROM waitlist_offers o WHERE o.event_id = r.event_id AND o.user_id = r.user_id AND o.status = 'pending') ORDER BY r.created_at, r.id LIMIT 1`).get(eventId);
     if (!candidate) break;
@@ -51,6 +78,23 @@ export const sweepOffers = (db: Db, now: Date) => transaction(db, () => {
     db.$client.query("UPDATE waitlist_offers SET cascaded = true WHERE id = ?").run(offer.id);
     effects.push(...issue(db, offer.event_id, timestamp));
   }
+  // Catch an open spot whose ordered offer was sent before the event crossed the
+  // 2-hours boundary. Existing recipients keep their offer; everyone else is
+  // notified exactly once.
+  const urgentEvents = db.$client.query<{ event_id: number }, [number]>(`
+    SELECT DISTINCT e.id AS event_id
+    FROM events e
+    JOIN registrations r ON r.event_id = e.id AND r.status = 'waitlisted'
+    WHERE e.status = 'published'
+      AND e.ended_at IS NULL
+      AND e.waitlist_enabled = 1
+      AND e.starts_at <= ?
+      AND (e.capacity IS NULL OR (
+        SELECT count(*) FROM registrations confirmed
+        WHERE confirmed.event_id = e.id AND confirmed.status IN ('registered', 'checked_in')
+      ) < e.capacity)
+  `).all(timestamp + QUEUE_BROADCAST_LEAD_SECONDS);
+  for (const row of urgentEvents) effects.push(...issue(db, row.event_id, timestamp));
   return effects;
 });
 

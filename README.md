@@ -96,6 +96,12 @@ Every event carries a queue switch, toggled from the event's admin screen. It is
 default, which is the existing behaviour: once an event fills up, further signups join a
 waitlist, and a cancellation offers the freed spot to whoever is first in line.
 
+During the final **2 hours before the event starts**, a freed spot is urgent: the offer is
+sent to everyone still waiting instead of moving through the queue one person at a time. The
+available spot (or spots) goes to whoever accepts first; acceptance remains transactional, so
+the event cannot be overbooked. The offer sweeper detects the 2-hours boundary even when an
+ordered offer was already outstanding and notifies the rest of the queue then.
+
 Turn it **off** and a full event simply stops accepting people — the signup button becomes
 "no spots left, and this event has no queue", and the API answers `409 event_full`. Freed
 spots are not handed on. An event with no capacity limit is unaffected either way.
