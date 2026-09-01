@@ -19,14 +19,18 @@ export const useResource = <T>(fetcher: () => Promise<T>, options: Options = {})
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const alive = useRef(true);
+  const requestId = useRef(0);
 
   const load = useCallback(async (quiet = false) => {
+    const currentRequest = ++requestId.current;
     if (!quiet) setState((prev) => ({ ...prev, loading: true }));
     try {
       const data = await fetcherRef.current();
-      if (alive.current) setState({ data, error: null, loading: false });
+      if (alive.current && currentRequest === requestId.current) {
+        setState({ data, error: null, loading: false });
+      }
     } catch (cause) {
-      if (alive.current) {
+      if (alive.current && currentRequest === requestId.current) {
         setState((prev) => ({
           data: prev.data,
           error: cause instanceof Error ? cause : new Error("request_failed"),
@@ -53,12 +57,12 @@ export const useResource = <T>(fetcher: () => Promise<T>, options: Options = {})
     const timer = pollMs ? window.setInterval(() => void load(true), pollMs) : undefined;
     return () => {
       alive.current = false;
+      requestId.current += 1;
       document.removeEventListener("visibilitychange", onFocus);
       window.removeEventListener("focus", onFocus);
       if (timer) window.clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, pollMs, load]);
+  }, [enabled, pollMs, load, fetcher]);
 
   const mutate = useCallback((updater: (current: T) => T) => {
     setState((prev) => (prev.data === null ? prev : { ...prev, data: updater(prev.data) }));
