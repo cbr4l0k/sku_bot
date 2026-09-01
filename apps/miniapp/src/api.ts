@@ -101,6 +101,7 @@ export type TicketTierDraft = Pick<TicketTier, "name" | "priceMinor" | "quota" |
 export type EventProduct = EventDetail["products"][number];
 export type EventProductDraft = Pick<EventProduct, "kind" | "name" | "description" | "priceMinor" | "stock" | "maxPerOrder" | "active"> & {
   id?: number;
+  variants?: Array<Pick<EventProduct["variants"][number], "name" | "stock" | "active"> & { id?: number }>;
 };
 
 export type EventDraft = {
@@ -133,7 +134,7 @@ export const sku = {
   events: () => call(api.events.get(auth())),
   event: (id: number) => call(api.events({ id }).get(auth())),
   join: (id: number) => call(api.events({ id }).join.post(undefined, auth())),
-  checkout: (id: number, ticketTierId: number | null, items: Array<{ productId: number; quantity: number }>) =>
+  checkout: (id: number, ticketTierId: number | null, items: Array<{ productId: number; variantId?: number | null; quantity: number }>) =>
     call(api.events({ id }).checkout.post({ ticketTierId, items }, auth())),
   order: (id: string) => call(api.orders({ id }).get(auth())),
   cancel: (id: number) => call(api.events({ id }).cancel.post(undefined, auth())),

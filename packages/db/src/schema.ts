@@ -192,6 +192,28 @@ export const eventProducts = sqliteTable(
   (table) => [index("event_products_event_id_sort_order_idx").on(table.eventId, table.sortOrder, table.id)],
 );
 
+/** Optional choices for a product, most commonly merchandise sizes. */
+export const eventProductVariants = sqliteTable(
+  "event_product_variants",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    productId: integer("product_id").notNull().references(() => eventProducts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Each option owns its inventory; null means unlimited. */
+    stock: integer("stock"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [
+    index("event_product_variants_product_id_sort_order_idx").on(table.productId, table.sortOrder, table.id),
+    uniqueIndex("event_product_variants_active_product_id_name_unique")
+      .on(table.productId, table.name)
+      .where(sql`${table.active} = true`),
+  ],
+);
+
 /**
  * The durable purchase state machine. Provider responses are evidence attached in
  * payment_attempts/refunds; this row is the business decision about the basket.
@@ -233,8 +255,10 @@ export const orderItems = sqliteTable(
     orderId: text("order_id").notNull().references(() => ticketOrders.id, { onDelete: "cascade" }),
     ticketTierId: integer("ticket_tier_id").references(() => ticketTiers.id, { onDelete: "restrict" }),
     eventProductId: integer("event_product_id").references(() => eventProducts.id, { onDelete: "restrict" }),
+    eventProductVariantId: integer("event_product_variant_id").references(() => eventProductVariants.id, { onDelete: "restrict" }),
     kind: text("kind").$type<OrderItemKind>().notNull(),
     name: text("name").notNull(),
+    variantName: text("variant_name"),
     unitAmountMinor: integer("unit_amount_minor").notNull(),
     quantity: integer("quantity").notNull(),
     createdAt: createdAt(),
@@ -243,6 +267,7 @@ export const orderItems = sqliteTable(
     index("order_items_order_id_idx").on(table.orderId),
     index("order_items_ticket_tier_id_idx").on(table.ticketTierId),
     index("order_items_event_product_id_idx").on(table.eventProductId),
+    index("order_items_event_product_variant_id_idx").on(table.eventProductVariantId),
   ],
 );
 

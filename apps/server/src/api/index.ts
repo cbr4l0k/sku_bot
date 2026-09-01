@@ -7,6 +7,7 @@ import {
   chats,
   desc,
   eq,
+  eventProductVariants,
   eventProducts,
   eventOrganizers,
   events,
@@ -124,6 +125,18 @@ const eventProductView = (product: typeof eventProducts.$inferSelect) => ({
     WHERE i.event_product_id = ?
       AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
   `).get(product.id)?.value ?? 0,
+  variants: db.select().from(eventProductVariants).where(eq(eventProductVariants.productId, product.id))
+    .orderBy(asc(eventProductVariants.sortOrder), asc(eventProductVariants.id)).all().map((variant) => ({
+      ...variant,
+      createdAt: variant.createdAt.toISOString(),
+      updatedAt: variant.updatedAt.toISOString(),
+      claimed: db.$client.query<{ value: number | null }, [number]>(`
+        SELECT sum(i.quantity) AS value FROM order_items i
+        JOIN ticket_orders o ON o.id = i.order_id
+        WHERE i.event_product_variant_id = ?
+          AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+      `).get(variant.id)?.value ?? 0,
+    })),
 });
 
 const eventView = (event: typeof events.$inferSelect) => ({
@@ -255,6 +268,12 @@ const eventProductBody = t.Object({
   stock: t.Nullable(t.Integer({ minimum: 1 })),
   maxPerOrder: t.Integer({ minimum: 1, maximum: 20 }),
   active: t.Optional(t.Boolean()),
+  variants: t.Optional(t.Array(t.Object({
+    id: t.Optional(t.Integer({ minimum: 1 })),
+    name: t.String({ minLength: 1, maxLength: 40 }),
+    stock: t.Nullable(t.Integer({ minimum: 1 })),
+    active: t.Optional(t.Boolean()),
+  }), { maxItems: 30 })),
 });
 
 /**
@@ -394,6 +413,7 @@ export const app = new Elysia()
         ticketTierId: t.Optional(t.Nullable(t.Integer({ minimum: 1 }))),
         items: t.Optional(t.Array(t.Object({
           productId: t.Integer({ minimum: 1 }),
+          variantId: t.Optional(t.Nullable(t.Integer({ minimum: 1 }))),
           quantity: t.Integer({ minimum: 1, maximum: 20 }),
         }), { maxItems: 20 })),
       }),
@@ -574,8 +594,15 @@ export const app = new Elysia()
         ...product,
         name: product.name.trim(),
         description: product.description?.trim() || null,
+        variants: product.variants?.map((variant) => ({ ...variant, name: variant.name.trim() })),
       }));
-      if (parsed.some((product) => !product.name)) return error(status, 400, "invalid_product");
+      if (parsed.some((product) => !product.name || product.variants?.some((variant) => !variant.name))) {
+        return error(status, 400, "invalid_product");
+      }
+      if (parsed.some((product) => {
+        const names = product.variants?.map((variant) => variant.name.toLocaleLowerCase()) ?? [];
+        return new Set(names).size !== names.length;
+      })) return error(status, 400, "duplicate_product_variant");
       const ids = parsed.flatMap((product) => product.id === undefined ? [] : [product.id]);
       if (new Set(ids).size !== ids.length) return error(status, 400, "duplicate_product");
       if (ids.length) {
@@ -583,15 +610,50 @@ export const app = new Elysia()
           .where(and(eq(eventProducts.eventId, params.id), inArray(eventProducts.id, ids))).all();
         if (owned.length !== ids.length) return error(status, 400, "product_not_found");
       }
+      const variantIds = parsed.flatMap((product) => product.variants?.flatMap((variant) => variant.id === undefined ? [] : [variant.id]) ?? []);
+      if (new Set(variantIds).size !== variantIds.length) return error(status, 400, "duplicate_product_variant");
+      if (variantIds.length) {
+        const owned = db.select({ id: eventProductVariants.id }).from(eventProductVariants)
+          .innerJoin(eventProducts, eq(eventProducts.id, eventProductVariants.productId))
+          .where(and(eq(eventProducts.eventId, params.id), inArray(eventProductVariants.id, variantIds))).all();
+        if (owned.length !== variantIds.length) return error(status, 400, "product_variant_not_found");
+      }
       for (const product of parsed) {
-        if (product.id === undefined || product.stock === null) continue;
+        const productVariantIds = product.variants?.flatMap((variant) => variant.id === undefined ? [] : [variant.id]) ?? [];
+        if (productVariantIds.length && product.id === undefined) return error(status, 400, "product_variant_not_found");
+        if (productVariantIds.length) {
+          const owned = db.select({ id: eventProductVariants.id }).from(eventProductVariants)
+            .where(and(eq(eventProductVariants.productId, product.id!), inArray(eventProductVariants.id, productVariantIds))).all();
+          if (owned.length !== productVariantIds.length) return error(status, 400, "product_variant_not_found");
+        }
+      }
+      for (const product of parsed) {
+        if (product.id === undefined) continue;
         const claimed = db.$client.query<{ value: number | null }, [number]>(`
           SELECT sum(i.quantity) AS value FROM order_items i
           JOIN ticket_orders o ON o.id = i.order_id
           WHERE i.event_product_id = ?
             AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
         `).get(product.id)?.value ?? 0;
-        if (product.stock < claimed) return error(status, 409, "product_stock_below_claimed");
+        const existingHasVariants = Boolean(db.select({ id: eventProductVariants.id }).from(eventProductVariants)
+          .where(eq(eventProductVariants.productId, product.id)).get());
+        if (product.variants !== undefined && claimed > 0 && existingHasVariants !== (product.variants.length > 0)) {
+          return error(status, 409, "product_variants_locked");
+        }
+        if (product.variants?.length) {
+          for (const variant of product.variants) {
+            if (variant.id === undefined || variant.stock === null) continue;
+            const variantClaimed = db.$client.query<{ value: number | null }, [number]>(`
+              SELECT sum(i.quantity) AS value FROM order_items i
+              JOIN ticket_orders o ON o.id = i.order_id
+              WHERE i.event_product_variant_id = ?
+                AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+            `).get(variant.id)?.value ?? 0;
+            if (variant.stock < variantClaimed) return error(status, 409, "product_stock_below_claimed");
+          }
+        } else if (product.stock !== null && product.stock < claimed) {
+          return error(status, 409, "product_stock_below_claimed");
+        }
       }
       db.$client.transaction(() => {
         db.update(eventProducts).set({ active: false, updatedAt: now() }).where(eq(eventProducts.eventId, params.id)).run();
@@ -601,14 +663,31 @@ export const app = new Elysia()
             name: product.name,
             description: product.description,
             priceMinor: product.priceMinor,
-            stock: product.stock,
+            stock: product.variants?.length ? null : product.stock,
             maxPerOrder: product.maxPerOrder,
             active: product.active ?? true,
             sortOrder,
             updatedAt: now(),
           };
-          if (product.id === undefined) db.insert(eventProducts).values({ eventId: params.id, ...values }).run();
-          else db.update(eventProducts).set(values).where(eq(eventProducts.id, product.id)).run();
+          const productId = product.id === undefined
+            ? db.insert(eventProducts).values({ eventId: params.id, ...values }).returning({ id: eventProducts.id }).get().id
+            : product.id;
+          if (product.id !== undefined) db.update(eventProducts).set(values).where(eq(eventProducts.id, product.id)).run();
+          if (product.variants !== undefined) {
+            db.update(eventProductVariants).set({ active: false, updatedAt: now() })
+              .where(eq(eventProductVariants.productId, productId)).run();
+            product.variants.forEach((variant, variantSortOrder) => {
+              const variantValues = {
+                name: variant.name,
+                stock: variant.stock,
+                active: variant.active ?? true,
+                sortOrder: variantSortOrder,
+                updatedAt: now(),
+              };
+              if (variant.id === undefined) db.insert(eventProductVariants).values({ productId, ...variantValues }).run();
+              else db.update(eventProductVariants).set(variantValues).where(eq(eventProductVariants.id, variant.id)).run();
+            });
+          }
         });
       })();
       const event = db.select().from(events).where(eq(events.id, params.id)).get();
@@ -641,7 +720,8 @@ export const app = new Elysia()
           ...row,
           checkedInAt: iso(row.checkedInAt),
           purchaseItems: db.$client.query<{ name: string; quantity: number; kind: "merchandise" | "addon" }, [number, number]>(`
-            SELECT i.name, i.quantity, i.kind FROM order_items i
+            SELECT i.name || CASE WHEN i.variant_name IS NULL THEN '' ELSE ' — ' || i.variant_name END AS name,
+              i.quantity, i.kind FROM order_items i
             JOIN ticket_orders o ON o.id = i.order_id
             WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
               AND o.status IN ('fulfilled', 'refund_pending', 'refund_failed')

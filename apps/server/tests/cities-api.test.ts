@@ -121,13 +121,23 @@ test("an organizer configures fixed ticket tiers while checkout stays safely dis
   expect(configured.json.ticketTiers).toMatchObject([{ name: "Стандарт", priceMinor: 150000, quota: 20 }]);
   const products = await call("PUT", `/api/organizer/events/${event.id}/products`, KZN_ORGANIZER, {
     products: [
-      { kind: "merchandise", name: "Футболка / M", description: "Получить на старте", priceMinor: 250000, stock: 10, maxPerOrder: 2, active: true },
+      {
+        kind: "merchandise", name: "Футболка", description: "Получить на старте", priceMinor: 250000,
+        stock: null, maxPerOrder: 2, active: true,
+        variants: [
+          { name: "M", stock: 4, active: true },
+          { name: "L", stock: 6, active: true },
+        ],
+      },
       { kind: "addon", name: "Фото", description: null, priceMinor: 50000, stock: null, maxPerOrder: 1, active: true },
     ],
   });
   expect(products.status).toBe(200);
   expect(products.json.products).toMatchObject([
-    { kind: "merchandise", name: "Футболка / M", priceMinor: 250000, stock: 10 },
+    {
+      kind: "merchandise", name: "Футболка", priceMinor: 250000, stock: null,
+      variants: [{ name: "M", stock: 4, claimed: 0 }, { name: "L", stock: 6, claimed: 0 }],
+    },
     { kind: "addon", name: "Фото", priceMinor: 50000, stock: null },
   ]);
 
@@ -135,7 +145,7 @@ test("an organizer configures fixed ticket tiers while checkout stays safely dis
   expect((await call("POST", `/api/events/${event.id}/join`, RUNNER)).json.error).toBe("payment_required");
   expect((await call("POST", `/api/events/${event.id}/checkout`, RUNNER, {
     ticketTierId: configured.json.ticketTiers[0].id,
-    items: [{ productId: products.json.products[0].id, quantity: 2 }],
+    items: [{ productId: products.json.products[0].id, variantId: products.json.products[0].variants[0].id, quantity: 2 }],
   })).json.error)
     .toBe("payments_not_configured");
 });

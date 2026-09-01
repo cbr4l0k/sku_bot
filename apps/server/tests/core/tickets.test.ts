@@ -99,11 +99,15 @@ beforeEach(() => {
       VALUES (10, 1, 'Standard', 150000, 1, 1, 0);
     INSERT INTO event_products (id, event_id, kind, name, description, price_minor, stock, max_per_order, active, sort_order)
       VALUES (20, 1, 'merchandise', 'Club T-shirt / M', 'Pickup at event', 250000, 2, 2, 1, 0),
-             (21, 1, 'addon', 'Photo pack', NULL, 50000, NULL, 1, 1, 1);
+             (21, 1, 'addon', 'Photo pack', NULL, 50000, NULL, 1, 1, 1),
+             (22, 1, 'merchandise', 'Variant T-shirt', 'Pickup at event', 250000, NULL, 2, 1, 2);
+    INSERT INTO event_product_variants (id, product_id, name, stock, active, sort_order)
+      VALUES (30, 22, 'M', 1, 1, 0), (31, 22, 'L', 2, 1, 1);
   `);
 });
 
-const checkout = (userId = 1, productItems: Array<{ productId: number; quantity: number }> = []) => createCheckout(db, provider, {
+type ProductRequest = { productId: number; variantId?: number | null; quantity: number };
+const checkout = (userId = 1, productItems: ProductRequest[] = []) => createCheckout(db, provider, {
   eventId: 1,
   tierId: 10,
   productItems,
@@ -111,7 +115,7 @@ const checkout = (userId = 1, productItems: Array<{ productId: number; quantity:
   returnUrl: "https://club.example/events/1",
 }, now);
 
-const merchCheckout = (userId = 1, productItems: Array<{ productId: number; quantity: number }> = [{ productId: 20, quantity: 1 }]) => createCheckout(db, provider, {
+const merchCheckout = (userId = 1, productItems: ProductRequest[] = [{ productId: 20, quantity: 1 }]) => createCheckout(db, provider, {
   eventId: 1,
   tierId: null,
   productItems,
@@ -179,6 +183,19 @@ test("merch can be paid for without a ticket and never creates an event registra
   expect(db.$client.query<{ status: string; ticket_tier_id: number | null }, []>(
     "SELECT status, ticket_tier_id FROM ticket_orders",
   ).get()).toEqual({ status: "fulfilled", ticket_tier_id: null });
+});
+
+test("a product with options requires one and reserves stock for the selected option only", async () => {
+  expect(await merchCheckout(1, [{ productId: 22, quantity: 1 }])).toEqual({ error: "product_variant_required" });
+  expect(await merchCheckout(1, [{ productId: 22, variantId: 999, quantity: 1 }])).toEqual({ error: "product_variant_not_found" });
+
+  const medium = await merchCheckout(1, [{ productId: 22, variantId: 30, quantity: 1 }]);
+  expect(medium).not.toHaveProperty("error");
+  expect(provider.createInputs[0]?.receiptItems).toEqual([
+    { description: "Variant T-shirt — M", quantity: 1, unitAmountMinor: 250000, paymentSubject: "commodity" },
+  ]);
+  expect(await merchCheckout(2, [{ productId: 22, variantId: 30, quantity: 1 }])).toEqual({ error: "product_sold_out" });
+  expect(await merchCheckout(2, [{ productId: 22, variantId: 31, quantity: 1 }])).not.toHaveProperty("error");
 });
 
 test("a completed merch-only order does not block a later ticket purchase", async () => {

@@ -102,7 +102,7 @@ later hidden. This prevents a stale Telegram button from issuing an unpaid ticke
 
 The first version deliberately has one merchant: the club. It supports fixed RUB
 ticket tiers, one ticket per Telegram user per event, optional merchandise and
-add-ons with quantities, automatic refunds, and no payouts to organizers. A
+add-ons with quantities and selectable variants (for example sizes), automatic refunds, and no payouts to organizers. A
 purchase may contain one ticket plus optional products, or products alone, and is
 paid as one YooKassa transaction. A merch-only purchase never grants event entry.
 
@@ -110,7 +110,7 @@ The Telegram event card exposes each available ticket as its own Mini App button
 The chosen ticket is preselected when the app opens; the user can still switch or
 remove it, add merch or extras, review the combined total, and then pay. Events may
 also have a shop without any ticket tiers. In the event view the shop is deliberately
-placed directly below the title and before the description.
+placed after the event facts and before the description.
 
 ### State machine
 
@@ -132,7 +132,7 @@ awaiting_payment ── provider succeeded ──> payment_succeeded ──> ful
 
 Creating checkout reserves every selected product's quantity and, only when a ticket
 is present, event capacity and the tier quota in one database transaction. Names,
-unit prices, kinds, and quantities are
+selected variant names, unit prices, kinds, and quantities are
 copied into immutable order-item snapshots; the server calculates the total from
 those snapshots and sends separate receipt lines (ticket/add-ons as services,
 merchandise as commodities). Client totals and Telegram button data are never
@@ -141,6 +141,10 @@ reservation is released only after ЮKassa confirms cancellation. If success arr
 after local cancellation, the order is refunded rather than fulfilled. Repeated API
 calls and webhook deliveries are safe: provider mutations use stable idempotency
 keys and every local transition is conditional and transactional.
+
+Products may define optional alternatives such as `S`, `M`, and `L`. When alternatives
+exist, checkout requires one of them and tracks stock independently per alternative;
+products without alternatives continue to use their single product-level stock pool.
 
 A paid attendee's cancellation keeps their registration and capacity reserved while
 the refund is pending. It is canceled only after ЮKassa confirms the refund. If an

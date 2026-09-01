@@ -27,6 +27,13 @@ type ProductRow = {
   max_per_order: number;
   active: number;
 };
+type ProductVariantRow = {
+  id: number;
+  product_id: number;
+  name: string;
+  stock: number | null;
+  active: number;
+};
 type EventRow = { id: number; title: string; status: string; ended_at: number | null; capacity: number | null };
 type OrderRow = {
   id: string;
@@ -61,8 +68,10 @@ type RefundReason = "user_canceled" | "event_canceled" | "payment_after_cancella
 type OrderItemRow = {
   ticket_tier_id: number | null;
   event_product_id: number | null;
+  event_product_variant_id: number | null;
   kind: "ticket" | "merchandise" | "addon";
   name: string;
+  variant_name: string | null;
   unit_amount_minor: number;
   quantity: number;
 };
@@ -77,6 +86,8 @@ export type CheckoutError =
   | "ticket_sold_out"
   | "invalid_basket"
   | "product_not_found"
+  | "product_variant_required"
+  | "product_variant_not_found"
   | "product_sold_out"
   | "product_limit_exceeded"
   | "active_order_exists"
@@ -104,7 +115,7 @@ const attemptForOrder = (db: Db, orderId: string) => db.$client.query<AttemptRow
   "SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url FROM payment_attempts WHERE order_id = ? ORDER BY created_at DESC LIMIT 1",
 ).get(orderId);
 const itemsForOrder = (db: Db, orderId: string) => db.$client.query<OrderItemRow, [string]>(`
-  SELECT ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity
+  SELECT ticket_tier_id, event_product_id, event_product_variant_id, kind, name, variant_name, unit_amount_minor, quantity
   FROM order_items WHERE order_id = ? ORDER BY id
 `).all(orderId);
 const receiptItemsForOrder = (db: Db, order: OrderRow) => {
@@ -112,14 +123,16 @@ const receiptItemsForOrder = (db: Db, order: OrderRow) => {
   const snapshots = items.length ? items : order.ticket_name ? [{
       ticket_tier_id: order.ticket_tier_id,
       event_product_id: null,
+      event_product_variant_id: null,
       kind: "ticket" as const,
       name: order.ticket_name,
+      variant_name: null,
       unit_amount_minor: order.amount_minor,
       quantity: 1,
     }] : [];
   if (!snapshots.length) throw new Error(`Order ${order.id} has no receipt items`);
   return snapshots.map((item) => ({
-    description: item.name,
+    description: item.variant_name ? `${item.name} — ${item.variant_name}` : item.name,
     quantity: item.quantity,
     unitAmountMinor: item.unit_amount_minor,
     paymentSubject: item.kind === "merchandise" ? "commodity" as const : "service" as const,
@@ -159,23 +172,34 @@ const productClaimCount = (db: Db, productId: number) => db.$client.query<{ coun
   WHERE i.event_product_id = ?
     AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
 `).get(productId)?.count ?? 0;
+const productVariantClaimCount = (db: Db, variantId: number) => db.$client.query<{ count: number | null }, [number]>(`
+  SELECT sum(i.quantity) AS count FROM order_items i
+  JOIN ticket_orders o ON o.id = i.order_id
+  WHERE i.event_product_variant_id = ?
+    AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+`).get(variantId)?.count ?? 0;
 
-const requestedProducts = (items: ReadonlyArray<{ productId: number; quantity: number }>) => {
-  const quantities = new Map<number, number>();
+type RequestedProduct = { productId: number; variantId: number | null; quantity: number };
+const requestKey = (productId: number, variantId: number | null) => `${productId}:${variantId ?? "base"}`;
+const requestedProducts = (items: ReadonlyArray<{ productId: number; variantId?: number | null; quantity: number }>) => {
+  const quantities = new Map<string, RequestedProduct>();
   for (const item of items) {
     if (!Number.isSafeInteger(item.productId) || item.productId < 1
+      || (item.variantId !== undefined && item.variantId !== null && (!Number.isSafeInteger(item.variantId) || item.variantId < 1))
       || !Number.isSafeInteger(item.quantity) || item.quantity < 1) return null;
-    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
+    const variantId = item.variantId ?? null;
+    const key = requestKey(item.productId, variantId);
+    quantities.set(key, { productId: item.productId, variantId, quantity: (quantities.get(key)?.quantity ?? 0) + item.quantity });
   }
   return quantities.size <= 20 ? quantities : null;
 };
 
-const basketMatches = (db: Db, order: OrderRow, tierId: number | null, products: ReadonlyMap<number, number>) => {
+const basketMatches = (db: Db, order: OrderRow, tierId: number | null, products: ReadonlyMap<string, RequestedProduct>) => {
   if (order.ticket_tier_id !== tierId) return false;
   const existing = new Map(itemsForOrder(db, order.id)
     .filter((item) => item.event_product_id !== null)
-    .map((item) => [item.event_product_id!, item.quantity]));
-  return existing.size === products.size && [...products].every(([id, quantity]) => existing.get(id) === quantity);
+    .map((item) => [requestKey(item.event_product_id!, item.event_product_variant_id), item.quantity]));
+  return existing.size === products.size && [...products].every(([key, item]) => existing.get(key) === item.quantity);
 };
 
 const verifyPayment = (order: OrderRow, payment: ProviderPayment) => {
@@ -192,7 +216,7 @@ export const createCheckout = async (
   input: {
     eventId: number;
     tierId?: number | null;
-    productItems?: ReadonlyArray<{ productId: number; quantity: number }>;
+    productItems?: ReadonlyArray<{ productId: number; variantId?: number | null; quantity: number }>;
     userId: number;
     returnUrl: string;
     userPhone?: string | null;
@@ -243,18 +267,33 @@ export const createCheckout = async (
       }
     }
 
-    const selectedProducts: Array<ProductRow & { quantity: number }> = [];
-    for (const [productId, quantity] of products) {
+    const selectedProducts: Array<ProductRow & { quantity: number; variantId: number | null; variantName: string | null }> = [];
+    const totalsByProduct = new Map<number, number>();
+    for (const { productId, variantId, quantity } of products.values()) {
       const product = db.$client.query<ProductRow, [number, number]>(`
         SELECT id, event_id, kind, name, price_minor, stock, max_per_order, active
         FROM event_products WHERE id = ? AND event_id = ?
       `).get(productId, event.id);
       if (!product || !product.active) return { error: "product_not_found" as const };
-      if (quantity > product.max_per_order) return { error: "product_limit_exceeded" as const };
-      if (product.stock !== null && productClaimCount(db, product.id) + quantity > product.stock) {
+      const productTotal = (totalsByProduct.get(product.id) ?? 0) + quantity;
+      totalsByProduct.set(product.id, productTotal);
+      if (productTotal > product.max_per_order) return { error: "product_limit_exceeded" as const };
+      const hasVariants = (db.$client.query<{ count: number }, [number]>(
+        "SELECT count(*) AS count FROM event_product_variants WHERE product_id = ? AND active = 1",
+      ).get(product.id)?.count ?? 0) > 0;
+      if (hasVariants && variantId === null) return { error: "product_variant_required" as const };
+      if (!hasVariants && variantId !== null) return { error: "product_variant_not_found" as const };
+      const variant = variantId === null ? null : db.$client.query<ProductVariantRow, [number, number]>(`
+        SELECT id, product_id, name, stock, active
+        FROM event_product_variants WHERE id = ? AND product_id = ?
+      `).get(variantId, product.id) ?? null;
+      if (variantId !== null && (!variant || !variant.active)) return { error: "product_variant_not_found" as const };
+      const stock = variant ? variant.stock : product.stock;
+      const claimed = variant ? productVariantClaimCount(db, variant.id) : productClaimCount(db, product.id);
+      if (stock !== null && claimed + quantity > stock) {
         return { error: "product_sold_out" as const };
       }
-      selectedProducts.push({ ...product, quantity });
+      selectedProducts.push({ ...product, quantity, variantId: variant?.id ?? null, variantName: variant?.name ?? null });
     }
 
     const amountMinor = (tier?.price_minor ?? 0) + selectedProducts.reduce((sum, product) => sum + product.price_minor * product.quantity, 0);
@@ -272,16 +311,16 @@ export const createCheckout = async (
     if (tier) {
       db.$client.query(`
         INSERT INTO order_items
-          (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
-        VALUES (?, ?, NULL, 'ticket', ?, ?, 1, ?)
+          (order_id, ticket_tier_id, event_product_id, event_product_variant_id, kind, name, variant_name, unit_amount_minor, quantity, created_at)
+        VALUES (?, ?, NULL, NULL, 'ticket', ?, NULL, ?, 1, ?)
       `).run(orderId, tier.id, tier.name, tier.price_minor, timestamp);
     }
     for (const product of selectedProducts) {
       db.$client.query(`
         INSERT INTO order_items
-          (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
-        VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
-      `).run(orderId, product.id, product.kind, product.name, product.price_minor, product.quantity, timestamp);
+          (order_id, ticket_tier_id, event_product_id, event_product_variant_id, kind, name, variant_name, unit_amount_minor, quantity, created_at)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(orderId, product.id, product.variantId, product.kind, product.name, product.variantName, product.price_minor, product.quantity, timestamp);
     }
     db.$client.query(`
       INSERT INTO payment_attempts (id, order_id, provider, idempotence_key, status, created_at, updated_at)

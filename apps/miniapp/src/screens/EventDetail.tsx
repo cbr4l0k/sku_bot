@@ -31,6 +31,7 @@ export const EventDetailScreen = () => {
     return Number.isSafeInteger(value) && value > 0 ? value : null;
   });
   const [productQuantities, setProductQuantities] = useState<Record<number, number>>({});
+  const [selectedProductVariants, setSelectedProductVariants] = useState<Record<number, number>>({});
   const [sweep, setSweep] = useState(false);
   useBackButton("/");
 
@@ -83,7 +84,12 @@ export const EventDetailScreen = () => {
       && (tier.salesEndAt === null || new Date(tier.salesEndAt).getTime() > time)
       && (tier.quota === null || tier.claimed < tier.quota);
   });
-  const availableProducts = detail.products.filter((product) => product.active && (product.stock === null || product.claimed < product.stock));
+  const availableVariants = (product: EventDetail["products"][number]) => product.variants.filter(
+    (variant) => variant.active && (variant.stock === null || variant.claimed < variant.stock),
+  );
+  const availableProducts = detail.products.filter((product) => product.active && (
+    product.variants.length > 0 ? availableVariants(product).length > 0 : product.stock === null || product.claimed < product.stock
+  ));
   const selectedTier = canBuyTicket ? availableTiers.find((tier) => tier.id === selectedTierId) ?? null : null;
   const price = (minor: number) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
     style: "currency",
@@ -111,9 +117,18 @@ export const EventDetailScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
+  const selectedProductQuantity = (product: EventDetail["products"][number]) => {
+    if (product.variants.length > 0 && !availableVariants(product).some((variant) => variant.id === selectedProductVariants[product.id])) return 0;
+    return productQuantities[product.id] ?? 0;
+  };
+
   const buy = () => {
     const items = availableProducts
-      .map((product) => ({ productId: product.id, quantity: productQuantities[product.id] ?? 0 }))
+      .map((product) => ({
+        productId: product.id,
+        variantId: product.variants.length > 0 ? selectedProductVariants[product.id] ?? null : null,
+        quantity: selectedProductQuantity(product),
+      }))
       .filter((item) => item.quantity > 0);
     if (!selectedTier && items.length === 0) return;
     void action.run(
@@ -141,10 +156,10 @@ export const EventDetailScreen = () => {
   };
 
   const basketTotal = (selectedTier?.priceMinor ?? 0) + availableProducts.reduce(
-    (sum, product) => sum + product.priceMinor * (productQuantities[product.id] ?? 0),
+    (sum, product) => sum + product.priceMinor * selectedProductQuantity(product),
     0,
   );
-  const hasBasket = selectedTier !== null || availableProducts.some((product) => (productQuantities[product.id] ?? 0) > 0);
+  const hasBasket = selectedTier !== null || availableProducts.some((product) => selectedProductQuantity(product) > 0);
   const showShop = joinable && (availableProducts.length > 0 || (canBuyTicket && detail.ticketTiers.length > 0));
 
   const cancel = async () => {
@@ -289,27 +304,55 @@ export const EventDetailScreen = () => {
               <div className="eyebrow mb-3">{t("detail.extras")}</div>
               <div className="flex flex-col gap-3">
                 {availableProducts.map((product) => {
-                  const quantity = productQuantities[product.id] ?? 0;
-                  const remaining = product.stock === null ? product.maxPerOrder : Math.min(product.maxPerOrder, product.stock - product.claimed);
+                  const quantity = selectedProductQuantity(product);
+                  const variants = availableVariants(product);
+                  const selectedVariant = variants.find((variant) => variant.id === selectedProductVariants[product.id]) ?? null;
+                  const remainingStock = product.variants.length > 0 ? selectedVariant?.stock ?? null : product.stock;
+                  const claimed = product.variants.length > 0 ? selectedVariant?.claimed ?? 0 : product.claimed;
+                  const remaining = remainingStock === null ? product.maxPerOrder : Math.min(product.maxPerOrder, remainingStock - claimed);
                   return (
-                    <div key={product.id} className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => setProductQuantity(product.id, quantity > 0 ? 0 : 1)}
-                      >
+                    <div key={product.id} className="flex flex-col gap-2">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={() => {
+                            if (product.variants.length > 0 && !selectedVariant) return;
+                            setProductQuantity(product.id, quantity > 0 ? 0 : 1);
+                          }}
+                        >
                         <span className="block text-[14px] font-medium">{quantity > 0 ? "✅ " : "⬜ "}{product.name}</span>
                         <span className="block text-[11px] text-hint">
                           {t(product.kind === "merchandise" ? "detail.merchandise" : "detail.addon")} · {price(product.priceMinor)}
                         </span>
                         {product.description ? <span className="mt-0.5 block text-[11px] text-hint">{product.description}</span> : null}
-                      </button>
-                      {quantity > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <Button size="sm" variant="ghost" aria-label="−" onClick={() => setProductQuantity(product.id, quantity - 1)}>−</Button>
-                          <span className="num w-4 text-center text-[13px]">{quantity}</span>
-                          <Button size="sm" variant="ghost" aria-label="+" disabled={quantity >= remaining} onClick={() => setProductQuantity(product.id, quantity + 1)}>+</Button>
-                        </div>
+                        </button>
+                        {quantity > 0 ? (
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" variant="ghost" aria-label="−" onClick={() => setProductQuantity(product.id, quantity - 1)}>−</Button>
+                            <span className="num w-4 text-center text-[13px]">{quantity}</span>
+                            <Button size="sm" variant="ghost" aria-label="+" disabled={quantity >= remaining} onClick={() => setProductQuantity(product.id, quantity + 1)}>+</Button>
+                          </div>
+                        ) : null}
+                      </div>
+                      {product.variants.length > 0 ? (
+                        <select
+                          className="field"
+                          aria-label={t("detail.chooseOptionFor", { product: product.name })}
+                          value={selectedVariant?.id ?? ""}
+                          onChange={(event) => {
+                            const variantId = Number(event.target.value);
+                            if (!Number.isSafeInteger(variantId)) return;
+                            haptic.select();
+                            setSelectedProductVariants((current) => ({ ...current, [product.id]: variantId }));
+                            setProductQuantity(product.id, 1);
+                          }}
+                        >
+                          <option value="" disabled>{t("detail.chooseOption")}</option>
+                          {variants.map((variant) => (
+                            <option key={variant.id} value={variant.id}>{variant.name}</option>
+                          ))}
+                        </select>
                       ) : null}
                     </div>
                   );
