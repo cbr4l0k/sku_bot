@@ -22,6 +22,7 @@ import {
   SearchInput,
   SectionRule,
   StatTile,
+  TelegramUsername,
 } from "../ui/primitives";
 
 /* ------------------------------------------------------- organizer assignment */
@@ -57,27 +58,28 @@ const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose: () =>
         {(users.data ?? []).map((person) => {
           const active = picked.includes(person.id);
           return (
-            <button
-              key={person.id}
-              type="button"
-              onClick={() =>
-                setPicked((prev) => (active ? prev.filter((id) => id !== person.id) : [...prev, person.id]))
-              }
-              className="flex w-full items-center gap-3 border-b border-hair py-3 text-left last:border-b-0"
-            >
-              <span
-                className="grid h-5 w-5 shrink-0 place-items-center rounded-md border"
-                style={
-                  active
-                    ? { background: "var(--flare)", borderColor: "transparent", color: "var(--flare-ink)" }
-                    : { borderColor: "var(--hair)" }
+            <div key={person.id} className="flex w-full items-center gap-3 border-b border-hair last:border-b-0">
+              <button
+                type="button"
+                onClick={() =>
+                  setPicked((prev) => (active ? prev.filter((id) => id !== person.id) : [...prev, person.id]))
                 }
+                className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left"
               >
-                {active ? "✓" : ""}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-[14px]">{fullName(person)}</span>
-              {person.username ? <span className="num text-[11px] text-hint">@{person.username}</span> : null}
-            </button>
+                <span
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-md border"
+                  style={
+                    active
+                      ? { background: "var(--flare)", borderColor: "transparent", color: "var(--flare-ink)" }
+                      : { borderColor: "var(--hair)" }
+                  }
+                >
+                  {active ? "✓" : ""}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[14px]">{fullName(person)}</span>
+              </button>
+              {person.username ? <TelegramUsername username={person.username} className="num shrink-0 text-[11px] text-hint" /> : null}
+            </div>
           );
         })}
       </div>

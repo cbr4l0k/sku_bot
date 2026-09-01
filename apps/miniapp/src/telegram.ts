@@ -151,6 +151,12 @@ export const openTelegramLink = (url: string): void => {
   else window.open(url, "_blank", "noopener");
 };
 
+/** Opens a user's Telegram profile/chat from a username shown in the Mini App. */
+export const openTelegramUsername = (username: string): void => {
+  const handle = username.replace(/^@/, "").trim();
+  if (handle) openTelegramLink(`https://t.me/${encodeURIComponent(handle)}`);
+};
+
 export const openLink = (url: string): void => {
   const app = webApp();
   if (app) app.openLink(url);

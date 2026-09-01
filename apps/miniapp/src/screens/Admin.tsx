@@ -24,6 +24,7 @@ import {
   SearchInput,
   SectionRule,
   StatTile,
+  TelegramUsername,
 } from "../ui/primitives";
 
 type Tab = "events" | "users" | "chats" | "stats";
@@ -207,7 +208,7 @@ const UserRow = ({ person, index, cities, onChanged }: { person: AdminUser; inde
         <div className="min-w-0">
           <div className="truncate text-[14px]">{fullName(person)}</div>
           <div className="num mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-hint">
-            {person.username ? <span className="break-all">@{person.username}</span> : null}
+            {person.username ? <TelegramUsername username={person.username} /> : null}
             {person.phone ? <span className="break-all">{person.phone}</span> : null}
             <span>{t("admin.registrationsCount", { n: person.registrationCount })}</span>
           </div>

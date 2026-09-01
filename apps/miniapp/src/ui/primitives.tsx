@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
-import { haptic } from "../telegram";
+import { haptic, openTelegramUsername } from "../telegram";
 import { SwooshMark } from "./swoosh";
 
 /* ------------------------------------------------------------------- layout */
@@ -208,6 +208,16 @@ export const SearchInput = ({ className = "", ...rest }: InputHTMLAttributes<HTM
     </svg>
     <input className="field pl-10" {...rest} />
   </div>
+);
+
+export const TelegramUsername = ({ username, className = "" }: { username: string; className?: string }) => (
+  <button
+    type="button"
+    className={`break-all underline decoration-current/40 underline-offset-2 ${className}`}
+    onClick={() => openTelegramUsername(username)}
+  >
+    @{username.replace(/^@/, "")}
+  </button>
 );
 
 /* ------------------------------------------------------------------ numbers */
