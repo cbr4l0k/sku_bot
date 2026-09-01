@@ -16,6 +16,7 @@ ${blockquote("Пробежки, тренировки и хорошая комп�
   openEvent: "Открыть событие",
   chooseTicket: "Выбрать билет",
   ticketOption: (name: string, price: string) => `🎟 ${name} · ${price}`,
+  shopMerch: "🛍 Мерч и дополнения",
   eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
@@ -57,6 +58,15 @@ ${title}
   ticketRefundFailed: (title: string) => format`${bold("Возврат требует внимания")}
 
 ЮKassa не смогла вернуть оплату за ${bold(title)}. Место пока сохранено — свяжитесь с клубом.`,
+  purchasePaid: (title: string) => format`${bold("Оплата подтверждена")}
+
+Покупка для события ${bold(title)} подтверждена. Она не меняет запись на событие.`,
+  purchaseRefunded: (title: string) => format`${bold("Возврат подтверждён")}
+
+ЮKassa подтвердила возврат за покупку для события ${bold(title)}.`,
+  purchaseRefundFailed: (title: string) => format`${bold("Возврат требует внимания")}
+
+ЮKassa не смогла вернуть оплату за покупку для события ${bold(title)}. Свяжитесь с клубом.`,
   eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Событие обновлено")}
 
 ${bold(title)}

@@ -140,7 +140,11 @@ const eventView = (event: typeof events.$inferSelect) => ({
     .orderBy(asc(eventProducts.sortOrder), asc(eventProducts.id)).all().map(eventProductView),
   paymentsConfigured,
   pendingTicketCount: db.select({ value: sql<number>`count(*)` }).from(ticketOrders)
-    .where(and(eq(ticketOrders.eventId, event.id), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"]))).get()?.value ?? 0,
+    .where(and(
+      eq(ticketOrders.eventId, event.id),
+      sql`${ticketOrders.ticketTierId} IS NOT NULL`,
+      inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"]),
+    )).get()?.value ?? 0,
 });
 
 /**
@@ -367,7 +371,7 @@ export const app = new Elysia()
       try {
         result = await createCheckout(db, paymentProvider, {
           eventId: params.id,
-          tierId: body.ticketTierId,
+          tierId: body.ticketTierId ?? null,
           productItems: body.items,
           userId: user.id,
           userPhone: user.phone,
@@ -387,7 +391,7 @@ export const app = new Elysia()
     }, {
       params: idParams,
       body: t.Object({
-        ticketTierId: t.Integer({ minimum: 1 }),
+        ticketTierId: t.Optional(t.Nullable(t.Integer({ minimum: 1 }))),
         items: t.Optional(t.Array(t.Object({
           productId: t.Integer({ minimum: 1 }),
           quantity: t.Integer({ minimum: 1, maximum: 20 }),
@@ -402,7 +406,12 @@ export const app = new Elysia()
       if (user.isBanned) return error(status, 403, "banned");
       if (!participantEvent(params.id)) return error(status, 404, "event_not_found");
       const paidOrder = db.select({ id: ticketOrders.id }).from(ticketOrders)
-        .where(and(eq(ticketOrders.eventId, params.id), eq(ticketOrders.userId, user.id), inArray(ticketOrders.status, ["fulfilled", "refund_pending", "refund_failed"]))).get();
+        .where(and(
+          eq(ticketOrders.eventId, params.id),
+          eq(ticketOrders.userId, user.id),
+          sql`${ticketOrders.ticketTierId} IS NOT NULL`,
+          inArray(ticketOrders.status, ["fulfilled", "refund_pending", "refund_failed"]),
+        )).get();
       if (paidOrder) {
         if (!paymentProvider) return error(status, 503, "payments_not_configured");
         try {
@@ -618,12 +627,12 @@ export const app = new Elysia()
         checkedInAt: registrations.checkedInAt,
         ticketName: sql<string | null>`(
           SELECT o.ticket_name FROM ticket_orders o
-          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id}
+          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id} AND o.ticket_tier_id IS NOT NULL
           ORDER BY o.created_at DESC LIMIT 1
         )`,
         paymentStatus: sql<string | null>`(
           SELECT o.status FROM ticket_orders o
-          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id}
+          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id} AND o.ticket_tier_id IS NOT NULL
           ORDER BY o.created_at DESC LIMIT 1
         )`,
       })
@@ -635,11 +644,7 @@ export const app = new Elysia()
             SELECT i.name, i.quantity, i.kind FROM order_items i
             JOIN ticket_orders o ON o.id = i.order_id
             WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
-              AND o.id = (
-                SELECT latest.id FROM ticket_orders latest
-                WHERE latest.event_id = o.event_id AND latest.user_id = o.user_id
-                ORDER BY latest.created_at DESC LIMIT 1
-              )
+              AND o.status IN ('fulfilled', 'refund_pending', 'refund_failed')
             ORDER BY i.id
           `).all(params.id, row.userId),
         }));

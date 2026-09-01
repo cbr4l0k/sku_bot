@@ -102,14 +102,15 @@ later hidden. This prevents a stale Telegram button from issuing an unpaid ticke
 
 The first version deliberately has one merchant: the club. It supports fixed RUB
 ticket tiers, one ticket per Telegram user per event, optional merchandise and
-add-ons with quantities, automatic refunds, and no payouts to organizers. Each
-purchase contains exactly one ticket plus zero or more event products and is paid
-as one YooKassa transaction.
+add-ons with quantities, automatic refunds, and no payouts to organizers. A
+purchase may contain one ticket plus optional products, or products alone, and is
+paid as one YooKassa transaction. A merch-only purchase never grants event entry.
 
 The Telegram event card exposes each available ticket as its own Mini App button.
-The chosen ticket is preselected when the app opens; the user can still switch it,
-add merch or extras, review the combined total, and then pay. In the event view the
-shop is deliberately placed directly below the title and before the description.
+The chosen ticket is preselected when the app opens; the user can still switch or
+remove it, add merch or extras, review the combined total, and then pay. Events may
+also have a shop without any ticket tiers. In the event view the shop is deliberately
+placed directly below the title and before the description.
 
 ### State machine
 
@@ -129,8 +130,9 @@ awaiting_payment ── provider succeeded ──> payment_succeeded ──> ful
                                                                     └──> refund_failed
 ```
 
-Creating checkout reserves event capacity, the tier quota, and every product's
-quantity in one database transaction. Names, unit prices, kinds, and quantities are
+Creating checkout reserves every selected product's quantity and, only when a ticket
+is present, event capacity and the tier quota in one database transaction. Names,
+unit prices, kinds, and quantities are
 copied into immutable order-item snapshots; the server calculates the total from
 those snapshots and sends separate receipt lines (ticket/add-ons as services,
 merchandise as commodities). Client totals and Telegram button data are never

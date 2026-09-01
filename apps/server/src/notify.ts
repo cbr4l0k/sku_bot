@@ -24,17 +24,20 @@ const logTelegramFailure = (action: string, error: unknown) => {
 const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
   const locale = localeFor(effect.userId);
 
-  if (effect.kind === "ticket_paid" || effect.kind === "ticket_refunded" || effect.kind === "ticket_refund_failed") {
+  if (["ticket_paid", "ticket_refunded", "ticket_refund_failed", "purchase_paid", "purchase_refunded", "purchase_refund_failed"].includes(effect.kind)) {
     const event = eventSummary(effect.eventId, locale);
     if (!event) return;
     const key = effect.kind === "ticket_paid" ? "ticketPaid"
-      : effect.kind === "ticket_refunded" ? "ticketRefunded" : "ticketRefundFailed";
+      : effect.kind === "ticket_refunded" ? "ticketRefunded"
+        : effect.kind === "ticket_refund_failed" ? "ticketRefundFailed"
+          : effect.kind === "purchase_paid" ? "purchasePaid"
+            : effect.kind === "purchase_refunded" ? "purchaseRefunded" : "purchaseRefundFailed";
     const response = await bot.api.sendMessage({
       chat_id: effect.userId,
       text: i18n.t(locale, key, event.title),
       suppress: true,
     });
-    if (response instanceof TelegramError) logTelegramFailure("ticket notification", response);
+    if (response instanceof TelegramError) logTelegramFailure("purchase notification", response);
     return;
   }
 

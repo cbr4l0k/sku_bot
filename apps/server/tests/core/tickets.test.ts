@@ -111,6 +111,19 @@ const checkout = (userId = 1, productItems: Array<{ productId: number; quantity:
   returnUrl: "https://club.example/events/1",
 }, now);
 
+const merchCheckout = (userId = 1, productItems: Array<{ productId: number; quantity: number }> = [{ productId: 20, quantity: 1 }]) => createCheckout(db, provider, {
+  eventId: 1,
+  tierId: null,
+  productItems,
+  userId,
+  returnUrl: "https://club.example/events/1",
+}, now);
+
+test("checkout rejects a basket with neither a ticket nor a product", async () => {
+  expect(await merchCheckout(1, [])).toEqual({ error: "invalid_basket" });
+  expect(provider.createCalls).toBe(0);
+});
+
 test("checkout reserves inventory and only an authoritative succeeded payment issues one ticket", async () => {
   const first = await checkout();
   expect(first).not.toHaveProperty("error");
@@ -144,6 +157,43 @@ test("one checkout reserves a ticket and multiple product lines and sends one se
   });
   expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM order_items").get()?.count).toBe(3);
   expect(await checkout(2, [{ productId: 20, quantity: 1 }])).toEqual({ error: "product_sold_out" });
+});
+
+test("merch can be paid for without a ticket and never creates an event registration", async () => {
+  db.$client.query("DELETE FROM ticket_tiers").run();
+  const checkoutResult = await merchCheckout(1, [{ productId: 20, quantity: 1 }, { productId: 21, quantity: 1 }]);
+  expect(checkoutResult).not.toHaveProperty("error");
+  expect(provider.createInputs[0]).toMatchObject({
+    amountMinor: 300000,
+    receiptItems: [
+      { description: "Club T-shirt / M", quantity: 1, unitAmountMinor: 250000, paymentSubject: "commodity" },
+      { description: "Photo pack", quantity: 1, unitAmountMinor: 50000, paymentSubject: "service" },
+    ],
+  });
+
+  provider.setPaymentStatus("pay-1", "succeeded");
+  expect((await reconcilePayment(db, provider, "pay-1", now)).effects).toEqual([
+    { kind: "purchase_paid", userId: 1, eventId: 1 },
+  ]);
+  expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM registrations").get()?.count).toBe(0);
+  expect(db.$client.query<{ status: string; ticket_tier_id: number | null }, []>(
+    "SELECT status, ticket_tier_id FROM ticket_orders",
+  ).get()).toEqual({ status: "fulfilled", ticket_tier_id: null });
+});
+
+test("a completed merch-only order does not block a later ticket purchase", async () => {
+  await merchCheckout();
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+
+  expect(await checkout()).not.toHaveProperty("error");
+  expect(provider.createCalls).toBe(2);
+});
+
+test("merch-only reservations do not consume event ticket capacity", async () => {
+  db.$client.query("UPDATE events SET capacity = 1").run();
+  await merchCheckout(1);
+  expect(await checkout(2)).not.toHaveProperty("error");
 });
 
 test("an active payment is reused only for the exact same basket", async () => {
@@ -193,6 +243,20 @@ test("canceling an event refunds every fulfilled order and only then cancels its
       { description: "Club T-shirt / M", quantity: 2, unitAmountMinor: 250000 },
     ],
   });
+});
+
+test("event cancellation refunds a merch-only order without changing registration state", async () => {
+  db.$client.query("DELETE FROM ticket_tiers").run();
+  db.$client.query("INSERT INTO registrations (event_id, user_id, status) VALUES (1, 1, 'registered')").run();
+  await merchCheckout();
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  db.$client.query("UPDATE events SET status = 'canceled' WHERE id = 1").run();
+
+  const effects = await refundCanceledEvent(db, provider, 1, now);
+  expect(effects).toContainEqual({ kind: "purchase_refunded", userId: 1, eventId: 1 });
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("registered");
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("refunded");
 });
 
 test("a payment that lands after cancellation is automatically refunded, never fulfilled", async () => {

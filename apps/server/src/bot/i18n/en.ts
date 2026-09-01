@@ -15,6 +15,7 @@ ${blockquote("Runs, training sessions, and good company — all in one place.")}
   openEvent: "Open event",
   chooseTicket: "Choose ticket",
   ticketOption: (name: string, price: string) => `🎟 ${name} · ${price}`,
+  shopMerch: "🛍 Merch & extras",
   eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
@@ -54,6 +55,15 @@ Your ticket for ${bold(title)} has been canceled and YooKassa confirmed the refu
   ticketRefundFailed: (title: string) => format`${bold("Refund needs attention")}
 
 YooKassa could not complete the refund for ${bold(title)}. Your place is still held; please contact the club.`,
+  purchasePaid: (title: string) => format`${bold("Payment confirmed")}
+
+Your purchase for ${bold(title)} is confirmed. It did not change your event signup.`,
+  purchaseRefunded: (title: string) => format`${bold("Refund confirmed")}
+
+YooKassa confirmed the refund for your purchase at ${bold(title)}.`,
+  purchaseRefundFailed: (title: string) => format`${bold("Refund needs attention")}
+
+YooKassa could not complete the refund for your purchase at ${bold(title)}. Please contact the club.`,
   eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Event updated")}
 
 ${bold(title)}

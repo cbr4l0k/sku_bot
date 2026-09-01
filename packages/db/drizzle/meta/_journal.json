@@ -78,6 +78,13 @@
       "when": 1788274553361,
       "tag": "0010_tired_scrambler",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1788282674906,
+      "tag": "0011_cultured_justice",
+      "breakpoints": true
     }
   ]
 }

@@ -104,8 +104,8 @@ const PersonRow = ({
           {person.status === "waitlisted" ? <Chip>{t("status.waitlisted")}</Chip> : null}
           {person.status === "canceled" ? <Chip>{t("status.canceled")}</Chip> : null}
           {person.ticketName ? <Chip tone="soft">{person.ticketName}</Chip> : null}
-          {person.purchaseItems.map((item) => (
-            <Chip key={`${item.kind}-${item.name}`} tone="soft">{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</Chip>
+          {person.purchaseItems.map((item, itemIndex) => (
+            <Chip key={`${item.kind}-${item.name}-${itemIndex}`} tone="soft">{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</Chip>
           ))}
           {person.paymentStatus && person.paymentStatus !== "fulfilled" ? <Chip>{person.paymentStatus}</Chip> : null}
         </div>

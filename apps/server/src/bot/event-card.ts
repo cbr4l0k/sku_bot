@@ -1,6 +1,6 @@
 import { InlineKeyboard, bold, format } from "gramio";
 import { CITIES, type CitySlug } from "@sku/cities";
-import { and, count, eq, events, inArray, isNull, registrations, ticketOrders, ticketTiers } from "@sku/db";
+import { and, count, eq, eventProducts, events, inArray, isNull, registrations, sql, ticketOrders, ticketTiers } from "@sku/db";
 import type { Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
@@ -46,7 +46,11 @@ const confirmedCount = (eventId: number) => db.select({ count: count() }).from(r
   .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"])))
   .get()?.count ?? 0;
 const pendingTicketCount = (eventId: number) => db.select({ count: count() }).from(ticketOrders)
-  .where(and(eq(ticketOrders.eventId, eventId), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"])))
+  .where(and(
+    eq(ticketOrders.eventId, eventId),
+    sql`${ticketOrders.ticketTierId} IS NOT NULL`,
+    inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"]),
+  ))
   .get()?.count ?? 0;
 
 const myRegistration = (eventId: number, userId: number) => db
@@ -95,6 +99,8 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
   const status = registration?.status ?? null;
   const mine = status === "registered" || status === "checked_in" || status === "waitlisted";
   const paid = Boolean(db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, event.id)).get());
+  const hasProducts = Boolean(db.select({ id: eventProducts.id }).from(eventProducts)
+    .where(and(eq(eventProducts.eventId, event.id), eq(eventProducts.active, true))).get());
   const tiers = paid && !mine ? ticketOptions(event.id) : [];
 
   const lines = [
@@ -116,7 +122,8 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
         `https://${env.DOMAIN}/events/${event.id}?ticket=${tier.id}`,
       ).row();
     }
-    if (!tiers.length) keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
+    if (hasProducts) keyboard.webApp(i18n.t(locale, "shopMerch"), `https://${env.DOMAIN}/events/${event.id}`).row();
+    if (!tiers.length && !hasProducts) keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
   } else {
     keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
   }

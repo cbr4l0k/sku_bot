@@ -133,7 +133,7 @@ export const sku = {
   events: () => call(api.events.get(auth())),
   event: (id: number) => call(api.events({ id }).get(auth())),
   join: (id: number) => call(api.events({ id }).join.post(undefined, auth())),
-  checkout: (id: number, ticketTierId: number, items: Array<{ productId: number; quantity: number }>) =>
+  checkout: (id: number, ticketTierId: number | null, items: Array<{ productId: number; quantity: number }>) =>
     call(api.events({ id }).checkout.post({ ticketTierId, items }, auth())),
   order: (id: string) => call(api.orders({ id }).get(auth())),
   cancel: (id: number) => call(api.events({ id }).cancel.post(undefined, auth())),

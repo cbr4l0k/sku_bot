@@ -31,9 +31,9 @@ type EventRow = { id: number; title: string; status: string; ended_at: number | 
 type OrderRow = {
   id: string;
   event_id: number;
-  ticket_tier_id: number;
+  ticket_tier_id: number | null;
   user_id: number;
-  ticket_name: string;
+  ticket_name: string | null;
   amount_minor: number;
   currency: string;
   status: TicketOrderStatus;
@@ -109,14 +109,15 @@ const itemsForOrder = (db: Db, orderId: string) => db.$client.query<OrderItemRow
 `).all(orderId);
 const receiptItemsForOrder = (db: Db, order: OrderRow) => {
   const items = itemsForOrder(db, order.id);
-  const snapshots = items.length ? items : [{
-    ticket_tier_id: order.ticket_tier_id,
-    event_product_id: null,
-    kind: "ticket" as const,
-    name: order.ticket_name,
-    unit_amount_minor: order.amount_minor,
-    quantity: 1,
-  }];
+  const snapshots = items.length ? items : order.ticket_name ? [{
+      ticket_tier_id: order.ticket_tier_id,
+      event_product_id: null,
+      kind: "ticket" as const,
+      name: order.ticket_name,
+      unit_amount_minor: order.amount_minor,
+      quantity: 1,
+    }] : [];
+  if (!snapshots.length) throw new Error(`Order ${order.id} has no receipt items`);
   return snapshots.map((item) => ({
     description: item.name,
     quantity: item.quantity,
@@ -128,7 +129,8 @@ const receiptItemsForOrder = (db: Db, order: OrderRow) => {
 const activeOrderForUser = (db: Db, eventId: number, userId: number) => db.$client.query<OrderRow, [number, number]>(`
   SELECT id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at
   FROM ticket_orders
-  WHERE event_id = ? AND user_id = ? AND status NOT IN ('canceled', 'refunded')
+  WHERE event_id = ? AND user_id = ?
+    AND status IN ('awaiting_payment', 'payment_succeeded', 'cancel_pending')
   ORDER BY created_at DESC LIMIT 1
 `).get(eventId, userId);
 
@@ -145,7 +147,7 @@ const confirmedCount = (db: Db, eventId: number) => db.$client.query<{ count: nu
   "SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')",
 ).get(eventId)?.count ?? 0;
 const pendingCount = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>(
-  "SELECT count(*) AS count FROM ticket_orders WHERE event_id = ? AND status IN ('awaiting_payment', 'payment_succeeded')",
+  "SELECT count(*) AS count FROM ticket_orders WHERE event_id = ? AND ticket_tier_id IS NOT NULL AND status IN ('awaiting_payment', 'payment_succeeded')",
 ).get(eventId)?.count ?? 0;
 const tierClaimCount = (db: Db, tierId: number) => db.$client.query<{ count: number }, [number]>(`
   SELECT count(*) AS count FROM ticket_orders
@@ -168,7 +170,7 @@ const requestedProducts = (items: ReadonlyArray<{ productId: number; quantity: n
   return quantities.size <= 20 ? quantities : null;
 };
 
-const basketMatches = (db: Db, order: OrderRow, tierId: number, products: ReadonlyMap<number, number>) => {
+const basketMatches = (db: Db, order: OrderRow, tierId: number | null, products: ReadonlyMap<number, number>) => {
   if (order.ticket_tier_id !== tierId) return false;
   const existing = new Map(itemsForOrder(db, order.id)
     .filter((item) => item.event_product_id !== null)
@@ -189,7 +191,7 @@ export const createCheckout = async (
   provider: PaymentProvider,
   input: {
     eventId: number;
-    tierId: number;
+    tierId?: number | null;
     productItems?: ReadonlyArray<{ productId: number; quantity: number }>;
     userId: number;
     returnUrl: string;
@@ -202,6 +204,8 @@ export const createCheckout = async (
   if (provider.requiresCustomerContact && !receiptPhone) return { error: "contact_required" };
   const products = requestedProducts(input.productItems ?? []);
   if (!products) return { error: "invalid_basket" };
+  const tierId = input.tierId ?? null;
+  if (tierId === null && products.size === 0) return { error: "invalid_basket" };
   const prepared = transaction(db, () => {
     const event = db.$client.query<EventRow, [number]>(
       "SELECT id, title, status, ended_at, capacity FROM events WHERE id = ?",
@@ -210,28 +214,33 @@ export const createCheckout = async (
     if (event.ended_at !== null) return { error: "event_over" as const };
     if (!eligible(db, event.id, input.userId)) return { error: "not_eligible" as const };
 
-    const registration = db.$client.query<{ status: string }, [number, number]>(
-      "SELECT status FROM registrations WHERE event_id = ? AND user_id = ?",
-    ).get(event.id, input.userId);
-    if (registration && ["registered", "checked_in"].includes(registration.status)) return { error: "already_joined" as const };
+    if (tierId !== null) {
+      const registration = db.$client.query<{ status: string }, [number, number]>(
+        "SELECT status FROM registrations WHERE event_id = ? AND user_id = ?",
+      ).get(event.id, input.userId);
+      if (registration && ["registered", "checked_in"].includes(registration.status)) return { error: "already_joined" as const };
+    }
 
     const existing = activeOrderForUser(db, event.id, input.userId);
     if (existing) {
-      if (!basketMatches(db, existing, input.tierId, products)) return { error: "active_order_exists" as const };
+      if (!basketMatches(db, existing, tierId, products)) return { error: "active_order_exists" as const };
       return { order: existing, attempt: attemptForOrder(db, existing.id), event, existing: true as const };
     }
 
-    const tier = db.$client.query<TierRow, [number, number]>(`
-      SELECT id, event_id, name, price_minor, quota, sales_start_at, sales_end_at, active
-      FROM ticket_tiers WHERE id = ? AND event_id = ?
-    `).get(input.tierId, event.id);
-    if (!tier || !tier.active) return { error: "ticket_not_found" as const };
     const timestamp = seconds(now);
-    if ((tier.sales_start_at !== null && tier.sales_start_at > timestamp)
-      || (tier.sales_end_at !== null && tier.sales_end_at <= timestamp)) return { error: "ticket_sales_closed" as const };
-    if (tier.quota !== null && tierClaimCount(db, tier.id) >= tier.quota) return { error: "ticket_sold_out" as const };
-    if (event.capacity !== null && confirmedCount(db, event.id) + pendingCount(db, event.id) >= event.capacity) {
-      return { error: "event_full" as const };
+    let tier: TierRow | null = null;
+    if (tierId !== null) {
+      tier = db.$client.query<TierRow, [number, number]>(`
+        SELECT id, event_id, name, price_minor, quota, sales_start_at, sales_end_at, active
+        FROM ticket_tiers WHERE id = ? AND event_id = ?
+      `).get(tierId, event.id) ?? null;
+      if (!tier || !tier.active) return { error: "ticket_not_found" as const };
+      if ((tier.sales_start_at !== null && tier.sales_start_at > timestamp)
+        || (tier.sales_end_at !== null && tier.sales_end_at <= timestamp)) return { error: "ticket_sales_closed" as const };
+      if (tier.quota !== null && tierClaimCount(db, tier.id) >= tier.quota) return { error: "ticket_sold_out" as const };
+      if (event.capacity !== null && confirmedCount(db, event.id) + pendingCount(db, event.id) >= event.capacity) {
+        return { error: "event_full" as const };
+      }
     }
 
     const selectedProducts: Array<ProductRow & { quantity: number }> = [];
@@ -248,7 +257,7 @@ export const createCheckout = async (
       selectedProducts.push({ ...product, quantity });
     }
 
-    const amountMinor = tier.price_minor + selectedProducts.reduce((sum, product) => sum + product.price_minor * product.quantity, 0);
+    const amountMinor = (tier?.price_minor ?? 0) + selectedProducts.reduce((sum, product) => sum + product.price_minor * product.quantity, 0);
     if (!Number.isSafeInteger(amountMinor) || amountMinor < 1) return { error: "invalid_basket" as const };
 
     const orderId = crypto.randomUUID();
@@ -259,12 +268,14 @@ export const createCheckout = async (
       INSERT INTO ticket_orders
         (id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, 'RUB', 'awaiting_payment', ?, ?, ?)
-    `).run(orderId, event.id, tier.id, input.userId, tier.name, amountMinor, expiresAt, timestamp, timestamp);
-    db.$client.query(`
-      INSERT INTO order_items
-        (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
-      VALUES (?, ?, NULL, 'ticket', ?, ?, 1, ?)
-    `).run(orderId, tier.id, tier.name, tier.price_minor, timestamp);
+    `).run(orderId, event.id, tier?.id ?? null, input.userId, tier?.name ?? null, amountMinor, expiresAt, timestamp, timestamp);
+    if (tier) {
+      db.$client.query(`
+        INSERT INTO order_items
+          (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
+        VALUES (?, ?, NULL, 'ticket', ?, ?, 1, ?)
+      `).run(orderId, tier.id, tier.name, tier.price_minor, timestamp);
+    }
     for (const product of selectedProducts) {
       db.$client.query(`
         INSERT INTO order_items
@@ -287,7 +298,7 @@ export const createCheckout = async (
     const payment = await provider.createPayment({
       amountMinor: prepared.order.amount_minor,
       currency: "RUB",
-      description: `${prepared.event.title} — ${prepared.order.ticket_name}`,
+      description: `${prepared.event.title} — ${prepared.order.ticket_name ?? receiptItemsForOrder(db, prepared.order)[0]!.description}`,
       orderId: prepared.order.id,
       returnUrl: input.returnUrl,
       idempotenceKey: prepared.attempt.idempotence_key,
@@ -320,8 +331,9 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
   if (remote.amountMinor !== refundRow.amount_minor || remote.currency !== "RUB") throw new Error("Refund amount mismatch");
   const order = orderById(db, refundRow.order_id);
   if (!order) throw new Error(`Refund ${refundRow.id} points to a missing order`);
+  const hasTicket = order.ticket_tier_id !== null;
   const timestamp = seconds(now);
-  const shouldOffer = remote.status === "succeeded" && db.$client.query<{ status: string }, [number]>(
+  const shouldOffer = hasTicket && remote.status === "succeeded" && db.$client.query<{ status: string }, [number]>(
     "SELECT status FROM events WHERE id = ?",
   ).get(order.event_id)?.status === "published";
 
@@ -331,8 +343,10 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
     if (remote.status === "succeeded") {
       db.$client.query("UPDATE ticket_orders SET status = 'refunded', refunded_at = ?, updated_at = ? WHERE id = ?")
         .run(timestamp, timestamp, order.id);
-      db.$client.query("UPDATE registrations SET status = 'canceled', checked_in_at = NULL, updated_at = ? WHERE event_id = ? AND user_id = ? AND status IN ('registered', 'checked_in')")
-        .run(timestamp, order.event_id, order.user_id);
+      if (hasTicket) {
+        db.$client.query("UPDATE registrations SET status = 'canceled', checked_in_at = NULL, updated_at = ? WHERE event_id = ? AND user_id = ? AND status IN ('registered', 'checked_in')")
+          .run(timestamp, order.event_id, order.user_id);
+      }
     } else if (remote.status === "canceled") {
       db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
         .run(timestamp, order.id);
@@ -340,9 +354,9 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
   });
   const effects: NotificationEffect[] = shouldOffer ? issueOffers(db, order.event_id, now) : [];
   if (remote.status === "succeeded" && refundRow.status !== "succeeded") {
-    effects.push({ kind: "ticket_refunded", userId: order.user_id, eventId: order.event_id });
+    effects.push({ kind: hasTicket ? "ticket_refunded" : "purchase_refunded", userId: order.user_id, eventId: order.event_id });
   } else if (remote.status === "canceled" && refundRow.status !== "canceled") {
-    effects.push({ kind: "ticket_refund_failed", userId: order.user_id, eventId: order.event_id });
+    effects.push({ kind: hasTicket ? "ticket_refund_failed" : "purchase_refund_failed", userId: order.user_id, eventId: order.event_id });
   }
   return effects;
 };
@@ -391,7 +405,7 @@ export const ensureRefund = async (
     currency: "RUB",
     orderId,
     reason,
-    description: prepared.order.ticket_name,
+    description: prepared.order.ticket_name ?? receiptItemsForOrder(db, prepared.order)[0]!.description,
     receiptItems: receiptItemsForOrder(db, prepared.order),
     ...(() => {
       const phone = db.$client.query<{ phone: string | null }, [string]>(`
@@ -453,15 +467,17 @@ export const reconcilePayment = async (
       return { needsRefund: true, fulfilled: false };
     }
     if (order.status !== "fulfilled" && order.status !== "refund_pending" && order.status !== "refund_failed" && order.status !== "refunded") {
-      const registration = db.$client.query<{ id: number }, [number, number]>(
-        "SELECT id FROM registrations WHERE event_id = ? AND user_id = ?",
-      ).get(order.event_id, order.user_id);
-      if (registration) {
-        db.$client.query("UPDATE registrations SET status = 'registered', checked_in_at = NULL, updated_at = ? WHERE id = ?")
-          .run(timestamp, registration.id);
-      } else {
-        db.$client.query("INSERT INTO registrations (event_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'registered', ?, ?)")
-          .run(order.event_id, order.user_id, timestamp, timestamp);
+      if (order.ticket_tier_id !== null) {
+        const registration = db.$client.query<{ id: number }, [number, number]>(
+          "SELECT id FROM registrations WHERE event_id = ? AND user_id = ?",
+        ).get(order.event_id, order.user_id);
+        if (registration) {
+          db.$client.query("UPDATE registrations SET status = 'registered', checked_in_at = NULL, updated_at = ? WHERE id = ?")
+            .run(timestamp, registration.id);
+        } else {
+          db.$client.query("INSERT INTO registrations (event_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'registered', ?, ?)")
+            .run(order.event_id, order.user_id, timestamp, timestamp);
+        }
       }
       db.$client.query("UPDATE ticket_orders SET status = 'fulfilled', paid_at = coalesce(paid_at, ?), fulfilled_at = coalesce(fulfilled_at, ?), updated_at = ? WHERE id = ?")
         .run(timestamp, timestamp, timestamp, order.id);
@@ -471,14 +487,19 @@ export const reconcilePayment = async (
   });
   const effects: NotificationEffect[] = result.needsRefund
     ? await ensureRefund(db, provider, order.id, "payment_after_cancellation", now)
-    : result.fulfilled ? [{ kind: "ticket_paid", userId: order.user_id, eventId: order.event_id }] : [];
+    : result.fulfilled ? [{
+        kind: order.ticket_tier_id === null ? "purchase_paid" : "ticket_paid",
+        userId: order.user_id,
+        eventId: order.event_id,
+      }] : [];
   return { orderId: order.id, effects };
 };
 
 export const requestUserRefund = async (db: Db, provider: PaymentProvider, eventId: number, userId: number, now: Date) => {
   const order = db.$client.query<{ id: string }, [number, number]>(`
     SELECT id FROM ticket_orders
-    WHERE event_id = ? AND user_id = ? AND status IN ('fulfilled', 'refund_pending', 'refund_failed')
+    WHERE event_id = ? AND user_id = ? AND ticket_tier_id IS NOT NULL
+      AND status IN ('fulfilled', 'refund_pending', 'refund_failed')
     ORDER BY created_at DESC LIMIT 1
   `).get(eventId, userId);
   if (!order) return null;

@@ -75,6 +75,7 @@ export const EventDetailScreen = () => {
   const underway = !over && isPast(detail.startsAt);
   const joinable = detail.status === "published" && !over;
   const paidEvent = detail.ticketTiers.length > 0;
+  const canBuyTicket = status !== "registered" && status !== "checked_in";
   const availableTiers = detail.ticketTiers.filter((tier) => {
     const time = Date.now();
     return tier.active
@@ -83,7 +84,7 @@ export const EventDetailScreen = () => {
       && (tier.quota === null || tier.claimed < tier.quota);
   });
   const availableProducts = detail.products.filter((product) => product.active && (product.stock === null || product.claimed < product.stock));
-  const selectedTier = availableTiers.find((tier) => tier.id === selectedTierId) ?? null;
+  const selectedTier = canBuyTicket ? availableTiers.find((tier) => tier.id === selectedTierId) ?? null : null;
   const price = (minor: number) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
     style: "currency",
     currency: "RUB",
@@ -111,13 +112,13 @@ export const EventDetailScreen = () => {
     );
 
   const buy = () => {
-    if (!selectedTier) return;
-    const items = Object.entries(productQuantities)
-      .map(([productId, quantity]) => ({ productId: Number(productId), quantity }))
+    const items = availableProducts
+      .map((product) => ({ productId: product.id, quantity: productQuantities[product.id] ?? 0 }))
       .filter((item) => item.quantity > 0);
+    if (!selectedTier && items.length === 0) return;
     void action.run(
       async () => {
-        const checkout = await sku.checkout(id, selectedTier.id, items);
+        const checkout = await sku.checkout(id, selectedTier?.id ?? null, items);
         if (!checkout.confirmationUrl) {
           await resource.reload(true);
           return;
@@ -143,6 +144,8 @@ export const EventDetailScreen = () => {
     (sum, product) => sum + product.priceMinor * (productQuantities[product.id] ?? 0),
     0,
   );
+  const hasBasket = selectedTier !== null || availableProducts.some((product) => (productQuantities[product.id] ?? 0) > 0);
+  const showShop = joinable && (availableProducts.length > 0 || (canBuyTicket && detail.ticketTiers.length > 0));
 
   const cancel = async () => {
     if (!(await confirm({ text: t(paidEvent ? "detail.refundConfirm" : "detail.confirmCancel"), confirmLabel: t("action.cancel"), danger: true }))) return;
@@ -188,40 +191,43 @@ export const EventDetailScreen = () => {
         <h1 className="hero mb-3 break-words">{detail.title}</h1>
       </div>
 
-      {paidEvent && (status === null || status === "canceled" || status === "waitlisted") ? (
+      {showShop ? (
         <section className="rise card mb-4 px-4 py-4" style={{ "--i": 1 } as React.CSSProperties}>
           <div className="eyebrow mb-3">{t("detail.shop")}</div>
-          <div className="flex flex-col gap-2">
-            {availableTiers.map((tier) => {
-              const picked = selectedTier?.id === tier.id;
-              return (
-                <button
-                  key={tier.id}
-                  type="button"
-                  className="flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left"
-                  style={{ borderColor: picked ? "var(--flare)" : "var(--hair)", background: picked ? "var(--flare-soft)" : "transparent" }}
-                  onClick={() => {
-                    haptic.select();
-                    setSelectedTierId(tier.id);
-                  }}
-                >
-                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border" style={{ borderColor: picked ? "var(--flare)" : "var(--hair)" }}>
-                    {picked ? <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--flare)" }} /> : null}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[14px] font-medium">{tier.name}</span>
-                    {tier.quota === null ? null : <span className="block text-[11px] text-hint">{t("detail.ticketQuota", { n: Math.max(0, tier.quota - tier.claimed) })}</span>}
-                  </span>
-                  <span className="num text-[13px]">{price(tier.priceMinor)}</span>
-                </button>
-              );
-            })}
-            {availableTiers.length === 0 ? <p className="text-[12px] text-hint">{t("detail.noTicketsAvailable")}</p> : null}
-          </div>
+          {canBuyTicket && detail.ticketTiers.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {availableTiers.map((tier) => {
+                const picked = selectedTier?.id === tier.id;
+                return (
+                  <button
+                    key={tier.id}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left"
+                    style={{ borderColor: picked ? "var(--flare)" : "var(--hair)", background: picked ? "var(--flare-soft)" : "transparent" }}
+                    onClick={() => {
+                      haptic.select();
+                      setSelectedTierId(picked ? null : tier.id);
+                    }}
+                  >
+                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border" style={{ borderColor: picked ? "var(--flare)" : "var(--hair)" }}>
+                      {picked ? <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--flare)" }} /> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14px] font-medium">{tier.name}</span>
+                      {tier.quota === null ? null : <span className="block text-[11px] text-hint">{t("detail.ticketQuota", { n: Math.max(0, tier.quota - tier.claimed) })}</span>}
+                    </span>
+                    <span className="num text-[13px]">{price(tier.priceMinor)}</span>
+                  </button>
+                );
+              })}
+              {availableTiers.length === 0 ? <p className="text-[12px] text-hint">{t("detail.noTicketsAvailable")}</p> : null}
+              {availableProducts.length > 0 ? <p className="text-[11px] text-hint">{t("detail.ticketOptional")}</p> : null}
+            </div>
+          ) : null}
 
           {availableProducts.length ? (
             <>
-              <div className="hairline my-4" />
+              {canBuyTicket && detail.ticketTiers.length > 0 ? <div className="hairline my-4" /> : null}
               <div className="eyebrow mb-3">{t("detail.extras")}</div>
               <div className="flex flex-col gap-3">
                 {availableProducts.map((product) => {
@@ -255,10 +261,10 @@ export const EventDetailScreen = () => {
           ) : null}
 
           <div className="hairline my-4" />
-          <Button block loading={action.pending} disabled={!selectedTier || !detail.paymentsConfigured} onClick={buy}>
-            {selectedTier ? t("action.pay", { price: price(basketTotal) }) : t("detail.pickTicket")}
+          <Button block loading={action.pending} disabled={!hasBasket || !detail.paymentsConfigured} onClick={buy}>
+            {hasBasket ? t("action.pay", { price: price(basketTotal) }) : t("detail.pickPurchase")}
           </Button>
-          {selectedTier ? <p className="mt-2 text-center text-[12px] text-hint">{t("detail.total", { price: price(basketTotal) })}</p> : null}
+          {hasBasket ? <p className="mt-2 text-center text-[12px] text-hint">{t("detail.total", { price: price(basketTotal) })}</p> : null}
           {!detail.paymentsConfigured ? <p className="mt-2 text-[12px] text-hint">{t("detail.paymentsUnavailable")}</p> : null}
         </section>
       ) : null}

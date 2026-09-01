@@ -171,7 +171,7 @@ export const ticketTiers = sqliteTable(
   (table) => [index("ticket_tiers_event_id_sort_order_idx").on(table.eventId, table.sortOrder, table.id)],
 );
 
-/** Optional event-scoped products that can be bought together with one ticket. */
+/** Optional event-scoped products that can be bought alone or together with a ticket. */
 export const eventProducts = sqliteTable(
   "event_products",
   {
@@ -194,16 +194,16 @@ export const eventProducts = sqliteTable(
 
 /**
  * The durable purchase state machine. Provider responses are evidence attached in
- * payment_attempts/refunds; this row is the business decision about the ticket.
+ * payment_attempts/refunds; this row is the business decision about the basket.
  */
 export const ticketOrders = sqliteTable(
   "ticket_orders",
   {
     id: text("id").primaryKey(),
     eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "restrict" }),
-    ticketTierId: integer("ticket_tier_id").notNull().references(() => ticketTiers.id, { onDelete: "restrict" }),
+    ticketTierId: integer("ticket_tier_id").references(() => ticketTiers.id, { onDelete: "restrict" }),
     userId: integer("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
-    ticketName: text("ticket_name").notNull(),
+    ticketName: text("ticket_name"),
     amountMinor: integer("amount_minor").notNull(),
     currency: text("currency").notNull().default("RUB"),
     status: text("status").$type<TicketOrderStatus>().notNull().default("awaiting_payment"),
@@ -219,9 +219,9 @@ export const ticketOrders = sqliteTable(
   (table) => [
     index("ticket_orders_event_status_idx").on(table.eventId, table.status),
     index("ticket_orders_user_created_idx").on(table.userId, table.createdAt),
-    uniqueIndex("ticket_orders_active_event_user_unique")
+    uniqueIndex("ticket_orders_unsettled_event_user_unique")
       .on(table.eventId, table.userId)
-      .where(sql`${table.status} NOT IN ('canceled', 'refunded')`),
+      .where(sql`${table.status} IN ('awaiting_payment', 'payment_succeeded', 'cancel_pending')`),
   ],
 );
 

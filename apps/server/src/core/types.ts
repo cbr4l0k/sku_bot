@@ -17,7 +17,13 @@ export type SupersededEffect = {
 };
 
 export type TicketEffect = {
-  kind: "ticket_paid" | "ticket_refunded" | "ticket_refund_failed";
+  kind:
+    | "ticket_paid"
+    | "ticket_refunded"
+    | "ticket_refund_failed"
+    | "purchase_paid"
+    | "purchase_refunded"
+    | "purchase_refund_failed";
   userId: number;
   eventId: number;
 };

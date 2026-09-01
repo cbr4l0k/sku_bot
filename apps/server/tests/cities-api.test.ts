@@ -140,6 +140,23 @@ test("an organizer configures fixed ticket tiers while checkout stays safely dis
     .toBe("payments_not_configured");
 });
 
+test("an organizer can sell merch without creating a ticket tier", async () => {
+  const event = (await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "Мерч"), status: undefined })).json;
+  await call("PATCH", `/api/admin/events/${event.id}`, GENERAL, { status: "published" });
+  const configured = await call("PUT", `/api/organizer/events/${event.id}/products`, KZN_ORGANIZER, {
+    products: [{ kind: "merchandise", name: "Футболка", description: null, priceMinor: 250000, stock: 10, maxPerOrder: 2, active: true }],
+  });
+  expect(configured.status).toBe(200);
+  expect(configured.json.ticketTiers).toEqual([]);
+
+  setCity(RUNNER, "kzn");
+  expect((await call("POST", `/api/events/${event.id}/join`, RUNNER)).status).toBe(200);
+  expect((await call("POST", `/api/events/${event.id}/checkout`, RUNNER, {
+    ticketTierId: null,
+    items: [{ productId: configured.json.products[0].id, quantity: 1 }],
+  })).json.error).toBe("payments_not_configured");
+});
+
 test("an organizer cannot smuggle in the admin-only fields at creation", async () => {
   expect((await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "x"), status: "published" })).status).toBe(403);
   expect((await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "x"), status: undefined, homeChatId: -1 })).status).toBe(403);
