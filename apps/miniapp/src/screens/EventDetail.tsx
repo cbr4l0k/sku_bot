@@ -191,8 +191,66 @@ export const EventDetailScreen = () => {
         <h1 className="hero mb-3 break-words">{detail.title}</h1>
       </div>
 
+      <section
+        className="rise card mb-4 px-4 py-4"
+        style={{ "--i": 1 } as React.CSSProperties}
+      >
+        <dl className="flex flex-col gap-3">
+          <div>
+            <dt className="eyebrow mb-0.5">{t("detail.when")}</dt>
+            <dd className="text-[14px] first-letter:uppercase">{fullDate(detail.startsAt, locale)}</dd>
+            {underway ? (
+              <dd className="mt-1 text-[12px]" style={{ color: "var(--brand-deep)" }}>{t("detail.underway")}</dd>
+            ) : null}
+          </div>
+          <div className="hairline" />
+          <div>
+            <dt className="eyebrow mb-0.5">{t("detail.where")}</dt>
+            <dd className="min-w-0 text-[14px]">
+              {detail.locationUrl ? (
+                <button
+                  type="button"
+                  className="block max-w-full text-left break-words text-[color:var(--brand-deep)] underline decoration-current underline-offset-2"
+                  aria-label={t("detail.openMap", { location: detail.location })}
+                  onClick={() => {
+                    if (!detail.locationUrl) return;
+                    haptic.tap("light");
+                    openLink(detail.locationUrl);
+                  }}
+                >
+                  {detail.location}
+                </button>
+              ) : <span className="block break-words">{detail.location}</span>}
+            </dd>
+            <dd className="mt-1.5 flex items-center gap-2 text-[12px] text-hint">
+              <span
+                aria-hidden
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: CITIES[detail.city].brandLift, boxShadow: `0 0 0 2px ${CITIES[detail.city].brand}` }}
+              />
+              {CITIES[detail.city].name[locale]}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="mt-4">
+          <Track
+            value={confirmed}
+            max={detail.capacity}
+            label={
+              detail.capacity === null
+                ? t("events.freeEntry")
+                : left === 0
+                  ? t("events.full")
+                  : t("events.spotsLeft", { n: left ?? 0 })
+            }
+            right={detail.capacity === null ? `${confirmed}` : `${confirmed}/${detail.capacity}`}
+          />
+        </div>
+      </section>
+
       {showShop ? (
-        <section className="rise card mb-4 px-4 py-4" style={{ "--i": 1 } as React.CSSProperties}>
+        <section className="rise card mb-4 px-4 py-4" style={{ "--i": 2 } as React.CSSProperties}>
           <div className="eyebrow mb-3">{t("detail.shop")}</div>
           {canBuyTicket && detail.ticketTiers.length > 0 ? (
             <div className="flex flex-col gap-2">
@@ -297,64 +355,6 @@ export const EventDetailScreen = () => {
           </Button>
         </div>
       ) : null}
-
-      <section
-        className="rise card mb-4 px-4 py-4"
-        style={{ "--i": 2 } as React.CSSProperties}
-      >
-        <dl className="flex flex-col gap-3">
-          <div>
-            <dt className="eyebrow mb-0.5">{t("detail.when")}</dt>
-            <dd className="text-[14px] first-letter:uppercase">{fullDate(detail.startsAt, locale)}</dd>
-            {underway ? (
-              <dd className="mt-1 text-[12px]" style={{ color: "var(--brand-deep)" }}>{t("detail.underway")}</dd>
-            ) : null}
-          </div>
-          <div className="hairline" />
-          <div>
-            <dt className="eyebrow mb-0.5">{t("detail.where")}</dt>
-            <dd className="min-w-0 text-[14px]">
-              {detail.locationUrl ? (
-                <button
-                  type="button"
-                  className="block max-w-full text-left break-words text-[color:var(--brand-deep)] underline decoration-current underline-offset-2"
-                  aria-label={t("detail.openMap", { location: detail.location })}
-                  onClick={() => {
-                    if (!detail.locationUrl) return;
-                    haptic.tap("light");
-                    openLink(detail.locationUrl);
-                  }}
-                >
-                  {detail.location}
-                </button>
-              ) : <span className="block break-words">{detail.location}</span>}
-            </dd>
-            <dd className="mt-1.5 flex items-center gap-2 text-[12px] text-hint">
-              <span
-                aria-hidden
-                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: CITIES[detail.city].brandLift, boxShadow: `0 0 0 2px ${CITIES[detail.city].brand}` }}
-              />
-              {CITIES[detail.city].name[locale]}
-            </dd>
-          </div>
-        </dl>
-
-        <div className="mt-4">
-          <Track
-            value={confirmed}
-            max={detail.capacity}
-            label={
-              detail.capacity === null
-                ? t("events.freeEntry")
-                : left === 0
-                  ? t("events.full")
-                  : t("events.spotsLeft", { n: left ?? 0 })
-            }
-            right={detail.capacity === null ? `${confirmed}` : `${confirmed}/${detail.capacity}`}
-          />
-        </div>
-      </section>
 
       {detail.description ? (
         /* Prose belongs on paper: 14px in white would be 3.50:1 on the field,
