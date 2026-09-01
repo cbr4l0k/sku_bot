@@ -7,6 +7,7 @@ import {
   chats,
   desc,
   eq,
+  eventProducts,
   eventOrganizers,
   events,
   inArray,
@@ -15,6 +16,8 @@ import {
   or,
   registrations,
   sql,
+  ticketOrders,
+  ticketTiers,
   userCityRoles,
   users,
   waitlistOffers,
@@ -44,10 +47,19 @@ import {
 import { assignableChats, chatById, chatCatalog, setChatCity } from "../core/chats";
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
+import {
+  createCheckout,
+  orderForUser,
+  reconcilePayment,
+  reconcileRefund,
+  refundCanceledEvent,
+  requestUserRefund,
+} from "../core/tickets";
 import { eventStats, globalStats } from "../core/stats";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
 import { loadEnv } from "../env";
+import { paymentProvider, paymentsConfigured } from "../payments";
 import { dispatchEffects, notifyEventCanceled, notifyEventUpdated } from "../notify";
 import { auth } from "./auth";
 
@@ -59,8 +71,8 @@ const iso = (value: Date | null) => value?.toISOString() ?? null;
 const fireEffects = (effects: Parameters<typeof dispatchEffects>[0]) => {
   void dispatchEffects(effects).catch(console.error);
 };
-type ErrorStatus = (code: 400 | 403 | 404 | 409, response: { error: string }) => { error: string };
-const error = (status: unknown, code: 400 | 403 | 404 | 409, message: string) => (status as ErrorStatus)(code, { error: message });
+type ErrorStatus = (code: 400 | 403 | 404 | 409 | 503, response: { error: string }) => { error: string };
+const error = (status: unknown, code: 400 | 403 | 404 | 409 | 503, message: string) => (status as ErrorStatus)(code, { error: message });
 
 const staticFile = async (pathname: string) => {
   const fallback = Bun.file(new URL("index.html", miniappDist));
@@ -92,6 +104,28 @@ const userView = (user: typeof users.$inferSelect) => ({
   createdAt: iso(user.createdAt),
 });
 
+const ticketTierView = (tier: typeof ticketTiers.$inferSelect) => ({
+  ...tier,
+  salesStartAt: iso(tier.salesStartAt),
+  salesEndAt: iso(tier.salesEndAt),
+  createdAt: tier.createdAt.toISOString(),
+  updatedAt: tier.updatedAt.toISOString(),
+  claimed: db.select({ value: sql<number>`count(*)` }).from(ticketOrders)
+    .where(and(eq(ticketOrders.ticketTierId, tier.id), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded", "fulfilled", "refund_pending", "refund_failed"]))).get()?.value ?? 0,
+});
+
+const eventProductView = (product: typeof eventProducts.$inferSelect) => ({
+  ...product,
+  createdAt: product.createdAt.toISOString(),
+  updatedAt: product.updatedAt.toISOString(),
+  claimed: db.$client.query<{ value: number | null }, [number]>(`
+    SELECT sum(i.quantity) AS value FROM order_items i
+    JOIN ticket_orders o ON o.id = i.order_id
+    WHERE i.event_product_id = ?
+      AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+  `).get(product.id)?.value ?? 0,
+});
+
 const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
   groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
@@ -100,6 +134,13 @@ const eventView = (event: typeof events.$inferSelect) => ({
   endedAt: iso(event.endedAt),
   createdAt: event.createdAt.toISOString(),
   updatedAt: event.updatedAt.toISOString(),
+  ticketTiers: db.select().from(ticketTiers).where(eq(ticketTiers.eventId, event.id))
+    .orderBy(asc(ticketTiers.sortOrder), asc(ticketTiers.id)).all().map(ticketTierView),
+  products: db.select().from(eventProducts).where(eq(eventProducts.eventId, event.id))
+    .orderBy(asc(eventProducts.sortOrder), asc(eventProducts.id)).all().map(eventProductView),
+  paymentsConfigured,
+  pendingTicketCount: db.select({ value: sql<number>`count(*)` }).from(ticketOrders)
+    .where(and(eq(ticketOrders.eventId, event.id), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"]))).get()?.value ?? 0,
 });
 
 /**
@@ -192,6 +233,25 @@ const eventFields = t.Object({
 const eventPatchFields = t.Partial(eventFields);
 const eventStatus = t.Union([t.Literal("draft"), t.Literal("published"), t.Literal("closed"), t.Literal("canceled")]);
 const idParams = t.Object({ id: t.Numeric() });
+const ticketTierBody = t.Object({
+  id: t.Optional(t.Integer({ minimum: 1 })),
+  name: t.String({ minLength: 1, maxLength: 80 }),
+  priceMinor: t.Integer({ minimum: 100 }),
+  quota: t.Nullable(t.Integer({ minimum: 1 })),
+  salesStartAt: t.Optional(t.Nullable(t.String())),
+  salesEndAt: t.Optional(t.Nullable(t.String())),
+  active: t.Optional(t.Boolean()),
+});
+const eventProductBody = t.Object({
+  id: t.Optional(t.Integer({ minimum: 1 })),
+  kind: t.Union([t.Literal("merchandise"), t.Literal("addon")]),
+  name: t.String({ minLength: 1, maxLength: 80 }),
+  description: t.Optional(t.Nullable(t.String({ maxLength: 240 }))),
+  priceMinor: t.Integer({ minimum: 100 }),
+  stock: t.Nullable(t.Integer({ minimum: 1 })),
+  maxPerOrder: t.Integer({ minimum: 1, maximum: 20 }),
+  active: t.Optional(t.Boolean()),
+});
 
 /**
  * The fields only someone who runs the branch may set, merged into one flat object
@@ -212,6 +272,22 @@ const eventPatchBody = t.Object({ ...eventPatchFields.properties, ...adminFields
 
 export const app = new Elysia()
   .get("/api/health", () => ({ ok: true }))
+  .post("/api/payments/yookassa/webhook", async ({ body, query, status }) => {
+    if (!paymentProvider) return error(status, 503, "payments_not_configured");
+    if (!env.YOOKASSA_WEBHOOK_SECRET || query.secret !== env.YOOKASSA_WEBHOOK_SECRET) return error(status, 403, "invalid_webhook_secret");
+    if (!body || typeof body !== "object" || !("event" in body) || !("object" in body)) return error(status, 400, "invalid_webhook");
+    const event = (body as { event?: unknown }).event;
+    const object = (body as { object?: unknown }).object;
+    if (typeof event !== "string" || !object || typeof object !== "object" || !("id" in object) || typeof object.id !== "string") {
+      return error(status, 400, "invalid_webhook");
+    }
+    if (event.startsWith("payment.")) {
+      fireEffects((await reconcilePayment(db, paymentProvider, object.id, now())).effects);
+    } else if (event.startsWith("refund.")) {
+      fireEffects(await reconcileRefund(db, paymentProvider, object.id, now()));
+    }
+    return { ok: true };
+  }, { body: t.Any(), query: t.Object({ secret: t.String({ minLength: 20 }) }) })
   .group("/api", (api) => api
     .use(auth)
     .get("/me", ({ user, actor }) => {
@@ -273,6 +349,8 @@ export const app = new Elysia()
     }, { params: idParams })
     .post("/events/:id/join", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
+      const paid = db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, params.id)).get();
+      if (paid) return error(status, 409, "payment_required");
       await syncMemberships(user.id, chatsOfEvent(db, params.id));
       const result = joinEvent(db, params.id, user.id, now());
       if ("error" in result) {
@@ -281,12 +359,66 @@ export const app = new Elysia()
       }
       return result;
     }, { params: idParams })
-    .post("/events/:id/cancel", ({ params, user, status }) => {
+    .post("/events/:id/checkout", async ({ params, body, user, status }) => {
+      if (user.isBanned) return error(status, 403, "banned");
+      if (!paymentProvider) return error(status, 503, "payments_not_configured");
+      await syncMemberships(user.id, chatsOfEvent(db, params.id));
+      let result: Awaited<ReturnType<typeof createCheckout>>;
+      try {
+        result = await createCheckout(db, paymentProvider, {
+          eventId: params.id,
+          tierId: body.ticketTierId,
+          productItems: body.items,
+          userId: user.id,
+          userPhone: user.phone,
+          returnUrl: `https://${env.DOMAIN}/events/${params.id}`,
+        }, now());
+      } catch (cause) {
+        console.error("YooKassa checkout creation failed", cause instanceof Error ? cause.message : "unknown error");
+        return error(status, 503, "payment_temporarily_unavailable");
+      }
+      if ("error" in result) {
+        const code = result.error === "not_eligible" ? 403
+          : ["already_joined", "ticket_sold_out", "product_sold_out", "event_full", "active_order_exists"].includes(result.error) ? 409
+            : result.error === "event_not_found" ? 404 : 400;
+        return error(status, code, result.error);
+      }
+      return result;
+    }, {
+      params: idParams,
+      body: t.Object({
+        ticketTierId: t.Integer({ minimum: 1 }),
+        items: t.Optional(t.Array(t.Object({
+          productId: t.Integer({ minimum: 1 }),
+          quantity: t.Integer({ minimum: 1, maximum: 20 }),
+        }), { maxItems: 20 })),
+      }),
+    })
+    .get("/orders/:id", ({ params, user, status }) => {
+      const order = orderForUser(db, params.id, user.id);
+      return order ?? error(status, 404, "order_not_found");
+    }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
+    .post("/events/:id/cancel", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
       if (!participantEvent(params.id)) return error(status, 404, "event_not_found");
+      const paidOrder = db.select({ id: ticketOrders.id }).from(ticketOrders)
+        .where(and(eq(ticketOrders.eventId, params.id), eq(ticketOrders.userId, user.id), inArray(ticketOrders.status, ["fulfilled", "refund_pending", "refund_failed"]))).get();
+      if (paidOrder) {
+        if (!paymentProvider) return error(status, 503, "payments_not_configured");
+        try {
+          fireEffects(await requestUserRefund(db, paymentProvider, params.id, user.id, now()) ?? []);
+          return { ok: true, refundPending: true };
+        } catch (cause) {
+          console.error(`YooKassa refund creation failed for order ${paidOrder.id}`, cause instanceof Error ? cause.message : "unknown error");
+          const pending = db.select({ status: ticketOrders.status }).from(ticketOrders).where(eq(ticketOrders.id, paidOrder.id)).get();
+          return pending?.status === "refund_pending"
+            ? { ok: true, refundPending: true }
+            : error(status, 503, "payment_temporarily_unavailable");
+        }
+      }
       const result = cancelRegistration(db, params.id, user.id, now());
       fireEffects(result.effects);
-      return { ok: true };
+      return { ok: true, refundPending: false };
     }, { params: idParams })
     .post("/offers/:id/accept", ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
@@ -378,12 +510,139 @@ export const app = new Elysia()
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams, body: eventPatchFields })
+    .put("/organizer/events/:id/ticket-tiers", ({ params, body, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const parsed = body.tiers.map((tier) => ({
+        ...tier,
+        name: tier.name.trim(),
+        salesStartAt: tier.salesStartAt == null ? null : parseDate(tier.salesStartAt),
+        salesEndAt: tier.salesEndAt == null ? null : parseDate(tier.salesEndAt),
+      }));
+      if (parsed.some((tier) => !tier.name || tier.salesStartAt === undefined || tier.salesEndAt === undefined)) {
+        return error(status, 400, "invalid_ticket_tier");
+      }
+      if (parsed.some((tier) => tier.salesStartAt && tier.salesEndAt && tier.salesStartAt >= tier.salesEndAt)) {
+        return error(status, 400, "invalid_sales_window");
+      }
+      const ids = parsed.flatMap((tier) => tier.id === undefined ? [] : [tier.id]);
+      if (new Set(ids).size !== ids.length) return error(status, 400, "duplicate_ticket_tier");
+      if (ids.length) {
+        const owned = db.select({ id: ticketTiers.id }).from(ticketTiers)
+          .where(and(eq(ticketTiers.eventId, params.id), inArray(ticketTiers.id, ids))).all();
+        if (owned.length !== ids.length) return error(status, 400, "ticket_not_found");
+      }
+      for (const tier of parsed) {
+        if (tier.id === undefined || tier.quota === null) continue;
+        const claimed = db.select({ value: sql<number>`count(*)` }).from(ticketOrders)
+          .where(and(eq(ticketOrders.ticketTierId, tier.id), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded", "fulfilled", "refund_pending", "refund_failed"]))).get()?.value ?? 0;
+        if (tier.quota < claimed) return error(status, 409, "ticket_quota_below_claimed");
+      }
+      db.$client.transaction(() => {
+        db.update(ticketTiers).set({ active: false, updatedAt: now() }).where(eq(ticketTiers.eventId, params.id)).run();
+        parsed.forEach((tier, sortOrder) => {
+          const values = {
+            name: tier.name,
+            priceMinor: tier.priceMinor,
+            quota: tier.quota,
+            salesStartAt: tier.salesStartAt,
+            salesEndAt: tier.salesEndAt,
+            active: tier.active ?? true,
+            sortOrder,
+            updatedAt: now(),
+          };
+          if (tier.id === undefined) db.insert(ticketTiers).values({ eventId: params.id, ...values }).run();
+          else db.update(ticketTiers).set(values).where(eq(ticketTiers.id, tier.id)).run();
+        });
+      })();
+      const event = db.select().from(events).where(eq(events.id, params.id)).get();
+      return event ? eventView(event) : error(status, 404, "event_not_found");
+    }, { params: idParams, body: t.Object({ tiers: t.Array(ticketTierBody, { maxItems: 20 }) }) })
+    .put("/organizer/events/:id/products", ({ params, body, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const parsed = body.products.map((product) => ({
+        ...product,
+        name: product.name.trim(),
+        description: product.description?.trim() || null,
+      }));
+      if (parsed.some((product) => !product.name)) return error(status, 400, "invalid_product");
+      const ids = parsed.flatMap((product) => product.id === undefined ? [] : [product.id]);
+      if (new Set(ids).size !== ids.length) return error(status, 400, "duplicate_product");
+      if (ids.length) {
+        const owned = db.select({ id: eventProducts.id }).from(eventProducts)
+          .where(and(eq(eventProducts.eventId, params.id), inArray(eventProducts.id, ids))).all();
+        if (owned.length !== ids.length) return error(status, 400, "product_not_found");
+      }
+      for (const product of parsed) {
+        if (product.id === undefined || product.stock === null) continue;
+        const claimed = db.$client.query<{ value: number | null }, [number]>(`
+          SELECT sum(i.quantity) AS value FROM order_items i
+          JOIN ticket_orders o ON o.id = i.order_id
+          WHERE i.event_product_id = ?
+            AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+        `).get(product.id)?.value ?? 0;
+        if (product.stock < claimed) return error(status, 409, "product_stock_below_claimed");
+      }
+      db.$client.transaction(() => {
+        db.update(eventProducts).set({ active: false, updatedAt: now() }).where(eq(eventProducts.eventId, params.id)).run();
+        parsed.forEach((product, sortOrder) => {
+          const values = {
+            kind: product.kind,
+            name: product.name,
+            description: product.description,
+            priceMinor: product.priceMinor,
+            stock: product.stock,
+            maxPerOrder: product.maxPerOrder,
+            active: product.active ?? true,
+            sortOrder,
+            updatedAt: now(),
+          };
+          if (product.id === undefined) db.insert(eventProducts).values({ eventId: params.id, ...values }).run();
+          else db.update(eventProducts).set(values).where(eq(eventProducts.id, product.id)).run();
+        });
+      })();
+      const event = db.select().from(events).where(eq(events.id, params.id)).get();
+      return event ? eventView(event) : error(status, 404, "event_not_found");
+    }, { params: idParams, body: t.Object({ products: t.Array(eventProductBody, { maxItems: 40 }) }) })
     .get("/organizer/events/:id/attendance", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const attendance = db.select({ userId: users.id, firstName: users.firstName, lastName: users.lastName, username: users.username, phone: users.phone, status: registrations.status, checkedInAt: registrations.checkedInAt })
+      const attendance = db.select({
+        userId: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        username: users.username,
+        phone: users.phone,
+        status: registrations.status,
+        checkedInAt: registrations.checkedInAt,
+        ticketName: sql<string | null>`(
+          SELECT o.ticket_name FROM ticket_orders o
+          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id}
+          ORDER BY o.created_at DESC LIMIT 1
+        )`,
+        paymentStatus: sql<string | null>`(
+          SELECT o.status FROM ticket_orders o
+          WHERE o.event_id = ${params.id} AND o.user_id = ${users.id}
+          ORDER BY o.created_at DESC LIMIT 1
+        )`,
+      })
         .from(registrations).innerJoin(users, eq(registrations.userId, users.id)).where(eq(registrations.eventId, params.id)).orderBy(asc(registrations.createdAt)).all()
-        .map((row) => ({ ...row, checkedInAt: iso(row.checkedInAt) }));
+        .map((row) => ({
+          ...row,
+          checkedInAt: iso(row.checkedInAt),
+          purchaseItems: db.$client.query<{ name: string; quantity: number; kind: "merchandise" | "addon" }, [number, number]>(`
+            SELECT i.name, i.quantity, i.kind FROM order_items i
+            JOIN ticket_orders o ON o.id = i.order_id
+            WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
+              AND o.id = (
+                SELECT latest.id FROM ticket_orders latest
+                WHERE latest.event_id = o.event_id AND latest.user_id = o.user_id
+                ORDER BY latest.created_at DESC LIMIT 1
+              )
+            ORDER BY i.id
+          `).all(params.id, row.userId),
+        }));
       return { registrations: attendance, counts: eventStats(db, params.id) };
     }, { params: idParams })
     .get("/organizer/events/:id/checkin-token", ({ params, actor, status }) => {
@@ -450,6 +709,11 @@ export const app = new Elysia()
         const result = cancelEvent(db, params.id);
         fireEffects(result.effects);
         void notifyEventCanceled(result.userIds, params.id).catch(console.error);
+        if (paymentProvider) {
+          void refundCanceledEvent(db, paymentProvider, params.id, now())
+            .then(fireEffects)
+            .catch((cause) => console.error(`Automatic refunds failed for event ${params.id}`, cause));
+        }
       }
       if (event.status !== "draft" && body.status !== "canceled" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
@@ -458,6 +722,8 @@ export const app = new Elysia()
     .delete("/admin/events/:id", ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
+      const hasOrders = db.select({ id: ticketOrders.id }).from(ticketOrders).where(eq(ticketOrders.eventId, params.id)).get();
+      if (hasOrders) return error(status, 409, "event_has_payment_history");
       db.delete(events).where(eq(events.id, params.id)).run();
       return { ok: true };
     }, { params: idParams })

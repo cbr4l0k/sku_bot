@@ -28,6 +28,12 @@ const supersede = (db: Db, eventId: number, exceptOfferId?: number): SupersededE
 };
 
 const issue = (db: Db, eventId: number, now: number): OfferEffect[] => {
+  // A paid spot must always pass through checkout. This also prevents an old
+  // free waitlist from producing free tickets after tiers are added.
+  const paid = db.$client.query<{ ok: number }, [number]>(
+    "SELECT EXISTS (SELECT 1 FROM ticket_tiers WHERE event_id = ?) AS ok",
+  ).get(eventId)?.ok;
+  if (paid) return [];
   // With the queue off, a freed spot is not handed on. Anyone queued before it was
   // switched off keeps their place, dormant, in case it is switched back on.
   const current = event(db, eventId);
@@ -101,6 +107,13 @@ export const sweepOffers = (db: Db, now: Date) => transaction(db, () => {
 export const acceptOffer = (db: Db, offerId: number, userId: number, now: Date): { ok: true; effects: NotificationEffect[] } | { ok: false; reason: "spot_taken" } => transaction(db, () => {
   const offer = db.$client.query<OfferRow, [number]>("SELECT id, event_id, user_id, expires_at, message_id FROM waitlist_offers WHERE id = ? AND status = 'pending'").get(offerId);
   if (!offer || offer.user_id !== userId) return { ok: false, reason: "spot_taken" };
+  const paid = db.$client.query<{ ok: number }, [number]>(
+    "SELECT EXISTS (SELECT 1 FROM ticket_tiers WHERE event_id = ?) AS ok",
+  ).get(offer.event_id)?.ok;
+  if (paid) {
+    db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
+    return { ok: false, reason: "spot_taken" };
+  }
   const current = event(db, offer.event_id);
   if (!current || (current.capacity !== null && confirmed(db, current.id) >= current.capacity)) {
     db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);

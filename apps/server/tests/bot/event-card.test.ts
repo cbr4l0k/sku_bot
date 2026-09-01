@@ -39,6 +39,15 @@ describe("bot event card", () => {
     expect(actions(1, 2)).toEqual(["✅ Sign up"]);
   });
 
+  test("a paid event never exposes the direct free-signup callback", () => {
+    db.$client.query("INSERT INTO ticket_tiers (event_id, name, price_minor, quota) VALUES (1, 'Standard', 100000, 1)").run();
+    const card = renderEventCard(1, 2, "en")!;
+    expect(actions(1, 2)).toEqual([]);
+    const keyboard = JSON.stringify(card.keyboard.toJSON());
+    expect(keyboard).toContain("Standard");
+    expect(keyboard).toMatch(/ticket=\d+/);
+  });
+
   test("offers the queue once full, when the queue is on", () => {
     joinEvent(db, 1, 2, now);
     expect(actions(1, 3)).toEqual(["⏳ Join the queue"]);

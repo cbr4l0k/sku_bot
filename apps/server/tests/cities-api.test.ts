@@ -111,6 +111,35 @@ test("an organizer may raise a run and then run it, but not the branch's other r
   expect((await call("PATCH", `/api/admin/events/${mine.id}`, KZN_ORGANIZER, { status: "published" })).status).toBe(403);
 });
 
+test("an organizer configures fixed ticket tiers while checkout stays safely disabled without credentials", async () => {
+  const event = (await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "Билетный"), status: undefined })).json;
+  await call("PATCH", `/api/admin/events/${event.id}`, GENERAL, { status: "published" });
+  const configured = await call("PUT", `/api/organizer/events/${event.id}/ticket-tiers`, KZN_ORGANIZER, {
+    tiers: [{ name: "Стандарт", priceMinor: 150000, quota: 20, active: true }],
+  });
+  expect(configured.status).toBe(200);
+  expect(configured.json.ticketTiers).toMatchObject([{ name: "Стандарт", priceMinor: 150000, quota: 20 }]);
+  const products = await call("PUT", `/api/organizer/events/${event.id}/products`, KZN_ORGANIZER, {
+    products: [
+      { kind: "merchandise", name: "Футболка / M", description: "Получить на старте", priceMinor: 250000, stock: 10, maxPerOrder: 2, active: true },
+      { kind: "addon", name: "Фото", description: null, priceMinor: 50000, stock: null, maxPerOrder: 1, active: true },
+    ],
+  });
+  expect(products.status).toBe(200);
+  expect(products.json.products).toMatchObject([
+    { kind: "merchandise", name: "Футболка / M", priceMinor: 250000, stock: 10 },
+    { kind: "addon", name: "Фото", priceMinor: 50000, stock: null },
+  ]);
+
+  setCity(RUNNER, "kzn");
+  expect((await call("POST", `/api/events/${event.id}/join`, RUNNER)).json.error).toBe("payment_required");
+  expect((await call("POST", `/api/events/${event.id}/checkout`, RUNNER, {
+    ticketTierId: configured.json.ticketTiers[0].id,
+    items: [{ productId: products.json.products[0].id, quantity: 2 }],
+  })).json.error)
+    .toBe("payments_not_configured");
+});
+
 test("an organizer cannot smuggle in the admin-only fields at creation", async () => {
   expect((await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "x"), status: "published" })).status).toBe(403);
   expect((await call("POST", "/api/organizer/events", KZN_ORGANIZER, { ...draft("kzn", "x"), status: undefined, homeChatId: -1 })).status).toBe(403);

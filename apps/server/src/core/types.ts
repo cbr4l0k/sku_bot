@@ -16,4 +16,10 @@ export type SupersededEffect = {
   messageId: number | null;
 };
 
-export type NotificationEffect = OfferEffect | SupersededEffect;
+export type TicketEffect = {
+  kind: "ticket_paid" | "ticket_refunded" | "ticket_refund_failed";
+  userId: number;
+  eventId: number;
+};
+
+export type NotificationEffect = OfferEffect | SupersededEffect | TicketEffect;

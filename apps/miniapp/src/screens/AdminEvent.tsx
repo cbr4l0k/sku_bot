@@ -9,7 +9,9 @@ import { useAction, useResource } from "../lib/useResource";
 import { copyText } from "../telegram";
 import { EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
+import { EventProductEditor } from "../ui/eventProducts";
 import { GroupChips } from "../ui/groups";
+import { TicketTierEditor } from "../ui/ticketTiers";
 import { Sheet, SheetFooter, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
@@ -106,6 +108,8 @@ export const AdminEventScreen = () => {
   const id = Number(params.id);
   const [editing, setEditing] = useState(false);
   const [assigning, setAssigning] = useState(false);
+  const [editingTickets, setEditingTickets] = useState(false);
+  const [editingProducts, setEditingProducts] = useState(false);
 
   const events = useResource(sku.organizerEvents);
   const stats = useResource(useCallback(() => sku.eventStats(id), [id]));
@@ -158,7 +162,8 @@ export const AdminEventScreen = () => {
   };
 
   const cancelEvent = async () => {
-    if (!(await confirm({ text: t("admin.confirmCancel"), confirmLabel: t("admin.cancelEvent"), danger: true }))) return;
+    const text = t(event?.ticketTiers.length ? "admin.confirmCancelPaid" : "admin.confirmCancel");
+    if (!(await confirm({ text, confirmLabel: t("admin.cancelEvent"), danger: true }))) return;
     patch({ status: "canceled" });
   };
 
@@ -181,6 +186,28 @@ export const AdminEventScreen = () => {
         // with the event card and its sign-up button.
         await copyText(link.botLink);
         toast(t("common.copied"));
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  const saveTickets = (tiers: Parameters<typeof sku.setTicketTiers>[1]) =>
+    void action.run(
+      async () => {
+        await sku.setTicketTiers(id, tiers);
+        toast(t("common.saved"));
+        setEditingTickets(false);
+        await events.reload(true);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  const saveProducts = (products: Parameters<typeof sku.setProducts>[1]) =>
+    void action.run(
+      async () => {
+        await sku.setProducts(id, products);
+        toast(t("common.saved"));
+        setEditingProducts(false);
+        await events.reload(true);
       },
       { onError: (error) => toast(errorText(t, error), "err") },
     );
@@ -254,6 +281,12 @@ export const AdminEventScreen = () => {
         <Button size="sm" variant="ghost" onClick={() => setAssigning(true)}>
           {t("admin.organizers")}
         </Button>
+        <Button size="sm" variant="ghost" onClick={() => setEditingTickets(true)}>
+          {t("tickets.title")} · {event.ticketTiers.filter((tier) => tier.active).length}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setEditingProducts(true)}>
+          {t("products.title")} · {event.products.filter((product) => product.active).length}
+        </Button>
         <Button size="sm" variant="ghost" loading={action.pending} onClick={copyLink}>
           ⧉ {t("admin.copyLink")}
         </Button>
@@ -321,6 +354,16 @@ export const AdminEventScreen = () => {
       ) : null}
 
       {assigning ? <OrganizersSheet eventId={id} onClose={() => setAssigning(false)} /> : null}
+      {editingTickets ? (
+        <Sheet title={t("tickets.title")} onClose={() => setEditingTickets(false)}>
+          <TicketTierEditor initial={event.ticketTiers} pending={action.pending} onSave={saveTickets} />
+        </Sheet>
+      ) : null}
+      {editingProducts ? (
+        <Sheet title={t("products.title")} onClose={() => setEditingProducts(false)}>
+          <EventProductEditor initial={event.products} pending={action.pending} onSave={saveProducts} />
+        </Sheet>
+      ) : null}
     </Screen>
   );
 };

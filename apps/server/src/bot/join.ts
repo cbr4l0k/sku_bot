@@ -1,4 +1,4 @@
-import { eq, users } from "@sku/db";
+import { eq, ticketTiers, users } from "@sku/db";
 
 import { chatsOfEvent, refreshMemberships } from "../core/membership";
 import { joinEvent } from "../core/registration";
@@ -29,6 +29,17 @@ export const joinHandler = async (context: JoinContext): Promise<void> => {
   const eventId = unpacked.data.id;
   const account = db.select({ locale: users.locale }).from(users).where(eq(users.id, telegramUser.id)).get();
   const locale = account?.locale ?? localeFromLanguageCode(telegramUser.languageCode);
+
+  // Old inline keyboards can live for months. Re-check this server-side so a
+  // callback minted while the event was free cannot bypass a newly added ticket.
+  const paid = db.select({ id: ticketTiers.id }).from(ticketTiers)
+    .where(eq(ticketTiers.eventId, eventId)).get();
+  if (paid) {
+    await context.send(i18n.t(locale, "paymentRequiredNotice"));
+    const card = renderEventCard(eventId, telegramUser.id, locale);
+    if (card) await context.editText(card.text, { reply_markup: card.keyboard });
+    return;
+  }
 
   await refreshMemberships(db, telegramMembership, telegramUser.id, chatsOfEvent(db, eventId), new Date());
   const result = joinEvent(db, eventId, telegramUser.id, new Date());

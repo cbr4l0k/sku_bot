@@ -2,6 +2,8 @@ import type { Db } from "@sku/db";
 import { syncChatGuests } from "./bot/guests";
 import { dispatchEffects } from "./notify";
 import { sweepOffers } from "./core/waitlist";
+import { sweepTicketPayments } from "./core/tickets";
+import { paymentProvider } from "./payments";
 
 /** Each pass stands alone: one failing must not hold back the others. */
 const guarded = (name: string, work: () => Promise<void>) => {
@@ -34,9 +36,14 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
 export const startSweeper = (db: Db, intervalMs = 30_000, guestIntervalMs = 60_000) => {
   const stopOffers = every(intervalMs, guarded("Offer", () => dispatchEffects(sweepOffers(db, new Date()))));
   const stopGuests = every(guestIntervalMs, guarded("Chat guest", () => syncChatGuests(db, new Date())));
+  const configuredProvider = paymentProvider;
+  const stopPayments = configuredProvider
+    ? every(intervalMs, guarded("Payment", () => sweepTicketPayments(db, configuredProvider, new Date()).then(dispatchEffects)))
+    : () => {};
 
   return () => {
     stopOffers();
     stopGuests();
+    stopPayments();
   };
 };

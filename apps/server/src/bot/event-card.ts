@@ -1,6 +1,6 @@
 import { InlineKeyboard, bold, format } from "gramio";
 import { CITIES, type CitySlug } from "@sku/cities";
-import { and, count, eq, events, inArray, isNull, registrations } from "@sku/db";
+import { and, count, eq, events, inArray, isNull, registrations, ticketOrders, ticketTiers } from "@sku/db";
 import type { Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
@@ -45,12 +45,39 @@ const publishedEvent = (eventId: number) => db.select({
 const confirmedCount = (eventId: number) => db.select({ count: count() }).from(registrations)
   .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"])))
   .get()?.count ?? 0;
+const pendingTicketCount = (eventId: number) => db.select({ count: count() }).from(ticketOrders)
+  .where(and(eq(ticketOrders.eventId, eventId), inArray(ticketOrders.status, ["awaiting_payment", "payment_succeeded"])))
+  .get()?.count ?? 0;
 
 const myRegistration = (eventId: number, userId: number) => db
   .select({ status: registrations.status })
   .from(registrations)
   .where(and(eq(registrations.eventId, eventId), eq(registrations.userId, userId)))
   .get();
+
+const ticketOptions = (eventId: number, now = new Date()) => db.$client.query<{
+  id: number;
+  name: string;
+  price_minor: number;
+}, [number, number, number]>(`
+  SELECT t.id, t.name, t.price_minor
+  FROM ticket_tiers t
+  WHERE t.event_id = ? AND t.active = 1
+    AND (t.sales_start_at IS NULL OR t.sales_start_at <= ?)
+    AND (t.sales_end_at IS NULL OR t.sales_end_at > ?)
+    AND (t.quota IS NULL OR (
+      SELECT count(*) FROM ticket_orders o
+      WHERE o.ticket_tier_id = t.id
+        AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+    ) < t.quota)
+  ORDER BY t.sort_order, t.id
+`).all(eventId, Math.floor(now.getTime() / 1000), Math.floor(now.getTime() / 1000));
+
+const money = (minor: number, locale: Locale) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+  style: "currency",
+  currency: "RUB",
+  maximumFractionDigits: minor % 100 === 0 ? 0 : 2,
+}).format(minor / 100);
 
 /**
  * The card doubles as the bot's join screen: it states where the user stands and
@@ -62,11 +89,13 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
   if (!event || !canSeeEvent(db, eventId, userId)) return null;
 
   const confirmed = confirmedCount(event.id);
-  const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed, 0);
+  const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed - pendingTicketCount(event.id), 0);
   const full = spots !== null && spots === 0;
   const registration = myRegistration(event.id, userId);
   const status = registration?.status ?? null;
   const mine = status === "registered" || status === "checked_in" || status === "waitlisted";
+  const paid = Boolean(db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, event.id)).get());
+  const tiers = paid && !mine ? ticketOptions(event.id) : [];
 
   const lines = [
     spots === null ? null : i18n.t(locale, "spotsLeft", spots),
@@ -77,10 +106,20 @@ export const renderEventCard = (eventId: number, userId: number, locale: Locale)
   ].filter((line): line is string => line !== null);
 
   const keyboard = new InlineKeyboard();
-  if (!mine && (!full || event.waitlistEnabled)) {
+  if (!paid && !mine && (!full || event.waitlistEnabled)) {
     keyboard.text(i18n.t(locale, full ? "joinQueueButton" : "joinButton"), joinCallback.pack({ id: event.id })).row();
   }
-  keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
+  if (paid && !mine) {
+    for (const tier of tiers) {
+      keyboard.webApp(
+        i18n.t(locale, "ticketOption", tier.name, money(tier.price_minor, locale)),
+        `https://${env.DOMAIN}/events/${event.id}?ticket=${tier.id}`,
+      ).row();
+    }
+    if (!tiers.length) keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
+  } else {
+    keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${event.id}`);
+  }
 
   return {
     text: format`${bold(event.title)}

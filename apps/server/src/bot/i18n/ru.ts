@@ -14,6 +14,8 @@ export const ru = {
 ${blockquote("Пробежки, тренировки и хорошая компания — всё в одном месте.")}`,
   openApp: "🏃 Открыть приложение",
   openEvent: "Открыть событие",
+  chooseTicket: "Выбрать билет",
+  ticketOption: (name: string, price: string) => `🎟 ${name} · ${price}`,
   eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
@@ -46,6 +48,15 @@ ${date}`,
 ${title}
 
 Надеемся увидеться на другой пробежке!`,
+  ticketPaid: (title: string) => format`${bold("Оплата подтверждена")}
+
+Билет на ${bold(title)} готов. Вы в списке участников.`,
+  ticketRefunded: (title: string) => format`${bold("Возврат подтверждён")}
+
+Билет на ${bold(title)} отменён, ЮKassa подтвердила возврат.`,
+  ticketRefundFailed: (title: string) => format`${bold("Возврат требует внимания")}
+
+ЮKassa не смогла вернуть оплату за ${bold(title)}. Место пока сохранено — свяжитесь с клубом.`,
   eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Событие обновлено")}
 
 ${bold(title)}
@@ -67,6 +78,7 @@ ${join([
   queuedNotice: "Ты в очереди. Напишем, как только освободится место.",
   alreadyJoinedNotice: "Ты уже записан на это событие.",
   notEligibleNotice: "Событие только для участников определённых Telegram-групп.",
+  paymentRequiredNotice: "Для этого события нужен билет. Откройте событие и выберите тариф.",
   chatInvite: (title: string) => format`${bold("Добро пожаловать в чат события")}
 
 ${title}

@@ -1,0 +1,575 @@
+import type { Db, TicketOrderStatus } from "@sku/db";
+import { PaymentProviderError, type PaymentProvider, type ProviderPayment, type ProviderRefund } from "../payments";
+import type { NotificationEffect } from "./types";
+import { issueOffers } from "./waitlist";
+
+const CHECKOUT_WINDOW_SECONDS = 60 * 60;
+const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
+const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
+
+type TierRow = {
+  id: number;
+  event_id: number;
+  name: string;
+  price_minor: number;
+  quota: number | null;
+  sales_start_at: number | null;
+  sales_end_at: number | null;
+  active: number;
+};
+type ProductRow = {
+  id: number;
+  event_id: number;
+  kind: "merchandise" | "addon";
+  name: string;
+  price_minor: number;
+  stock: number | null;
+  max_per_order: number;
+  active: number;
+};
+type EventRow = { id: number; title: string; status: string; ended_at: number | null; capacity: number | null };
+type OrderRow = {
+  id: string;
+  event_id: number;
+  ticket_tier_id: number;
+  user_id: number;
+  ticket_name: string;
+  amount_minor: number;
+  currency: string;
+  status: TicketOrderStatus;
+  expires_at: number;
+};
+type AttemptRow = {
+  id: string;
+  order_id: string;
+  provider_payment_id: string | null;
+  idempotence_key: string;
+  status: string;
+  confirmation_url: string | null;
+};
+type RefundRow = {
+  id: string;
+  order_id: string;
+  payment_attempt_id: string;
+  provider_refund_id: string | null;
+  idempotence_key: string;
+  amount_minor: number;
+  status: string;
+  reason: RefundReason;
+};
+type RefundReason = "user_canceled" | "event_canceled" | "payment_after_cancellation";
+type OrderItemRow = {
+  ticket_tier_id: number | null;
+  event_product_id: number | null;
+  kind: "ticket" | "merchandise" | "addon";
+  name: string;
+  unit_amount_minor: number;
+  quantity: number;
+};
+
+export type CheckoutError =
+  | "event_not_found"
+  | "event_over"
+  | "not_eligible"
+  | "already_joined"
+  | "ticket_not_found"
+  | "ticket_sales_closed"
+  | "ticket_sold_out"
+  | "invalid_basket"
+  | "product_not_found"
+  | "product_sold_out"
+  | "product_limit_exceeded"
+  | "active_order_exists"
+  | "event_full"
+  | "contact_required";
+
+export type Checkout = {
+  orderId: string;
+  status: TicketOrderStatus;
+  confirmationUrl: string | null;
+  expiresAt: string;
+};
+
+const orderView = (order: OrderRow, confirmationUrl: string | null): Checkout => ({
+  orderId: order.id,
+  status: order.status,
+  confirmationUrl,
+  expiresAt: new Date(order.expires_at * 1000).toISOString(),
+});
+
+const orderById = (db: Db, orderId: string) => db.$client.query<OrderRow, [string]>(
+  "SELECT id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at FROM ticket_orders WHERE id = ?",
+).get(orderId);
+const attemptForOrder = (db: Db, orderId: string) => db.$client.query<AttemptRow, [string]>(
+  "SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url FROM payment_attempts WHERE order_id = ? ORDER BY created_at DESC LIMIT 1",
+).get(orderId);
+const itemsForOrder = (db: Db, orderId: string) => db.$client.query<OrderItemRow, [string]>(`
+  SELECT ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity
+  FROM order_items WHERE order_id = ? ORDER BY id
+`).all(orderId);
+const receiptItemsForOrder = (db: Db, order: OrderRow) => {
+  const items = itemsForOrder(db, order.id);
+  const snapshots = items.length ? items : [{
+    ticket_tier_id: order.ticket_tier_id,
+    event_product_id: null,
+    kind: "ticket" as const,
+    name: order.ticket_name,
+    unit_amount_minor: order.amount_minor,
+    quantity: 1,
+  }];
+  return snapshots.map((item) => ({
+    description: item.name,
+    quantity: item.quantity,
+    unitAmountMinor: item.unit_amount_minor,
+    paymentSubject: item.kind === "merchandise" ? "commodity" as const : "service" as const,
+  }));
+};
+
+const activeOrderForUser = (db: Db, eventId: number, userId: number) => db.$client.query<OrderRow, [number, number]>(`
+  SELECT id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at
+  FROM ticket_orders
+  WHERE event_id = ? AND user_id = ? AND status NOT IN ('canceled', 'refunded')
+  ORDER BY created_at DESC LIMIT 1
+`).get(eventId, userId);
+
+const eligible = (db: Db, eventId: number, userId: number) => db.$client.query<{ ok: number }, [number, number, number]>(`
+  SELECT (NOT EXISTS (SELECT 1 FROM event_chats WHERE event_id = ?)
+    OR EXISTS (
+      SELECT 1 FROM event_chats
+      JOIN chat_members ON chat_members.chat_id = event_chats.chat_id
+      WHERE event_chats.event_id = ? AND chat_members.user_id = ? AND chat_members.is_member = 1
+    )) AS ok
+`).get(eventId, eventId, userId)?.ok === 1;
+
+const confirmedCount = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>(
+  "SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')",
+).get(eventId)?.count ?? 0;
+const pendingCount = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>(
+  "SELECT count(*) AS count FROM ticket_orders WHERE event_id = ? AND status IN ('awaiting_payment', 'payment_succeeded')",
+).get(eventId)?.count ?? 0;
+const tierClaimCount = (db: Db, tierId: number) => db.$client.query<{ count: number }, [number]>(`
+  SELECT count(*) AS count FROM ticket_orders
+  WHERE ticket_tier_id = ? AND status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+`).get(tierId)?.count ?? 0;
+const productClaimCount = (db: Db, productId: number) => db.$client.query<{ count: number | null }, [number]>(`
+  SELECT sum(i.quantity) AS count FROM order_items i
+  JOIN ticket_orders o ON o.id = i.order_id
+  WHERE i.event_product_id = ?
+    AND o.status IN ('awaiting_payment', 'payment_succeeded', 'fulfilled', 'refund_pending', 'refund_failed')
+`).get(productId)?.count ?? 0;
+
+const requestedProducts = (items: ReadonlyArray<{ productId: number; quantity: number }>) => {
+  const quantities = new Map<number, number>();
+  for (const item of items) {
+    if (!Number.isSafeInteger(item.productId) || item.productId < 1
+      || !Number.isSafeInteger(item.quantity) || item.quantity < 1) return null;
+    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
+  }
+  return quantities.size <= 20 ? quantities : null;
+};
+
+const basketMatches = (db: Db, order: OrderRow, tierId: number, products: ReadonlyMap<number, number>) => {
+  if (order.ticket_tier_id !== tierId) return false;
+  const existing = new Map(itemsForOrder(db, order.id)
+    .filter((item) => item.event_product_id !== null)
+    .map((item) => [item.event_product_id!, item.quantity]));
+  return existing.size === products.size && [...products].every(([id, quantity]) => existing.get(id) === quantity);
+};
+
+const verifyPayment = (order: OrderRow, payment: ProviderPayment) => {
+  if (payment.metadata.order_id !== order.id) throw new Error(`Payment ${payment.id} has the wrong order metadata`);
+  if (payment.amountMinor !== order.amount_minor || payment.currency !== order.currency) {
+    throw new Error(`Payment ${payment.id} amount does not match order ${order.id}`);
+  }
+};
+
+/** Reserve inventory first, then create the remote payment with a stable idempotency key. */
+export const createCheckout = async (
+  db: Db,
+  provider: PaymentProvider,
+  input: {
+    eventId: number;
+    tierId: number;
+    productItems?: ReadonlyArray<{ productId: number; quantity: number }>;
+    userId: number;
+    returnUrl: string;
+    userPhone?: string | null;
+  },
+  now: Date,
+): Promise<Checkout | { error: CheckoutError }> => {
+  const phoneDigits = input.userPhone?.replace(/\D/g, "") ?? "";
+  const receiptPhone = phoneDigits.length >= 8 && phoneDigits.length <= 15 ? `+${phoneDigits}` : null;
+  if (provider.requiresCustomerContact && !receiptPhone) return { error: "contact_required" };
+  const products = requestedProducts(input.productItems ?? []);
+  if (!products) return { error: "invalid_basket" };
+  const prepared = transaction(db, () => {
+    const event = db.$client.query<EventRow, [number]>(
+      "SELECT id, title, status, ended_at, capacity FROM events WHERE id = ?",
+    ).get(input.eventId);
+    if (!event || event.status !== "published") return { error: "event_not_found" as const };
+    if (event.ended_at !== null) return { error: "event_over" as const };
+    if (!eligible(db, event.id, input.userId)) return { error: "not_eligible" as const };
+
+    const registration = db.$client.query<{ status: string }, [number, number]>(
+      "SELECT status FROM registrations WHERE event_id = ? AND user_id = ?",
+    ).get(event.id, input.userId);
+    if (registration && ["registered", "checked_in"].includes(registration.status)) return { error: "already_joined" as const };
+
+    const existing = activeOrderForUser(db, event.id, input.userId);
+    if (existing) {
+      if (!basketMatches(db, existing, input.tierId, products)) return { error: "active_order_exists" as const };
+      return { order: existing, attempt: attemptForOrder(db, existing.id), event, existing: true as const };
+    }
+
+    const tier = db.$client.query<TierRow, [number, number]>(`
+      SELECT id, event_id, name, price_minor, quota, sales_start_at, sales_end_at, active
+      FROM ticket_tiers WHERE id = ? AND event_id = ?
+    `).get(input.tierId, event.id);
+    if (!tier || !tier.active) return { error: "ticket_not_found" as const };
+    const timestamp = seconds(now);
+    if ((tier.sales_start_at !== null && tier.sales_start_at > timestamp)
+      || (tier.sales_end_at !== null && tier.sales_end_at <= timestamp)) return { error: "ticket_sales_closed" as const };
+    if (tier.quota !== null && tierClaimCount(db, tier.id) >= tier.quota) return { error: "ticket_sold_out" as const };
+    if (event.capacity !== null && confirmedCount(db, event.id) + pendingCount(db, event.id) >= event.capacity) {
+      return { error: "event_full" as const };
+    }
+
+    const selectedProducts: Array<ProductRow & { quantity: number }> = [];
+    for (const [productId, quantity] of products) {
+      const product = db.$client.query<ProductRow, [number, number]>(`
+        SELECT id, event_id, kind, name, price_minor, stock, max_per_order, active
+        FROM event_products WHERE id = ? AND event_id = ?
+      `).get(productId, event.id);
+      if (!product || !product.active) return { error: "product_not_found" as const };
+      if (quantity > product.max_per_order) return { error: "product_limit_exceeded" as const };
+      if (product.stock !== null && productClaimCount(db, product.id) + quantity > product.stock) {
+        return { error: "product_sold_out" as const };
+      }
+      selectedProducts.push({ ...product, quantity });
+    }
+
+    const amountMinor = tier.price_minor + selectedProducts.reduce((sum, product) => sum + product.price_minor * product.quantity, 0);
+    if (!Number.isSafeInteger(amountMinor) || amountMinor < 1) return { error: "invalid_basket" as const };
+
+    const orderId = crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
+    const idempotenceKey = crypto.randomUUID();
+    const expiresAt = timestamp + CHECKOUT_WINDOW_SECONDS;
+    db.$client.query(`
+      INSERT INTO ticket_orders
+        (id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'RUB', 'awaiting_payment', ?, ?, ?)
+    `).run(orderId, event.id, tier.id, input.userId, tier.name, amountMinor, expiresAt, timestamp, timestamp);
+    db.$client.query(`
+      INSERT INTO order_items
+        (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
+      VALUES (?, ?, NULL, 'ticket', ?, ?, 1, ?)
+    `).run(orderId, tier.id, tier.name, tier.price_minor, timestamp);
+    for (const product of selectedProducts) {
+      db.$client.query(`
+        INSERT INTO order_items
+          (order_id, ticket_tier_id, event_product_id, kind, name, unit_amount_minor, quantity, created_at)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
+      `).run(orderId, product.id, product.kind, product.name, product.price_minor, product.quantity, timestamp);
+    }
+    db.$client.query(`
+      INSERT INTO payment_attempts (id, order_id, provider, idempotence_key, status, created_at, updated_at)
+      VALUES (?, ?, 'yookassa', ?, 'pending', ?, ?)
+    `).run(attemptId, orderId, idempotenceKey, timestamp, timestamp);
+    return { order: orderById(db, orderId)!, attempt: attemptForOrder(db, orderId)!, event, existing: false as const };
+  });
+
+  if ("error" in prepared && prepared.error !== undefined) return { error: prepared.error };
+  if (prepared.attempt?.confirmation_url) return orderView(prepared.order, prepared.attempt.confirmation_url);
+  if (!prepared.attempt) throw new Error(`Order ${prepared.order.id} has no payment attempt`);
+
+  try {
+    const payment = await provider.createPayment({
+      amountMinor: prepared.order.amount_minor,
+      currency: "RUB",
+      description: `${prepared.event.title} — ${prepared.order.ticket_name}`,
+      orderId: prepared.order.id,
+      returnUrl: input.returnUrl,
+      idempotenceKey: prepared.attempt.idempotence_key,
+      receiptItems: receiptItemsForOrder(db, prepared.order),
+      ...(receiptPhone ? { customerPhone: receiptPhone } : {}),
+    });
+    verifyPayment(prepared.order, payment);
+    const expiresAt = payment.expiresAt ? Math.floor(new Date(payment.expiresAt).getTime() / 1000) : prepared.order.expires_at;
+    const timestamp = seconds(now);
+    db.$client.query(`
+      UPDATE payment_attempts SET provider_payment_id = ?, status = ?, confirmation_url = ?, provider_created_at = ?, updated_at = ? WHERE id = ?
+    `).run(payment.id, payment.status, payment.confirmationUrl, payment.createdAt, timestamp, prepared.attempt.id);
+    db.$client.query("UPDATE ticket_orders SET expires_at = ?, updated_at = ? WHERE id = ?")
+      .run(expiresAt, timestamp, prepared.order.id);
+    if (payment.status !== "pending") await reconcilePayment(db, provider, payment.id, now);
+    const current = orderById(db, prepared.order.id)!;
+    return orderView(current, payment.confirmationUrl);
+  } catch (error) {
+    // A timeout can hide a remotely created payment. Keep the attempt identity for
+    // webhook recovery, but release only after marking this order cancel-pending.
+    const definitiveRejection = error instanceof PaymentProviderError && error.status >= 400 && error.status < 500;
+    db.$client.query("UPDATE ticket_orders SET status = ?, canceled_at = ?, updated_at = ? WHERE id = ?")
+      .run(definitiveRejection ? "canceled" : "cancel_pending", definitiveRejection ? seconds(now) : null, seconds(now), prepared.order.id);
+    throw error;
+  }
+};
+
+const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: Date): NotificationEffect[] => {
+  if (remote.id !== refundRow.provider_refund_id && refundRow.provider_refund_id !== null) throw new Error("Refund id mismatch");
+  if (remote.amountMinor !== refundRow.amount_minor || remote.currency !== "RUB") throw new Error("Refund amount mismatch");
+  const order = orderById(db, refundRow.order_id);
+  if (!order) throw new Error(`Refund ${refundRow.id} points to a missing order`);
+  const timestamp = seconds(now);
+  const shouldOffer = remote.status === "succeeded" && db.$client.query<{ status: string }, [number]>(
+    "SELECT status FROM events WHERE id = ?",
+  ).get(order.event_id)?.status === "published";
+
+  transaction(db, () => {
+    db.$client.query("UPDATE refunds SET provider_refund_id = ?, status = ?, failure_reason = ?, updated_at = ? WHERE id = ?")
+      .run(remote.id, remote.status, remote.failureReason, timestamp, refundRow.id);
+    if (remote.status === "succeeded") {
+      db.$client.query("UPDATE ticket_orders SET status = 'refunded', refunded_at = ?, updated_at = ? WHERE id = ?")
+        .run(timestamp, timestamp, order.id);
+      db.$client.query("UPDATE registrations SET status = 'canceled', checked_in_at = NULL, updated_at = ? WHERE event_id = ? AND user_id = ? AND status IN ('registered', 'checked_in')")
+        .run(timestamp, order.event_id, order.user_id);
+    } else if (remote.status === "canceled") {
+      db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
+        .run(timestamp, order.id);
+    }
+  });
+  const effects: NotificationEffect[] = shouldOffer ? issueOffers(db, order.event_id, now) : [];
+  if (remote.status === "succeeded" && refundRow.status !== "succeeded") {
+    effects.push({ kind: "ticket_refunded", userId: order.user_id, eventId: order.event_id });
+  } else if (remote.status === "canceled" && refundRow.status !== "canceled") {
+    effects.push({ kind: "ticket_refund_failed", userId: order.user_id, eventId: order.event_id });
+  }
+  return effects;
+};
+
+export const ensureRefund = async (
+  db: Db,
+  provider: PaymentProvider,
+  orderId: string,
+  reason: "user_canceled" | "event_canceled" | "payment_after_cancellation",
+  now: Date,
+): Promise<NotificationEffect[]> => {
+  const prepared = transaction(db, () => {
+    const order = orderById(db, orderId);
+    if (!order) throw new Error(`Order ${orderId} was not found`);
+    if (order.status === "refunded") return { done: true as const };
+    const attempt = db.$client.query<AttemptRow, [string]>(`
+      SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
+      FROM payment_attempts WHERE order_id = ? AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1
+    `).get(orderId);
+    if (!attempt?.provider_payment_id) throw new Error(`Order ${orderId} has no succeeded payment`);
+    const existing = db.$client.query<RefundRow, [string]>(`
+      SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+      FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1
+    `).get(orderId);
+    if (existing) return { order, attempt, refund: existing, done: false as const };
+    const timestamp = seconds(now);
+    const refund: RefundRow = {
+      id: crypto.randomUUID(), order_id: orderId, payment_attempt_id: attempt.id,
+      provider_refund_id: null, idempotence_key: crypto.randomUUID(), amount_minor: order.amount_minor, status: "pending", reason,
+    };
+    db.$client.query(`
+      INSERT INTO refunds (id, order_id, payment_attempt_id, idempotence_key, amount_minor, status, reason, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+    `).run(refund.id, orderId, attempt.id, refund.idempotence_key, refund.amount_minor, reason, timestamp, timestamp);
+    db.$client.query("UPDATE ticket_orders SET status = 'refund_pending', updated_at = ? WHERE id = ?")
+      .run(timestamp, orderId);
+    return { order, attempt, refund, done: false as const };
+  });
+  if (prepared.done) return [];
+  if (prepared.refund.provider_refund_id) {
+    return applyRefund(db, prepared.refund, await provider.getRefund(prepared.refund.provider_refund_id), now);
+  }
+  const remote = await provider.createRefund({
+    paymentId: prepared.attempt.provider_payment_id!,
+    amountMinor: prepared.order.amount_minor,
+    currency: "RUB",
+    orderId,
+    reason,
+    description: prepared.order.ticket_name,
+    receiptItems: receiptItemsForOrder(db, prepared.order),
+    ...(() => {
+      const phone = db.$client.query<{ phone: string | null }, [string]>(`
+        SELECT u.phone FROM users u JOIN ticket_orders o ON o.user_id = u.id WHERE o.id = ?
+      `).get(orderId)?.phone;
+      const digits = phone?.replace(/\D/g, "") ?? "";
+      return digits.length >= 8 && digits.length <= 15 ? { customerPhone: `+${digits}` } : {};
+    })(),
+    idempotenceKey: prepared.refund.idempotence_key,
+  });
+  return applyRefund(db, prepared.refund, remote, now);
+};
+
+/** Fetching the payment here is the authenticity check; webhook JSON is never trusted. */
+export const reconcilePayment = async (
+  db: Db,
+  provider: PaymentProvider,
+  paymentId: string,
+  now: Date,
+): Promise<{ orderId: string | null; effects: NotificationEffect[] }> => {
+  const payment = await provider.getPayment(paymentId);
+  let attempt = db.$client.query<AttemptRow, [string]>(`
+    SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
+    FROM payment_attempts WHERE provider_payment_id = ?
+  `).get(payment.id);
+  if (!attempt && payment.metadata.order_id) {
+    attempt = attemptForOrder(db, payment.metadata.order_id);
+    if (attempt && attempt.provider_payment_id === null) {
+      db.$client.query("UPDATE payment_attempts SET provider_payment_id = ? WHERE id = ?").run(payment.id, attempt.id);
+      attempt = { ...attempt, provider_payment_id: payment.id };
+    }
+  }
+  if (!attempt) return { orderId: null, effects: [] };
+  const order = orderById(db, attempt.order_id);
+  if (!order) throw new Error(`Payment ${payment.id} points to a missing order`);
+  verifyPayment(order, payment);
+  const timestamp = seconds(now);
+
+  if (payment.status === "pending") return { orderId: order.id, effects: [] };
+  if (payment.status === "canceled") {
+    transaction(db, () => {
+      db.$client.query("UPDATE payment_attempts SET status = 'canceled', updated_at = ? WHERE id = ?").run(timestamp, attempt!.id);
+      if (["awaiting_payment", "cancel_pending"].includes(order.status)) {
+        db.$client.query("UPDATE ticket_orders SET status = 'canceled', canceled_at = ?, updated_at = ? WHERE id = ?")
+          .run(timestamp, timestamp, order.id);
+      }
+    });
+    return { orderId: order.id, effects: [] };
+  }
+
+  const result = transaction(db, () => {
+    db.$client.query("UPDATE payment_attempts SET status = 'succeeded', updated_at = ? WHERE id = ?").run(timestamp, attempt!.id);
+    const event = db.$client.query<{ status: string; ended_at: number | null }, [number]>(
+      "SELECT status, ended_at FROM events WHERE id = ?",
+    ).get(order.event_id);
+    if (!event || event.status === "canceled" || event.ended_at !== null || order.status === "cancel_pending" || order.status === "canceled") {
+      db.$client.query("UPDATE ticket_orders SET status = 'payment_succeeded', paid_at = coalesce(paid_at, ?), updated_at = ? WHERE id = ?")
+        .run(timestamp, timestamp, order.id);
+      return { needsRefund: true, fulfilled: false };
+    }
+    if (order.status !== "fulfilled" && order.status !== "refund_pending" && order.status !== "refund_failed" && order.status !== "refunded") {
+      const registration = db.$client.query<{ id: number }, [number, number]>(
+        "SELECT id FROM registrations WHERE event_id = ? AND user_id = ?",
+      ).get(order.event_id, order.user_id);
+      if (registration) {
+        db.$client.query("UPDATE registrations SET status = 'registered', checked_in_at = NULL, updated_at = ? WHERE id = ?")
+          .run(timestamp, registration.id);
+      } else {
+        db.$client.query("INSERT INTO registrations (event_id, user_id, status, created_at, updated_at) VALUES (?, ?, 'registered', ?, ?)")
+          .run(order.event_id, order.user_id, timestamp, timestamp);
+      }
+      db.$client.query("UPDATE ticket_orders SET status = 'fulfilled', paid_at = coalesce(paid_at, ?), fulfilled_at = coalesce(fulfilled_at, ?), updated_at = ? WHERE id = ?")
+        .run(timestamp, timestamp, timestamp, order.id);
+      return { needsRefund: false, fulfilled: true };
+    }
+    return { needsRefund: false, fulfilled: false };
+  });
+  const effects: NotificationEffect[] = result.needsRefund
+    ? await ensureRefund(db, provider, order.id, "payment_after_cancellation", now)
+    : result.fulfilled ? [{ kind: "ticket_paid", userId: order.user_id, eventId: order.event_id }] : [];
+  return { orderId: order.id, effects };
+};
+
+export const requestUserRefund = async (db: Db, provider: PaymentProvider, eventId: number, userId: number, now: Date) => {
+  const order = db.$client.query<{ id: string }, [number, number]>(`
+    SELECT id FROM ticket_orders
+    WHERE event_id = ? AND user_id = ? AND status IN ('fulfilled', 'refund_pending', 'refund_failed')
+    ORDER BY created_at DESC LIMIT 1
+  `).get(eventId, userId);
+  if (!order) return null;
+  return ensureRefund(db, provider, order.id, "user_canceled", now);
+};
+
+export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundId: string, now: Date) => {
+  const remote = await provider.getRefund(refundId);
+  let refund = db.$client.query<RefundRow, [string]>(`
+    SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+    FROM refunds WHERE provider_refund_id = ?
+  `).get(remote.id);
+  if (!refund && remote.metadata.order_id) {
+    refund = db.$client.query<RefundRow, [string]>(`
+      SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+      FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1
+    `).get(remote.metadata.order_id);
+    if (refund && refund.provider_refund_id === null) {
+      db.$client.query("UPDATE refunds SET provider_refund_id = ? WHERE id = ?").run(remote.id, refund.id);
+      refund = { ...refund, provider_refund_id: remote.id };
+    }
+  }
+  return refund ? applyRefund(db, refund, remote, now) : [];
+};
+
+export const refundCanceledEvent = async (db: Db, provider: PaymentProvider, eventId: number, now: Date) => {
+  const orders = db.$client.query<{ id: string }, [number]>(`
+    SELECT id FROM ticket_orders WHERE event_id = ? AND status IN ('fulfilled', 'payment_succeeded', 'refund_pending')
+  `).all(eventId);
+  const effects: NotificationEffect[] = [];
+  for (const order of orders) effects.push(...await ensureRefund(db, provider, order.id, "event_canceled", now));
+  return effects;
+};
+
+export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now: Date) => {
+  const timestamp = seconds(now);
+  const effects: NotificationEffect[] = [];
+  // Webhooks are the fast path, not a single point of failure. Polling the same
+  // authoritative provider object heals a lost notification without trusting the client.
+  const awaitingRemote = db.$client.query<{ provider_payment_id: string }, []>(`
+    SELECT p.provider_payment_id FROM ticket_orders o
+    JOIN payment_attempts p ON p.order_id = o.id
+    WHERE o.status IN ('awaiting_payment', 'cancel_pending') AND p.provider_payment_id IS NOT NULL
+  `).all();
+  for (const row of awaitingRemote) {
+    effects.push(...(await reconcilePayment(db, provider, row.provider_payment_id, now)).effects);
+  }
+
+  const expiring = db.$client.query<{ id: string; provider_payment_id: string | null; idempotence_key: string }, [number]>(`
+    SELECT o.id, p.provider_payment_id, p.idempotence_key
+    FROM ticket_orders o JOIN payment_attempts p ON p.order_id = o.id
+    WHERE o.status IN ('awaiting_payment', 'cancel_pending') AND o.expires_at <= ?
+  `).all(timestamp);
+  for (const row of expiring) {
+    if (!row.provider_payment_id) {
+      db.$client.query("UPDATE ticket_orders SET status = 'canceled', canceled_at = ?, updated_at = ? WHERE id = ?")
+        .run(timestamp, timestamp, row.id);
+      continue;
+    }
+    const reconciled = await reconcilePayment(db, provider, row.provider_payment_id, now);
+    effects.push(...reconciled.effects);
+    const current = orderById(db, row.id);
+    if (current && ["awaiting_payment", "cancel_pending"].includes(current.status)) {
+      await provider.cancelPayment(row.provider_payment_id, `cancel-${row.id}`);
+      effects.push(...(await reconcilePayment(db, provider, row.provider_payment_id, now)).effects);
+    }
+  }
+
+  const pendingRefunds = db.$client.query<RefundRow, []>(`
+    SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+    FROM refunds WHERE status = 'pending'
+  `).all();
+  for (const refund of pendingRefunds) {
+    effects.push(...(refund.provider_refund_id
+      ? applyRefund(db, refund, await provider.getRefund(refund.provider_refund_id), now)
+      : await ensureRefund(db, provider, refund.order_id, refund.reason, now)));
+  }
+
+  // A restart or temporary provider outage must not strand refunds triggered by
+  // event cancellation. The next sweep resumes every unfinished canceled event.
+  const canceledPaidEvents = db.$client.query<{ event_id: number }, []>(`
+    SELECT DISTINCT o.event_id FROM ticket_orders o
+    JOIN events e ON e.id = o.event_id
+    WHERE e.status = 'canceled' AND o.status IN ('fulfilled', 'payment_succeeded', 'refund_pending')
+  `).all();
+  for (const row of canceledPaidEvents) effects.push(...await refundCanceledEvent(db, provider, row.event_id, now));
+  return effects;
+};
+
+export const orderForUser = (db: Db, orderId: string, userId: number) => {
+  const order = orderById(db, orderId);
+  if (!order || order.user_id !== userId) return null;
+  return orderView(order, attemptForOrder(db, order.id)?.confirmation_url ?? null);
+};

@@ -64,6 +64,20 @@
       "when": 1787149090854,
       "tag": "0008_demonic_betty_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788266356833,
+      "tag": "0009_aspiring_ironclad",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788274553361,
+      "tag": "0010_tired_scrambler",
+      "breakpoints": true
     }
   ]
 }

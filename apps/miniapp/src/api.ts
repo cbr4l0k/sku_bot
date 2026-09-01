@@ -92,6 +92,16 @@ export type EventLink = Ok<typeof adminEvent.link.get>;
 export type Locale = Me["locale"];
 export type EventStatus = EventSummary["status"];
 export type RegistrationStatus = NonNullable<EventCard["myRegistrationStatus"]>;
+export type TicketTier = EventDetail["ticketTiers"][number];
+export type TicketTierDraft = Pick<TicketTier, "name" | "priceMinor" | "quota" | "active"> & {
+  id?: number;
+  salesStartAt?: string | null;
+  salesEndAt?: string | null;
+};
+export type EventProduct = EventDetail["products"][number];
+export type EventProductDraft = Pick<EventProduct, "kind" | "name" | "description" | "priceMinor" | "stock" | "maxPerOrder" | "active"> & {
+  id?: number;
+};
 
 export type EventDraft = {
   city: CitySlug;
@@ -123,12 +133,19 @@ export const sku = {
   events: () => call(api.events.get(auth())),
   event: (id: number) => call(api.events({ id }).get(auth())),
   join: (id: number) => call(api.events({ id }).join.post(undefined, auth())),
+  checkout: (id: number, ticketTierId: number, items: Array<{ productId: number; quantity: number }>) =>
+    call(api.events({ id }).checkout.post({ ticketTierId, items }, auth())),
+  order: (id: string) => call(api.orders({ id }).get(auth())),
   cancel: (id: number) => call(api.events({ id }).cancel.post(undefined, auth())),
   acceptOffer: (id: number) => call(api.offers({ id }).accept.post(undefined, auth())),
   checkin: (code: string) => call(api.checkin.post({ code }, auth())),
 
   organizerEvents: () => call(api.organizer.events.get(auth())),
   updateEvent: (id: number, body: Partial<EventDraft>) => call(api.organizer.events({ id }).patch(body, auth())),
+  setTicketTiers: (id: number, tiers: TicketTierDraft[]) =>
+    call(api.organizer.events({ id })["ticket-tiers"].put({ tiers }, auth())),
+  setProducts: (id: number, products: EventProductDraft[]) =>
+    call(api.organizer.events({ id }).products.put({ products }, auth())),
   attendance: (id: number) => call(api.organizer.events({ id }).attendance.get(auth())),
   checkinToken: (id: number) => call(api.organizer.events({ id })["checkin-token"].get(auth())),
   endEvent: (id: number) => call(api.organizer.events({ id }).end.post(undefined, auth())),

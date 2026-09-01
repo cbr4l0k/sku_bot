@@ -26,6 +26,8 @@ const chatIds = z.string().default("").transform((raw, ctx): readonly number[] =
   return [...new Set(segments.map(Number))];
 });
 
+const optionalSecret = z.string().trim().min(1).optional().or(z.literal("").transform(() => undefined));
+
 const environmentSchema = z.object({
   BOT_TOKEN: z.string().min(1),
   DOMAIN: z.string().min(1),
@@ -33,8 +35,23 @@ const environmentSchema = z.object({
   EVENT_GROUPS: chatIds,
   WEBHOOK_SECRET: z.string().min(1),
   CHECKIN_SECRET: z.string().min(1),
+  YOOKASSA_SHOP_ID: optionalSecret,
+  YOOKASSA_SECRET_KEY: optionalSecret,
+  YOOKASSA_WEBHOOK_SECRET: optionalSecret,
+  YOOKASSA_VAT_CODE: z.coerce.number().int().min(1).max(10).optional().or(z.literal("").transform(() => undefined)),
   DATABASE_PATH: z.string().min(1).default("./data/sku.db"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+}).superRefine((env, ctx) => {
+  if (Boolean(env.YOOKASSA_SHOP_ID) !== Boolean(env.YOOKASSA_SECRET_KEY)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [env.YOOKASSA_SHOP_ID ? "YOOKASSA_SECRET_KEY" : "YOOKASSA_SHOP_ID"],
+      message: "must be configured together with the other YooKassa credential",
+    });
+  }
+  if (env.YOOKASSA_SHOP_ID && !env.YOOKASSA_WEBHOOK_SECRET) {
+    ctx.addIssue({ code: "custom", path: ["YOOKASSA_WEBHOOK_SECRET"], message: "is required when YooKassa is configured" });
+  }
 });
 
 export type Env = z.infer<typeof environmentSchema>;

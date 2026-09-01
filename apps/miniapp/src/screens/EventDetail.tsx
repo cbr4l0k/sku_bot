@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { CITIES } from "@sku/cities";
 
@@ -25,6 +25,12 @@ export const EventDetailScreen = () => {
   const toast = useToast();
   const confirm = useConfirm();
   const action = useAction();
+  const [searchParams] = useSearchParams();
+  const [selectedTierId, setSelectedTierId] = useState<number | null>(() => {
+    const value = Number(searchParams.get("ticket"));
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  });
+  const [productQuantities, setProductQuantities] = useState<Record<number, number>>({});
   const [sweep, setSweep] = useState(false);
   useBackButton("/");
 
@@ -60,7 +66,7 @@ export const EventDetailScreen = () => {
 
   const { detail, card } = resource.data;
   const confirmed = card?.confirmedCount ?? 0;
-  const left = detail.capacity === null ? null : Math.max(0, detail.capacity - confirmed);
+  const left = detail.capacity === null ? null : Math.max(0, detail.capacity - confirmed - detail.pendingTicketCount);
   const offer = card?.myPendingOffer ?? null;
   const status = detail.myRegistrationStatus;
   // "Over" is an organizer's call, not the clock's: an event whose start time has
@@ -68,6 +74,21 @@ export const EventDetailScreen = () => {
   const over = detail.endedAt !== null;
   const underway = !over && isPast(detail.startsAt);
   const joinable = detail.status === "published" && !over;
+  const paidEvent = detail.ticketTiers.length > 0;
+  const availableTiers = detail.ticketTiers.filter((tier) => {
+    const time = Date.now();
+    return tier.active
+      && (tier.salesStartAt === null || new Date(tier.salesStartAt).getTime() <= time)
+      && (tier.salesEndAt === null || new Date(tier.salesEndAt).getTime() > time)
+      && (tier.quota === null || tier.claimed < tier.quota);
+  });
+  const availableProducts = detail.products.filter((product) => product.active && (product.stock === null || product.claimed < product.stock));
+  const selectedTier = availableTiers.find((tier) => tier.id === selectedTierId) ?? null;
+  const price = (minor: number) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: minor % 100 === 0 ? 0 : 2,
+  }).format(minor / 100);
 
   const celebrate = () => {
     setSweep(true);
@@ -89,12 +110,46 @@ export const EventDetailScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
+  const buy = () => {
+    if (!selectedTier) return;
+    const items = Object.entries(productQuantities)
+      .map(([productId, quantity]) => ({ productId: Number(productId), quantity }))
+      .filter((item) => item.quantity > 0);
+    void action.run(
+      async () => {
+        const checkout = await sku.checkout(id, selectedTier.id, items);
+        if (!checkout.confirmationUrl) {
+          await resource.reload(true);
+          return;
+        }
+        toast(t("toast.paymentOpened"));
+        openLink(checkout.confirmationUrl);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+  };
+
+  const setProductQuantity = (productId: number, quantity: number) => {
+    setProductQuantities((current) => {
+      if (quantity <= 0) {
+        const { [productId]: _removed, ...rest } = current;
+        return rest;
+      }
+      return { ...current, [productId]: quantity };
+    });
+  };
+
+  const basketTotal = (selectedTier?.priceMinor ?? 0) + availableProducts.reduce(
+    (sum, product) => sum + product.priceMinor * (productQuantities[product.id] ?? 0),
+    0,
+  );
+
   const cancel = async () => {
-    if (!(await confirm({ text: t("detail.confirmCancel"), confirmLabel: t("action.cancel"), danger: true }))) return;
+    if (!(await confirm({ text: t(paidEvent ? "detail.refundConfirm" : "detail.confirmCancel"), confirmLabel: t("action.cancel"), danger: true }))) return;
     void action.run(
       async () => {
         await sku.cancel(id);
-        toast(t("toast.canceled"));
+        toast(t(paidEvent ? "toast.refundStarted" : "toast.canceled"));
         await resource.reload(true);
       },
       { onError: (error) => toast(errorText(t, error), "err") },
@@ -132,6 +187,81 @@ export const EventDetailScreen = () => {
         </div>
         <h1 className="hero mb-3 break-words">{detail.title}</h1>
       </div>
+
+      {paidEvent && (status === null || status === "canceled" || status === "waitlisted") ? (
+        <section className="rise card mb-4 px-4 py-4" style={{ "--i": 1 } as React.CSSProperties}>
+          <div className="eyebrow mb-3">{t("detail.shop")}</div>
+          <div className="flex flex-col gap-2">
+            {availableTiers.map((tier) => {
+              const picked = selectedTier?.id === tier.id;
+              return (
+                <button
+                  key={tier.id}
+                  type="button"
+                  className="flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left"
+                  style={{ borderColor: picked ? "var(--flare)" : "var(--hair)", background: picked ? "var(--flare-soft)" : "transparent" }}
+                  onClick={() => {
+                    haptic.select();
+                    setSelectedTierId(tier.id);
+                  }}
+                >
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border" style={{ borderColor: picked ? "var(--flare)" : "var(--hair)" }}>
+                    {picked ? <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--flare)" }} /> : null}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[14px] font-medium">{tier.name}</span>
+                    {tier.quota === null ? null : <span className="block text-[11px] text-hint">{t("detail.ticketQuota", { n: Math.max(0, tier.quota - tier.claimed) })}</span>}
+                  </span>
+                  <span className="num text-[13px]">{price(tier.priceMinor)}</span>
+                </button>
+              );
+            })}
+            {availableTiers.length === 0 ? <p className="text-[12px] text-hint">{t("detail.noTicketsAvailable")}</p> : null}
+          </div>
+
+          {availableProducts.length ? (
+            <>
+              <div className="hairline my-4" />
+              <div className="eyebrow mb-3">{t("detail.extras")}</div>
+              <div className="flex flex-col gap-3">
+                {availableProducts.map((product) => {
+                  const quantity = productQuantities[product.id] ?? 0;
+                  const remaining = product.stock === null ? product.maxPerOrder : Math.min(product.maxPerOrder, product.stock - product.claimed);
+                  return (
+                    <div key={product.id} className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => setProductQuantity(product.id, quantity > 0 ? 0 : 1)}
+                      >
+                        <span className="block text-[14px] font-medium">{quantity > 0 ? "✅ " : "⬜ "}{product.name}</span>
+                        <span className="block text-[11px] text-hint">
+                          {t(product.kind === "merchandise" ? "detail.merchandise" : "detail.addon")} · {price(product.priceMinor)}
+                        </span>
+                        {product.description ? <span className="mt-0.5 block text-[11px] text-hint">{product.description}</span> : null}
+                      </button>
+                      {quantity > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="ghost" aria-label="−" onClick={() => setProductQuantity(product.id, quantity - 1)}>−</Button>
+                          <span className="num w-4 text-center text-[13px]">{quantity}</span>
+                          <Button size="sm" variant="ghost" aria-label="+" disabled={quantity >= remaining} onClick={() => setProductQuantity(product.id, quantity + 1)}>+</Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+
+          <div className="hairline my-4" />
+          <Button block loading={action.pending} disabled={!selectedTier || !detail.paymentsConfigured} onClick={buy}>
+            {selectedTier ? t("action.pay", { price: price(basketTotal) }) : t("detail.pickTicket")}
+          </Button>
+          {selectedTier ? <p className="mt-2 text-center text-[12px] text-hint">{t("detail.total", { price: price(basketTotal) })}</p> : null}
+          {!detail.paymentsConfigured ? <p className="mt-2 text-[12px] text-hint">{t("detail.paymentsUnavailable")}</p> : null}
+        </section>
+      ) : null}
 
       {offer ? (
         <div
@@ -255,7 +385,8 @@ export const EventDetailScreen = () => {
           <Button variant="ghost" block loading={action.pending} onClick={() => void cancel()}>
             {t("action.cancel")}
           </Button>
-        ) : left === 0 && !detail.waitlistEnabled ? (
+        ) : paidEvent ? null
+        : left === 0 && !detail.waitlistEnabled ? (
           // No queue on this event: once the spots are gone, they are gone.
           <div className="card px-4 py-3 text-center text-[13px] text-hint">{t("detail.fullNoQueue")}</div>
         ) : (

@@ -87,8 +87,91 @@ Stale `-wal` and `-shm` sidecars must go with the old database; leaving them beh
 | `EVENT_GROUPS` | **Deprecated.** The chat catalog lives in the database now (see [Chats and cities](#chats-and-cities)). Anything still listed is filed under Saint Petersburg at boot and the variable can then be deleted. |
 | `WEBHOOK_SECRET` | Random value used to verify Telegram webhook requests. |
 | `CHECKIN_SECRET` | Random value used to sign check-in QR tokens. |
+| `YOOKASSA_SHOP_ID` | ЮKassa shop id. Leave empty together with `YOOKASSA_SECRET_KEY` to keep paid checkout disabled. |
+| `YOOKASSA_SECRET_KEY` | ЮKassa secret key. It is used by the server only and must never reach the Mini App. |
+| `YOOKASSA_WEBHOOK_SECRET` | High-entropy secret placed in the ЮKassa notification URL. Required when payments are configured. |
+| `YOOKASSA_VAT_CODE` | Optional receipt VAT code (1–10). When set, checkout includes a receipt and requires the user's saved phone number. Confirm the value with the club's accountant. |
 | `DATABASE_PATH` | SQLite database path; Compose sets `/app/data/sku.db`. |
 | `NODE_ENV` | `development` uses polling; `production` configures the webhook. |
+
+## Paid tickets with ЮKassa
+
+Events remain free until an organizer adds at least one ticket tier. Once an event
+has ticket history, its direct free-signup paths stay disabled even if every tier is
+later hidden. This prevents a stale Telegram button from issuing an unpaid ticket.
+
+The first version deliberately has one merchant: the club. It supports fixed RUB
+ticket tiers, one ticket per Telegram user per event, optional merchandise and
+add-ons with quantities, automatic refunds, and no payouts to organizers. Each
+purchase contains exactly one ticket plus zero or more event products and is paid
+as one YooKassa transaction.
+
+The Telegram event card exposes each available ticket as its own Mini App button.
+The chosen ticket is preselected when the app opens; the user can still switch it,
+add merch or extras, review the combined total, and then pay. In the event view the
+shop is deliberately placed directly below the title and before the description.
+
+### State machine
+
+The redirect back from ЮKassa is navigation only and never proves payment. The
+public webhook is also treated only as a prompt: the server retrieves the object
+from ЮKassa, verifies its order id, amount and currency, and only then advances the
+durable order.
+
+```text
+awaiting_payment ── provider succeeded ──> payment_succeeded ──> fulfilled
+       │                                          │                  │
+       ├── expiry ──> cancel_pending ──> canceled │                  │
+       │                                          └── event canceled ┤
+       └── late success after cancellation ──────────────────────────┤
+                                                                  refund_pending
+                                                                    ├──> refunded
+                                                                    └──> refund_failed
+```
+
+Creating checkout reserves event capacity, the tier quota, and every product's
+quantity in one database transaction. Names, unit prices, kinds, and quantities are
+copied into immutable order-item snapshots; the server calculates the total from
+those snapshots and sends separate receipt lines (ticket/add-ons as services,
+merchandise as commodities). Client totals and Telegram button data are never
+trusted. An expired
+reservation is released only after ЮKassa confirms cancellation. If success arrives
+after local cancellation, the order is refunded rather than fulfilled. Repeated API
+calls and webhook deliveries are safe: provider mutations use stable idempotency
+keys and every local transition is conditional and transactional.
+
+A paid attendee's cancellation keeps their registration and capacity reserved while
+the refund is pending. It is canceled only after ЮKassa confirms the refund. If an
+event is canceled, refunds start automatically; the payment sweeper resumes any
+unfinished creation, cancellation, or refund work after restarts and outages.
+
+### Enabling payments
+
+1. Configure a ЮKassa test or production shop and put `YOOKASSA_SHOP_ID`,
+   `YOOKASSA_SECRET_KEY`, and a long random `YOOKASSA_WEBHOOK_SECRET` in `.env`.
+   The shop id and key must be present together; the webhook secret is mandatory
+   whenever they are set.
+2. In ЮKassa, point notifications to
+   `https://<DOMAIN>/api/payments/yookassa/webhook?secret=<YOOKASSA_WEBHOOK_SECRET>`
+   and enable payment success,
+   payment cancellation, refund success, and refund cancellation events.
+3. If ЮKassa is responsible for fiscal receipts, set `YOOKASSA_VAT_CODE` to the
+   value approved for the club. The bot already collects a phone number and sends it
+   as the receipt contact. Receipt and tax configuration remains the merchant's legal
+   responsibility.
+4. Create a draft event, add tiers in **Tickets**, add optional sellable SKUs in
+   **Merch and extras**, and run a full
+   test-shop payment, cancellation, event cancellation, duplicated webhook, and
+   restart/reconciliation pass before switching to the live shop.
+
+Without credentials the server still migrates the payment tables and organizers can
+prepare ticket tiers and products, but checkout buttons are disabled and the API returns
+`payments_not_configured`. No fake or accidental live payment path is enabled.
+
+Paid events do not use the existing free waitlist in this version: a waitlist offer
+would itself need a tier-specific payment reservation. Sold-out paid tiers therefore
+close cleanly. Events with payment history cannot be hard-deleted; cancel them so the
+financial audit trail and refunds remain intact.
 
 ## The queue
 

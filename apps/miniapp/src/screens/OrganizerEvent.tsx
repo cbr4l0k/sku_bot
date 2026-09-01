@@ -9,6 +9,8 @@ import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { CountdownRing, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
+import { EventProductEditor } from "../ui/eventProducts";
+import { TicketTierEditor } from "../ui/ticketTiers";
 import { Sheet, useConfirm, useOverlayLock, useToast } from "../ui/overlays";
 import {
   Button,
@@ -101,6 +103,11 @@ const PersonRow = ({
           {person.phone ? <span className="break-all">{person.phone}</span> : null}
           {person.status === "waitlisted" ? <Chip>{t("status.waitlisted")}</Chip> : null}
           {person.status === "canceled" ? <Chip>{t("status.canceled")}</Chip> : null}
+          {person.ticketName ? <Chip tone="soft">{person.ticketName}</Chip> : null}
+          {person.purchaseItems.map((item) => (
+            <Chip key={`${item.kind}-${item.name}`} tone="soft">{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</Chip>
+          ))}
+          {person.paymentStatus && person.paymentStatus !== "fulfilled" ? <Chip>{person.paymentStatus}</Chip> : null}
         </div>
       </div>
       <button
@@ -146,6 +153,8 @@ export const OrganizerEventScreen = () => {
   const [query, setQuery] = useState("");
   const [showQr, setShowQr] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editingTickets, setEditingTickets] = useState(false);
+  const [editingProducts, setEditingProducts] = useState(false);
   const [busyUser, setBusyUser] = useState<number | null>(null);
 
   const events = useResource(sku.organizerEvents);
@@ -218,6 +227,28 @@ export const OrganizerEventScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
+  const saveTickets = (tiers: Parameters<typeof sku.setTicketTiers>[1]) =>
+    void action.run(
+      async () => {
+        await sku.setTicketTiers(id, tiers);
+        toast(t("common.saved"));
+        setEditingTickets(false);
+        await events.reload(true);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  const saveProducts = (products: Parameters<typeof sku.setProducts>[1]) =>
+    void action.run(
+      async () => {
+        await sku.setProducts(id, products);
+        toast(t("common.saved"));
+        setEditingProducts(false);
+        await events.reload(true);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
   if (attendance.loading && !attendance.data) {
     return (
       <Screen>
@@ -286,6 +317,16 @@ export const OrganizerEventScreen = () => {
         <Button variant="ghost" onClick={() => setEditing(true)}>
           {t("common.edit")}
         </Button>
+        {event ? (
+          <Button variant="ghost" onClick={() => setEditingTickets(true)}>
+            {t("tickets.title")} · {event.ticketTiers.filter((tier) => tier.active).length}
+          </Button>
+        ) : null}
+        {event ? (
+          <Button variant="ghost" onClick={() => setEditingProducts(true)}>
+            {t("products.title")} · {event.products.filter((product) => product.active).length}
+          </Button>
+        ) : null}
       </div>
 
       {over ? null : (
@@ -340,6 +381,16 @@ export const OrganizerEventScreen = () => {
             pending={action.pending}
             onSubmit={save}
           />
+        </Sheet>
+      ) : null}
+      {editingTickets && event ? (
+        <Sheet title={t("tickets.title")} onClose={() => setEditingTickets(false)}>
+          <TicketTierEditor initial={event.ticketTiers} pending={action.pending} onSave={saveTickets} />
+        </Sheet>
+      ) : null}
+      {editingProducts && event ? (
+        <Sheet title={t("products.title")} onClose={() => setEditingProducts(false)}>
+          <EventProductEditor initial={event.products} pending={action.pending} onSave={saveProducts} />
         </Sheet>
       ) : null}
     </Screen>

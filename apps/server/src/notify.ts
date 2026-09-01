@@ -24,6 +24,20 @@ const logTelegramFailure = (action: string, error: unknown) => {
 const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
   const locale = localeFor(effect.userId);
 
+  if (effect.kind === "ticket_paid" || effect.kind === "ticket_refunded" || effect.kind === "ticket_refund_failed") {
+    const event = eventSummary(effect.eventId, locale);
+    if (!event) return;
+    const key = effect.kind === "ticket_paid" ? "ticketPaid"
+      : effect.kind === "ticket_refunded" ? "ticketRefunded" : "ticketRefundFailed";
+    const response = await bot.api.sendMessage({
+      chat_id: effect.userId,
+      text: i18n.t(locale, key, event.title),
+      suppress: true,
+    });
+    if (response instanceof TelegramError) logTelegramFailure("ticket notification", response);
+    return;
+  }
+
   if (effect.kind === "offer_created") {
     const event = eventSummary(effect.eventId, locale);
     if (!event) {
@@ -52,6 +66,8 @@ const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
       .run(response.message_id, effect.offerId);
     return;
   }
+
+  if (effect.kind !== "offer_superseded") return;
 
   if (effect.messageId !== null) {
     const edit = await bot.api.editMessageReplyMarkup({

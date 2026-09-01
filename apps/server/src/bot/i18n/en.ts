@@ -13,6 +13,8 @@ export const en = {
 ${blockquote("Runs, training sessions, and good company — all in one place.")}`,
   openApp: "🏃 Open the app",
   openEvent: "Open event",
+  chooseTicket: "Choose ticket",
+  ticketOption: (name: string, price: string) => `🎟 ${name} · ${price}`,
   eventCity: (city: string) => `🏙 ${city}`,
   eventDate: (date: string) => `📅 ${date}`,
   eventLocation: (location: string, locationUrl: string | null) => format`📍 ${locationUrl ? link(location, locationUrl) : location}`,
@@ -43,6 +45,15 @@ ${date}`,
   eventCanceled: (title: string) => format`${bold("Event canceled")}
 
 ${title} has been canceled. We hope to see you at another run soon.`,
+  ticketPaid: (title: string) => format`${bold("Payment confirmed")}
+
+Your ticket for ${bold(title)} is ready. You are on the participant list.`,
+  ticketRefunded: (title: string) => format`${bold("Refund confirmed")}
+
+Your ticket for ${bold(title)} has been canceled and YooKassa confirmed the refund.`,
+  ticketRefundFailed: (title: string) => format`${bold("Refund needs attention")}
+
+YooKassa could not complete the refund for ${bold(title)}. Your place is still held; please contact the club.`,
   eventUpdated: (title: string, changes: EventUpdatedFields) => format`${bold("Event updated")}
 
 ${bold(title)}
@@ -64,6 +75,7 @@ ${join([
   queuedNotice: "You are in the queue. We will message you the moment a spot frees up.",
   alreadyJoinedNotice: "You are already signed up for this event.",
   notEligibleNotice: "This event is only for members of certain Telegram groups.",
+  paymentRequiredNotice: "This event requires a paid ticket. Open the event and choose a ticket tier.",
   chatInvite: (title: string) => format`${bold("Welcome to the event chat")}
 
 ${title}

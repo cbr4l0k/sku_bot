@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, unique, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 import type { CityRole, CitySlug } from "@sku/cities";
 
@@ -11,6 +11,30 @@ export type EventStatus = (typeof eventStatuses)[number];
 
 export const registrationStatuses = ["registered", "waitlisted", "canceled", "checked_in"] as const;
 export type RegistrationStatus = (typeof registrationStatuses)[number];
+
+export const ticketOrderStatuses = [
+  "awaiting_payment",
+  "payment_succeeded",
+  "fulfilled",
+  "cancel_pending",
+  "canceled",
+  "refund_pending",
+  "refunded",
+  "refund_failed",
+] as const;
+export type TicketOrderStatus = (typeof ticketOrderStatuses)[number];
+
+export const paymentAttemptStatuses = ["pending", "succeeded", "canceled"] as const;
+export type PaymentAttemptStatus = (typeof paymentAttemptStatuses)[number];
+
+export const refundStatuses = ["pending", "succeeded", "canceled"] as const;
+export type RefundStatus = (typeof refundStatuses)[number];
+
+export const eventProductKinds = ["merchandise", "addon"] as const;
+export type EventProductKind = (typeof eventProductKinds)[number];
+
+export const orderItemKinds = ["ticket", ...eventProductKinds] as const;
+export type OrderItemKind = (typeof orderItemKinds)[number];
 
 export const waitlistOfferStatuses = ["pending", "accepted", "superseded"] as const;
 export type WaitlistOfferStatus = (typeof waitlistOfferStatuses)[number];
@@ -124,6 +148,144 @@ export const registrations = sqliteTable(
     unique("registrations_event_id_user_id_unique").on(table.eventId, table.userId),
     index("registrations_event_id_status_idx").on(table.eventId, table.status),
     index("registrations_user_id_idx").on(table.userId),
+  ],
+);
+
+/** Fixed, server-priced ticket choices for an event. No rows means the event is free. */
+export const ticketTiers = sqliteTable(
+  "ticket_tiers",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Money is always stored as integer minor units: kopecks for RUB. */
+    priceMinor: integer("price_minor").notNull(),
+    quota: integer("quota"),
+    salesStartAt: integer("sales_start_at", { mode: "timestamp" }),
+    salesEndAt: integer("sales_end_at", { mode: "timestamp" }),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [index("ticket_tiers_event_id_sort_order_idx").on(table.eventId, table.sortOrder, table.id)],
+);
+
+/** Optional event-scoped products that can be bought together with one ticket. */
+export const eventProducts = sqliteTable(
+  "event_products",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<EventProductKind>().notNull().default("merchandise"),
+    name: text("name").notNull(),
+    description: text("description"),
+    priceMinor: integer("price_minor").notNull(),
+    /** Null stock means unlimited; sold quantities are reserved at checkout. */
+    stock: integer("stock"),
+    maxPerOrder: integer("max_per_order").notNull().default(1),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [index("event_products_event_id_sort_order_idx").on(table.eventId, table.sortOrder, table.id)],
+);
+
+/**
+ * The durable purchase state machine. Provider responses are evidence attached in
+ * payment_attempts/refunds; this row is the business decision about the ticket.
+ */
+export const ticketOrders = sqliteTable(
+  "ticket_orders",
+  {
+    id: text("id").primaryKey(),
+    eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "restrict" }),
+    ticketTierId: integer("ticket_tier_id").notNull().references(() => ticketTiers.id, { onDelete: "restrict" }),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    ticketName: text("ticket_name").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    currency: text("currency").notNull().default("RUB"),
+    status: text("status").$type<TicketOrderStatus>().notNull().default("awaiting_payment"),
+    /** Provider expiry is authoritative; a local timeout only asks ЮKassa to cancel. */
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    paidAt: integer("paid_at", { mode: "timestamp" }),
+    fulfilledAt: integer("fulfilled_at", { mode: "timestamp" }),
+    canceledAt: integer("canceled_at", { mode: "timestamp" }),
+    refundedAt: integer("refunded_at", { mode: "timestamp" }),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [
+    index("ticket_orders_event_status_idx").on(table.eventId, table.status),
+    index("ticket_orders_user_created_idx").on(table.userId, table.createdAt),
+    uniqueIndex("ticket_orders_active_event_user_unique")
+      .on(table.eventId, table.userId)
+      .where(sql`${table.status} NOT IN ('canceled', 'refunded')`),
+  ],
+);
+
+/** Immutable price/name snapshots used for totals, receipts, inventory, and refunds. */
+export const orderItems = sqliteTable(
+  "order_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    orderId: text("order_id").notNull().references(() => ticketOrders.id, { onDelete: "cascade" }),
+    ticketTierId: integer("ticket_tier_id").references(() => ticketTiers.id, { onDelete: "restrict" }),
+    eventProductId: integer("event_product_id").references(() => eventProducts.id, { onDelete: "restrict" }),
+    kind: text("kind").$type<OrderItemKind>().notNull(),
+    name: text("name").notNull(),
+    unitAmountMinor: integer("unit_amount_minor").notNull(),
+    quantity: integer("quantity").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("order_items_order_id_idx").on(table.orderId),
+    index("order_items_ticket_tier_id_idx").on(table.ticketTierId),
+    index("order_items_event_product_id_idx").on(table.eventProductId),
+  ],
+);
+
+export const paymentAttempts = sqliteTable(
+  "payment_attempts",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => ticketOrders.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("yookassa"),
+    providerPaymentId: text("provider_payment_id"),
+    idempotenceKey: text("idempotence_key").notNull(),
+    status: text("status").$type<PaymentAttemptStatus>().notNull().default("pending"),
+    confirmationUrl: text("confirmation_url"),
+    providerCreatedAt: text("provider_created_at"),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [
+    unique("payment_attempts_provider_payment_id_unique").on(table.providerPaymentId),
+    unique("payment_attempts_idempotence_key_unique").on(table.idempotenceKey),
+    index("payment_attempts_order_id_idx").on(table.orderId),
+  ],
+);
+
+export const refunds = sqliteTable(
+  "refunds",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => ticketOrders.id, { onDelete: "cascade" }),
+    paymentAttemptId: text("payment_attempt_id").notNull().references(() => paymentAttempts.id, { onDelete: "restrict" }),
+    providerRefundId: text("provider_refund_id"),
+    idempotenceKey: text("idempotence_key").notNull(),
+    amountMinor: integer("amount_minor").notNull(),
+    status: text("status").$type<RefundStatus>().notNull().default("pending"),
+    reason: text("reason").notNull(),
+    failureReason: text("failure_reason"),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [
+    unique("refunds_provider_refund_id_unique").on(table.providerRefundId),
+    unique("refunds_idempotence_key_unique").on(table.idempotenceKey),
+    index("refunds_order_id_idx").on(table.orderId),
   ],
 );
 
