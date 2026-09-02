@@ -49,8 +49,10 @@ import { assignableChats, chatById, chatCatalog, setChatCity } from "../core/cha
 import { botEventLink, miniAppEventLink } from "../core/links";
 import { cancelRegistration, joinEvent } from "../core/registration";
 import {
+  cancelPendingOrder,
   createCheckout,
   orderForUser,
+  ordersForUser,
   reconcilePayment,
   reconcileRefund,
   refundCanceledEvent,
@@ -421,6 +423,18 @@ export const app = new Elysia()
     .get("/orders/:id", ({ params, user, status }) => {
       const order = orderForUser(db, params.id, user.id);
       return order ?? error(status, 404, "order_not_found");
+    }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
+    .get("/orders", ({ user }) => ordersForUser(db, user.id))
+    .post("/orders/:id/cancel", async ({ params, user, status }) => {
+      if (!paymentProvider) return error(status, 503, "payments_not_configured");
+      try {
+        const result = await cancelPendingOrder(db, paymentProvider, params.id, user.id, now());
+        if ("error" in result) return error(status, result.error === "order_not_found" ? 404 : 409, result.error);
+        return result;
+      } catch (cause) {
+        console.error(`YooKassa payment cancellation failed for order ${params.id}`, cause instanceof Error ? cause.message : "unknown error");
+        return error(status, 503, "payment_temporarily_unavailable");
+      }
     }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
     .post("/events/:id/cancel", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");

@@ -2,7 +2,9 @@ import { beforeEach, expect, test } from "bun:test";
 import { createDb, migrate, type Db } from "@sku/db";
 
 import {
+  cancelPendingOrder,
   createCheckout,
+  ordersForUser,
   reconcilePayment,
   refundCanceledEvent,
   sweepTicketPayments,
@@ -219,6 +221,33 @@ test("an active payment is reused only for the exact same basket", async () => {
   expect(await checkout(1, [{ productId: 20, quantity: 1 }])).toEqual(first);
   expect(await checkout(1, [{ productId: 21, quantity: 1 }])).toEqual({ error: "active_order_exists" });
   expect(provider.createCalls).toBe(1);
+});
+
+test("purchase history includes the event, basket lines, and payment controls", async () => {
+  await checkout(1, [{ productId: 22, variantId: 31, quantity: 2 }]);
+
+  expect(ordersForUser(db, 2)).toEqual([]);
+  expect(ordersForUser(db, 1)).toMatchObject([{
+    status: "awaiting_payment",
+    confirmationUrl: expect.stringContaining("https://pay.example/"),
+    amountMinor: 650000,
+    currency: "RUB",
+    event: { id: 1, title: "Paid run", status: "published" },
+    items: [
+      { kind: "ticket", name: "Standard", variantName: null, unitAmountMinor: 150000, quantity: 1 },
+      { kind: "merchandise", name: "Variant T-shirt", variantName: "L", unitAmountMinor: 250000, quantity: 2 },
+    ],
+  }]);
+});
+
+test("a user can cancel an unfinished basket and release its inventory", async () => {
+  const result = await checkout();
+  if ("error" in result) throw new Error(result.error);
+
+  expect(await cancelPendingOrder(db, provider, result.orderId, 2, now)).toEqual({ error: "order_not_found" });
+  expect(await cancelPendingOrder(db, provider, result.orderId, 1, now)).toMatchObject({ status: "canceled" });
+  expect(provider.payments.get("pay-1")?.status).toBe("canceled");
+  expect(await checkout(2)).not.toHaveProperty("error");
 });
 
 test("a pending checkout consumes tier inventory and prevents overselling", async () => {

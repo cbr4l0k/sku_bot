@@ -302,7 +302,7 @@ export const EventDetailScreen = () => {
             <>
               {canBuyTicket && detail.ticketTiers.length > 0 ? <div className="hairline my-4" /> : null}
               <div className="eyebrow mb-3">{t("detail.extras")}</div>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2">
                 {availableProducts.map((product) => {
                   const quantity = selectedProductQuantity(product);
                   const variants = availableVariants(product);
@@ -311,21 +311,37 @@ export const EventDetailScreen = () => {
                   const claimed = product.variants.length > 0 ? selectedVariant?.claimed ?? 0 : product.claimed;
                   const remaining = remainingStock === null ? product.maxPerOrder : Math.min(product.maxPerOrder, remainingStock - claimed);
                   return (
-                    <div key={product.id} className="flex flex-col gap-2">
+                    <div
+                      key={product.id}
+                      className="flex flex-col gap-2 rounded-xl border px-3 py-3"
+                      style={{
+                        borderColor: quantity > 0 ? "var(--flare)" : "var(--hair)",
+                        background: quantity > 0 ? "var(--flare-soft)" : "transparent",
+                      }}
+                    >
                       <div className="flex items-center gap-3">
                         <button
                           type="button"
-                          className="min-w-0 flex-1 text-left"
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
                           onClick={() => {
                             if (product.variants.length > 0 && !selectedVariant) return;
                             setProductQuantity(product.id, quantity > 0 ? 0 : 1);
                           }}
                         >
-                        <span className="block text-[14px] font-medium">{quantity > 0 ? "✅ " : "⬜ "}{product.name}</span>
-                        <span className="block text-[11px] text-hint">
-                          {t(product.kind === "merchandise" ? "detail.merchandise" : "detail.addon")} · {price(product.priceMinor)}
-                        </span>
-                        {product.description ? <span className="mt-0.5 block text-[11px] text-hint">{product.description}</span> : null}
+                          <span
+                            className="grid h-5 w-5 shrink-0 place-items-center rounded-full border"
+                            style={{ borderColor: quantity > 0 ? "var(--flare)" : "var(--hair)" }}
+                            aria-hidden
+                          >
+                            {quantity > 0 ? <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--flare)" }} /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[14px] font-medium">{product.name}</span>
+                            <span className="block text-[11px] text-hint">
+                              {t(product.kind === "merchandise" ? "detail.merchandise" : "detail.addon")} · {price(product.priceMinor)}
+                            </span>
+                            {product.description ? <span className="mt-0.5 block text-[11px] text-hint">{product.description}</span> : null}
+                          </span>
                         </button>
                         {quantity > 0 ? (
                           <div className="flex items-center gap-2">

@@ -101,6 +101,25 @@ export type Checkout = {
   expiresAt: string;
 };
 
+export type PurchaseOrder = Checkout & {
+  event: {
+    id: number;
+    title: string;
+    startsAt: string;
+    status: string;
+  };
+  amountMinor: number;
+  currency: string;
+  createdAt: string;
+  items: Array<{
+    kind: OrderItemRow["kind"];
+    name: string;
+    variantName: string | null;
+    unitAmountMinor: number;
+    quantity: number;
+  }>;
+};
+
 const orderView = (order: OrderRow, confirmationUrl: string | null): Checkout => ({
   orderId: order.id,
   status: order.status,
@@ -632,4 +651,73 @@ export const orderForUser = (db: Db, orderId: string, userId: number) => {
   const order = orderById(db, orderId);
   if (!order || order.user_id !== userId) return null;
   return orderView(order, attemptForOrder(db, order.id)?.confirmation_url ?? null);
+};
+
+export const ordersForUser = (db: Db, userId: number): PurchaseOrder[] => {
+  const orders = db.$client.query<OrderRow & {
+    event_title: string;
+    event_starts_at: number;
+    event_status: string;
+    created_at: number;
+  }, [number]>(`
+    SELECT o.id, o.event_id, o.ticket_tier_id, o.user_id, o.ticket_name,
+      o.amount_minor, o.currency, o.status, o.expires_at, o.created_at,
+      e.title AS event_title, e.starts_at AS event_starts_at, e.status AS event_status
+    FROM ticket_orders o
+    JOIN events e ON e.id = o.event_id
+    WHERE o.user_id = ?
+    ORDER BY o.created_at DESC, o.id DESC
+  `).all(userId);
+
+  return orders.map((order) => ({
+    ...orderView(order, attemptForOrder(db, order.id)?.confirmation_url ?? null),
+    event: {
+      id: order.event_id,
+      title: order.event_title,
+      startsAt: new Date(order.event_starts_at * 1000).toISOString(),
+      status: order.event_status,
+    },
+    amountMinor: order.amount_minor,
+    currency: order.currency,
+    createdAt: new Date(order.created_at * 1000).toISOString(),
+    items: itemsForOrder(db, order.id).map((item) => ({
+      kind: item.kind,
+      name: item.name,
+      variantName: item.variant_name,
+      unitAmountMinor: item.unit_amount_minor,
+      quantity: item.quantity,
+    })),
+  }));
+};
+
+/** Release an unfinished basket immediately instead of making the user wait for expiry. */
+export const cancelPendingOrder = async (
+  db: Db,
+  provider: PaymentProvider,
+  orderId: string,
+  userId: number,
+  now: Date,
+): Promise<Checkout | { error: "order_not_found" | "order_not_cancelable" }> => {
+  const initial = orderById(db, orderId);
+  if (!initial || initial.user_id !== userId) return { error: "order_not_found" };
+  if (!["awaiting_payment", "cancel_pending"].includes(initial.status)) return { error: "order_not_cancelable" };
+
+  const attempt = attemptForOrder(db, orderId);
+  const timestamp = seconds(now);
+  if (!attempt?.provider_payment_id) {
+    db.$client.query("UPDATE ticket_orders SET status = 'canceled', canceled_at = ?, updated_at = ? WHERE id = ?")
+      .run(timestamp, timestamp, orderId);
+    return orderView(orderById(db, orderId)!, null);
+  }
+
+  await reconcilePayment(db, provider, attempt.provider_payment_id, now);
+  const current = orderById(db, orderId)!;
+  if (!["awaiting_payment", "cancel_pending"].includes(current.status)) return { error: "order_not_cancelable" };
+
+  db.$client.query("UPDATE ticket_orders SET status = 'cancel_pending', updated_at = ? WHERE id = ?")
+    .run(timestamp, orderId);
+  await provider.cancelPayment(attempt.provider_payment_id, `user-cancel-${orderId}`);
+  await reconcilePayment(db, provider, attempt.provider_payment_id, now);
+  const canceled = orderById(db, orderId)!;
+  return orderView(canceled, attemptForOrder(db, orderId)?.confirmation_url ?? null);
 };
