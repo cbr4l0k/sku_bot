@@ -162,7 +162,7 @@ const activeOrderForUser = (db: Db, eventId: number, userId: number) => db.$clie
   SELECT id, event_id, ticket_tier_id, user_id, ticket_name, amount_minor, currency, status, expires_at
   FROM ticket_orders
   WHERE event_id = ? AND user_id = ?
-    AND status IN ('awaiting_payment', 'payment_succeeded', 'cancel_pending')
+    AND status = 'awaiting_payment'
   ORDER BY created_at DESC LIMIT 1
 `).get(eventId, userId);
 
@@ -606,8 +606,8 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
     effects.push(...(await reconcilePayment(db, provider, row.provider_payment_id, now)).effects);
   }
 
-  const expiring = db.$client.query<{ id: string; provider_payment_id: string | null; idempotence_key: string }, [number]>(`
-    SELECT o.id, p.provider_payment_id, p.idempotence_key
+  const expiring = db.$client.query<{ id: string; provider_payment_id: string | null }, [number]>(`
+    SELECT o.id, p.provider_payment_id
     FROM ticket_orders o JOIN payment_attempts p ON p.order_id = o.id
     WHERE o.status IN ('awaiting_payment', 'cancel_pending') AND o.expires_at <= ?
   `).all(timestamp);
@@ -617,12 +617,17 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
         .run(timestamp, timestamp, row.id);
       continue;
     }
-    const reconciled = await reconcilePayment(db, provider, row.provider_payment_id, now);
-    effects.push(...reconciled.effects);
+    // Payments with provider ids were reconciled in the pass above.
     const current = orderById(db, row.id);
     if (current && ["awaiting_payment", "cancel_pending"].includes(current.status)) {
-      await provider.cancelPayment(row.provider_payment_id, `cancel-${row.id}`);
-      effects.push(...(await reconcilePayment(db, provider, row.provider_payment_id, now)).effects);
+      // One-stage YooKassa payments cannot be canceled through /payments/:id/cancel
+      // while they are pending. Abandon the checkout locally, release its inventory,
+      // and keep polling it above until YooKassa reports a terminal status. A late
+      // success is automatically refunded by reconcilePayment.
+      db.$client.query("UPDATE ticket_orders SET status = 'cancel_pending', updated_at = ? WHERE id = ?")
+        .run(timestamp, row.id);
+      db.$client.query("UPDATE payment_attempts SET confirmation_url = NULL, updated_at = ? WHERE order_id = ?")
+        .run(timestamp, row.id);
     }
   }
 
@@ -690,10 +695,13 @@ export const ordersForUser = (db: Db, userId: number): PurchaseOrder[] => {
   }));
 };
 
-/** Release an unfinished basket immediately instead of making the user wait for expiry. */
+/**
+ * Abandon an unfinished checkout locally. Pending one-stage YooKassa payments
+ * cannot be canceled via the API, so the sweeper keeps reconciling the remote
+ * payment and refunds it if it somehow succeeds after abandonment.
+ */
 export const cancelPendingOrder = async (
   db: Db,
-  provider: PaymentProvider,
   orderId: string,
   userId: number,
   now: Date,
@@ -710,14 +718,11 @@ export const cancelPendingOrder = async (
     return orderView(orderById(db, orderId)!, null);
   }
 
-  await reconcilePayment(db, provider, attempt.provider_payment_id, now);
-  const current = orderById(db, orderId)!;
-  if (!["awaiting_payment", "cancel_pending"].includes(current.status)) return { error: "order_not_cancelable" };
-
-  db.$client.query("UPDATE ticket_orders SET status = 'cancel_pending', updated_at = ? WHERE id = ?")
-    .run(timestamp, orderId);
-  await provider.cancelPayment(attempt.provider_payment_id, `user-cancel-${orderId}`);
-  await reconcilePayment(db, provider, attempt.provider_payment_id, now);
-  const canceled = orderById(db, orderId)!;
-  return orderView(canceled, attemptForOrder(db, orderId)?.confirmation_url ?? null);
+  transaction(db, () => {
+    db.$client.query("UPDATE ticket_orders SET status = 'cancel_pending', updated_at = ? WHERE id = ?")
+      .run(timestamp, orderId);
+    db.$client.query("UPDATE payment_attempts SET confirmation_url = NULL, updated_at = ? WHERE id = ?")
+      .run(timestamp, attempt.id);
+  });
+  return orderView(orderById(db, orderId)!, null);
 };

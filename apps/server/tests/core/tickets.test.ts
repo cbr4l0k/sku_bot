@@ -49,10 +49,6 @@ class FakeProvider implements PaymentProvider {
     return payment;
   }
 
-  async cancelPayment(paymentId: string) {
-    return this.setPaymentStatus(paymentId, "canceled");
-  }
-
   async createRefund(input: Parameters<PaymentProvider["createRefund"]>[0]) {
     this.refundInputs.push(input);
     const existing = [...this.refunds.values()].find((refund) => refund.metadata.idempotence_key === input.idempotenceKey);
@@ -240,14 +236,20 @@ test("purchase history includes the event, basket lines, and payment controls", 
   }]);
 });
 
-test("a user can cancel an unfinished basket and release its inventory", async () => {
+test("a user can abandon an unfinished basket and immediately start another checkout", async () => {
   const result = await checkout();
   if ("error" in result) throw new Error(result.error);
 
-  expect(await cancelPendingOrder(db, provider, result.orderId, 2, now)).toEqual({ error: "order_not_found" });
-  expect(await cancelPendingOrder(db, provider, result.orderId, 1, now)).toMatchObject({ status: "canceled" });
-  expect(provider.payments.get("pay-1")?.status).toBe("canceled");
-  expect(await checkout(2)).not.toHaveProperty("error");
+  expect(await cancelPendingOrder(db, result.orderId, 2, now)).toEqual({ error: "order_not_found" });
+  expect(await cancelPendingOrder(db, result.orderId, 1, now)).toMatchObject({
+    status: "cancel_pending",
+    confirmationUrl: null,
+  });
+  expect(provider.payments.get("pay-1")?.status).toBe("pending");
+
+  const replacement = await checkout(1, [{ productId: 21, quantity: 1 }]);
+  expect(replacement).not.toHaveProperty("error");
+  expect(replacement).not.toMatchObject({ orderId: result.orderId });
 });
 
 test("a pending checkout consumes tier inventory and prevents overselling", async () => {
@@ -263,12 +265,13 @@ test("provider amount tampering never creates a registration", async () => {
   expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM registrations").get()?.count).toBe(0);
 });
 
-test("an expired pending payment is canceled remotely before inventory is released", async () => {
+test("an expired pending payment is abandoned locally without calling unsupported remote cancellation", async () => {
   await checkout();
   db.$client.query("UPDATE ticket_orders SET expires_at = ?").run(Math.floor(now.getTime() / 1000) - 1);
   await sweepTicketPayments(db, provider, now);
-  expect(provider.payments.get("pay-1")?.status).toBe("canceled");
-  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("canceled");
+  expect(provider.payments.get("pay-1")?.status).toBe("pending");
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("cancel_pending");
+  expect(ordersForUser(db, 1)[0]?.confirmationUrl).toBeNull();
   expect(await checkout(2)).not.toHaveProperty("error");
 });
 
@@ -305,13 +308,18 @@ test("event cancellation refunds a merch-only order without changing registratio
   expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("refunded");
 });
 
-test("a payment that lands after cancellation is automatically refunded, never fulfilled", async () => {
-  await checkout();
-  db.$client.query("UPDATE ticket_orders SET status = 'cancel_pending'").run();
+test("a payment that lands after abandonment is refunded without disturbing a replacement order", async () => {
+  db.$client.query("UPDATE ticket_tiers SET quota = NULL WHERE id = 10").run();
+  const abandoned = await checkout();
+  if ("error" in abandoned) throw new Error(abandoned.error);
+  await cancelPendingOrder(db, abandoned.orderId, 1, now);
+  const replacement = await checkout(1, [{ productId: 21, quantity: 1 }]);
+  if ("error" in replacement) throw new Error(replacement.error);
   provider.setPaymentStatus("pay-1", "succeeded");
 
   const result = await reconcilePayment(db, provider, "pay-1", now);
   expect(result.effects).toContainEqual({ kind: "ticket_refunded", userId: 1, eventId: 1 });
   expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM registrations").get()?.count).toBe(0);
-  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("refunded");
+  expect(db.$client.query<{ status: string }, [string]>("SELECT status FROM ticket_orders WHERE id = ?").get(abandoned.orderId)?.status).toBe("refunded");
+  expect(db.$client.query<{ status: string }, [string]>("SELECT status FROM ticket_orders WHERE id = ?").get(replacement.orderId)?.status).toBe("awaiting_payment");
 });

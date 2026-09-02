@@ -42,7 +42,6 @@ export interface PaymentProvider {
     receiptItems: PaymentReceiptItem[];
   }): Promise<ProviderPayment>;
   getPayment(paymentId: string): Promise<ProviderPayment>;
-  cancelPayment(paymentId: string, idempotenceKey: string): Promise<ProviderPayment>;
   createRefund(input: {
     paymentId: string;
     amountMinor: number;

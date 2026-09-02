@@ -122,7 +122,7 @@ durable order.
 ```text
 awaiting_payment ── provider succeeded ──> payment_succeeded ──> fulfilled
        │                                          │                  │
-       ├── expiry ──> cancel_pending ──> canceled │                  │
+       ├── abandon/expiry ──> cancel_pending ── provider canceled ──> canceled
        │                                          └── event canceled ┤
        └── late success after cancellation ──────────────────────────┤
                                                                   refund_pending
@@ -136,11 +136,13 @@ selected variant names, unit prices, kinds, and quantities are
 copied into immutable order-item snapshots; the server calculates the total from
 those snapshots and sends separate receipt lines (ticket/add-ons as services,
 merchandise as commodities). Client totals and Telegram button data are never
-trusted. An expired
-reservation is released only after ЮKassa confirms cancellation. If success arrives
-after local cancellation, the order is refunded rather than fulfilled. Repeated API
-calls and webhook deliveries are safe: provider mutations use stable idempotency
-keys and every local transition is conditional and transactional.
+trusted. Abandoning or expiring a pending one-stage payment releases its local
+reservation immediately and allows a new checkout. ЮKassa cannot cancel that payment
+through the API while it is pending, so the server keeps reconciling it until ЮKassa
+reports a terminal status. If success arrives after local abandonment, the order is
+refunded rather than fulfilled. Repeated API calls and webhook deliveries are safe:
+provider mutations use stable idempotency keys and every local transition is
+conditional and transactional.
 
 Products may define optional alternatives such as `S`, `M`, and `L`. When alternatives
 exist, checkout requires one of them and tracks stock independently per alternative;

@@ -126,13 +126,6 @@ export class YooKassaProvider implements PaymentProvider {
     return this.#payment(await this.#request(`/payments/${encodeURIComponent(paymentId)}`));
   }
 
-  async cancelPayment(paymentId: string, idempotenceKey: string) {
-    return this.#payment(await this.#request(`/payments/${encodeURIComponent(paymentId)}/cancel`, {
-      method: "POST",
-      body: "{}",
-    }, idempotenceKey));
-  }
-
   async createRefund(input: Parameters<PaymentProvider["createRefund"]>[0]) {
     if (this.vatCode !== undefined && !input.customerPhone) throw new Error("A customer phone is required for a YooKassa refund receipt");
     assertReceiptTotal(input.amountMinor, input.receiptItems);

@@ -426,13 +426,12 @@ export const app = new Elysia()
     }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
     .get("/orders", ({ user }) => ordersForUser(db, user.id))
     .post("/orders/:id/cancel", async ({ params, user, status }) => {
-      if (!paymentProvider) return error(status, 503, "payments_not_configured");
       try {
-        const result = await cancelPendingOrder(db, paymentProvider, params.id, user.id, now());
+        const result = await cancelPendingOrder(db, params.id, user.id, now());
         if ("error" in result) return error(status, result.error === "order_not_found" ? 404 : 409, result.error);
         return result;
       } catch (cause) {
-        console.error(`YooKassa payment cancellation failed for order ${params.id}`, cause instanceof Error ? cause.message : "unknown error");
+        console.error(`Payment abandonment failed for order ${params.id}`, cause instanceof Error ? cause.message : "unknown error");
         return error(status, 503, "payment_temporarily_unavailable");
       }
     }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })

@@ -243,7 +243,7 @@ export const ticketOrders = sqliteTable(
     index("ticket_orders_user_created_idx").on(table.userId, table.createdAt),
     uniqueIndex("ticket_orders_unsettled_event_user_unique")
       .on(table.eventId, table.userId)
-      .where(sql`${table.status} IN ('awaiting_payment', 'payment_succeeded', 'cancel_pending')`),
+      .where(sql`${table.status} = 'awaiting_payment'`),
   ],
 );
 
