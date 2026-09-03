@@ -391,6 +391,11 @@ export const AdminEventScreen = () => {
                     {order.buyer.phone ? <span>{order.buyer.phone}</span> : null}
                     <span>#{order.orderId.slice(0, 8)}</span>
                   </div>
+                  <div className="mt-2">
+                    <Chip tone={order.includesTicket ? "soft" : "plain"}>
+                      {t(order.includesTicket ? "admin.purchaseIncludesTicket" : "admin.purchaseOnly")}
+                    </Chip>
+                  </div>
                 </div>
                 <Chip tone={order.status === "fulfilled" ? "soft" : order.status === "refund_pending" ? "flare" : "plain"}>
                   {t(purchaseStatusKey[order.status])}

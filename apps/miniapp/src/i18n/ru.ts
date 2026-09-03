@@ -233,6 +233,8 @@ export const ru = {
   "admin.purchases": "История покупок",
   "admin.noPurchases": "Для этого события пока ничего не покупали.",
   "admin.boughtAt": "Создан: {date}",
+  "admin.purchaseIncludesTicket": "Включает билет на событие",
+  "admin.purchaseOnly": "Только покупка · без билета",
   "admin.refundOrder": "Вернуть всю сумму",
   "admin.refundConfirm": "Вернуть {amount} покупателю {name}? ЮKassa получит запрос на полный возврат всего заказа.",
   "admin.refundRequested": "Возврат отправлен в ЮKassa",

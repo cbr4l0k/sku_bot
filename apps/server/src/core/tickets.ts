@@ -142,6 +142,7 @@ export type PurchaseOrder = Checkout & {
 
 export type EventPurchaseOrder = {
   orderId: string;
+  includesTicket: boolean;
   buyer: {
     userId: number;
     firstName: string;
@@ -860,6 +861,7 @@ export const ordersForEvent = (db: Db, eventId: number): EventPurchaseOrder[] =>
 
   return orders.map((order) => ({
     orderId: order.id,
+    includesTicket: order.ticket_tier_id !== null,
     buyer: {
       userId: order.user_id,
       firstName: order.first_name,

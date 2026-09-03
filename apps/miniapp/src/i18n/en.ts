@@ -234,6 +234,8 @@ export const en: Dict = {
   "admin.purchases": "Purchase history",
   "admin.noPurchases": "Nothing has been purchased for this event yet.",
   "admin.boughtAt": "Created: {date}",
+  "admin.purchaseIncludesTicket": "Includes event ticket",
+  "admin.purchaseOnly": "Purchase only · no event ticket",
   "admin.refundOrder": "Refund full amount",
   "admin.refundConfirm": "Refund {amount} to {name}? YooKassa will receive a full-refund request for the entire order.",
   "admin.refundRequested": "Refund sent to YooKassa",

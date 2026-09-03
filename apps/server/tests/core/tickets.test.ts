@@ -256,6 +256,7 @@ test("admin event history includes ticket and merchandise-only orders with immut
   const history = ordersForEvent(db, 1);
   expect(history).toHaveLength(2);
   expect(history.find((order) => order.orderId === merchOrder.orderId)).toMatchObject({
+    includesTicket: false,
     buyer: { userId: 2, firstName: "Other" },
     amountMinor: 250000,
     status: "fulfilled",
@@ -263,6 +264,7 @@ test("admin event history includes ticket and merchandise-only orders with immut
     items: [{ kind: "merchandise", name: "Club T-shirt / M", quantity: 1 }],
   });
   expect(history.find((order) => order.orderId === ticketOrder.orderId)).toMatchObject({
+    includesTicket: true,
     buyer: { userId: 1, firstName: "Runner" },
     amountMinor: 200000,
     status: "fulfilled",
