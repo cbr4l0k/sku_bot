@@ -10,6 +10,7 @@ import {
   reconcileRefund,
   refundCanceledEvent,
   requestAdminRefund,
+  requestUserRefund,
   sweepTicketPayments,
 } from "../../src/core/tickets";
 import {
@@ -76,6 +77,10 @@ class FakeProvider implements PaymentProvider {
     const refund = this.refunds.get(refundId);
     if (!refund) throw new Error("refund missing");
     return refund;
+  }
+
+  async getRefundsForPayment(paymentId: string) {
+    return [...this.refunds.values()].filter((refund) => refund.paymentId === paymentId);
   }
 
   setPaymentStatus(paymentId: string, status: ProviderPaymentStatus) {
@@ -328,6 +333,107 @@ test("a definitive provider rejection fails the refund once and requires an expl
   expect(provider.refundInputs).toHaveLength(2);
   expect(provider.refundInputs[1]?.idempotenceKey).not.toBe(provider.refundInputs[0]?.idempotenceKey);
   expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM refunds").get()?.count).toBe(2);
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+});
+
+test("the admin refund button reconciles a full refund already created in YooKassa", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refundError = new PaymentProviderError("YooKassa /refunds returned 403", 403, JSON.stringify({
+    code: "forbidden",
+    description: "Refunds are restricted for this shop",
+  }));
+  await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now);
+  expect(provider.refundInputs).toHaveLength(1);
+
+  provider.refundError = null;
+  provider.refunds.set("dashboard-refund", {
+    id: "dashboard-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 150000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+
+  expect(await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).toEqual({
+    effects: [{ kind: "ticket_refunded", userId: 1, eventId: 1 }],
+  });
+  expect(provider.refundInputs).toHaveLength(1);
+  expect(db.$client.query<{ provider_refund_id: string | null; status: string }, []>(
+    "SELECT provider_refund_id, status FROM refunds",
+  ).get()).toEqual({ provider_refund_id: "dashboard-refund", status: "succeeded" });
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+});
+
+test("the admin refund button refuses to overwrite a partial YooKassa refund", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refunds.set("partial-refund", {
+    id: "partial-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 50000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+
+  await expect(requestAdminRefund(db, provider, 1, checkoutResult.orderId, now))
+    .rejects.toThrow("already has a partial refund");
+  expect(provider.refundInputs).toHaveLength(0);
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "fulfilled", refundable: true });
+});
+
+test("user cancellation reconciles a full refund already created in YooKassa", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refunds.set("dashboard-refund", {
+    id: "dashboard-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 150000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+
+  expect(await requestUserRefund(db, provider, 1, 1, now)).toEqual([
+    { kind: "ticket_refunded", userId: 1, eventId: 1 },
+  ]);
+  expect(provider.refundInputs).toHaveLength(0);
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("canceled");
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+});
+
+test("event cancellation reconciles a full refund already created in YooKassa", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refunds.set("dashboard-refund", {
+    id: "dashboard-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 150000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+  db.$client.query("UPDATE events SET status = 'canceled' WHERE id = 1").run();
+
+  expect(await refundCanceledEvent(db, provider, 1, now)).toEqual([
+    { kind: "ticket_refunded", userId: 1, eventId: 1 },
+  ]);
+  expect(provider.refundInputs).toHaveLength(0);
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("canceled");
   expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
 });
 

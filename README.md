@@ -185,7 +185,11 @@ unfinished creation, cancellation, or refund work after restarts and outages.
 Branch admins can inspect the complete order history for each event, including
 merchandise-only purchases and refunded or canceled orders, and request a full
 refund for one exact order. The same provider verification, idempotency, participant
-notification, and delayed capacity release apply to an admin-requested refund.
+notification, and delayed capacity release apply to an admin-requested refund. Before
+creating any refund—whether requested by an admin, a participant, event cancellation,
+or late-payment recovery—the shared refund engine checks the order's immutable provider
+payment id for an existing full YooKassa refund. A refund completed in the YooKassa
+dashboard is reconciled locally instead of being submitted a second time.
 
 ### Enabling payments
 

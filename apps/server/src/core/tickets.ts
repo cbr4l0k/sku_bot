@@ -467,6 +467,39 @@ export const ensureRefund = async (
   reason: RequestedRefundReason,
   now: Date,
 ): Promise<NotificationEffect[]> => {
+  const knownOrder = orderById(db, orderId);
+  if (!knownOrder) throw new Error(`Order ${orderId} was not found`);
+  if (knownOrder.status === "refunded") return [];
+  const knownRefund = db.$client.query<RefundRow, [string]>(`
+    SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+    FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1
+  `).get(orderId);
+  // A known provider refund can be fetched directly. Otherwise, first look for
+  // one created in the YooKassa dashboard or recovered after an ambiguous API
+  // failure, using the immutable provider payment id as the link.
+  if (knownRefund?.provider_refund_id && knownRefund.status !== "canceled") {
+    return applyRefund(db, knownRefund, await provider.getRefund(knownRefund.provider_refund_id), now);
+  }
+  const knownAttempt = db.$client.query<AttemptRow, [string]>(`
+    SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
+    FROM payment_attempts
+    WHERE order_id = ? AND status = 'succeeded' AND provider_payment_id IS NOT NULL
+    ORDER BY created_at DESC LIMIT 1
+  `).get(orderId);
+  if (!knownAttempt?.provider_payment_id) throw new Error(`Order ${orderId} has no succeeded payment`);
+  const activeRefunds = (await provider.getRefundsForPayment(knownAttempt.provider_payment_id))
+    .filter((refund) => refund.status !== "canceled");
+  const existingFullRefunds = activeRefunds.filter((refund) =>
+    refund.amountMinor === knownOrder.amount_minor && refund.currency === knownOrder.currency
+  );
+  if (existingFullRefunds.length > 1) {
+    throw new Error(`Payment ${knownAttempt.provider_payment_id} has multiple active full refunds; nothing was changed`);
+  }
+  if (existingFullRefunds[0]) return reconcileRefund(db, provider, existingFullRefunds[0].id, now);
+  if (activeRefunds.length > 0) {
+    throw new Error(`Payment ${knownAttempt.provider_payment_id} already has a partial refund; nothing was changed`);
+  }
+
   const prepared = transaction(db, () => {
     const order = orderById(db, orderId);
     if (!order) throw new Error(`Order ${orderId} was not found`);
@@ -498,9 +531,9 @@ export const ensureRefund = async (
     return { order, attempt, refund, done: false as const };
   });
   if (prepared.done) return [];
-  if (prepared.refund.provider_refund_id) {
-    return applyRefund(db, prepared.refund, await provider.getRefund(prepared.refund.provider_refund_id), now);
-  }
+  if (prepared.refund.provider_refund_id) return applyRefund(
+    db, prepared.refund, await provider.getRefund(prepared.refund.provider_refund_id), now,
+  );
   try {
     const remote = await provider.createRefund({
       paymentId: prepared.attempt.provider_payment_id!,
@@ -640,6 +673,7 @@ export const requestAdminRefund = async (
   if (!["fulfilled", "payment_succeeded", "refund_failed"].includes(order.status)) {
     return { error: "order_not_refundable" };
   }
+
   return { effects: await ensureRefund(db, provider, order.id, "admin_requested", now) };
 };
 

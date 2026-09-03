@@ -81,6 +81,11 @@ Repairs local state after a refund was created directly in the ЮKassa dashboard
 its webhook was missed. It fetches the refund from ЮKassa and matches it to the
 local order using the original provider payment id.
 
+All application refund paths perform this lookup automatically before creating a new
+refund, including admin requests, participant cancellations, event cancellations, and
+late-payment recovery. Use this script as a diagnostic or recovery fallback when the
+Mini App is unavailable or an older deployed version left inconsistent local state.
+
 You may pass either identifier. If the value returns 404 as a refund id, the script
 treats it as a payment id and asks ЮKassa for its refunds. It proceeds only when it
 can identify exactly one full refund. An empty result usually means the id belongs

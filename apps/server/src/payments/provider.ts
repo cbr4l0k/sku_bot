@@ -54,6 +54,7 @@ export interface PaymentProvider {
     idempotenceKey: string;
   }): Promise<ProviderRefund>;
   getRefund(refundId: string): Promise<ProviderRefund>;
+  getRefundsForPayment(paymentId: string): Promise<ProviderRefund[]>;
 }
 
 export class PaymentProviderError extends Error {
