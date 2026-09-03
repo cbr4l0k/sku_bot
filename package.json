@@ -9,6 +9,10 @@
     "typecheck": "bun run --cwd packages/cities typecheck && bun run --cwd packages/db typecheck && bun run --cwd apps/server typecheck && bun run --cwd apps/miniapp typecheck",
     "test": "bun test",
     "db:generate": "bun run --cwd packages/db db:generate",
-    "db:migrate": "bun run --cwd packages/db db:migrate"
+    "db:migrate": "bun run --cwd packages/db db:migrate",
+    "event:people": "bun run scripts/event-people.ts",
+    "event:remove-person": "bun run scripts/remove-event-person.ts",
+    "event:reset": "bun run scripts/reset-event.ts",
+    "refund:reconcile": "bun run scripts/reconcile-yookassa-refund.ts"
   }
 }

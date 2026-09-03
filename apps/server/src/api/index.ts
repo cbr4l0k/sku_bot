@@ -52,10 +52,12 @@ import {
   cancelPendingOrder,
   createCheckout,
   orderForUser,
+  ordersForEvent,
   ordersForUser,
   reconcilePayment,
   reconcileRefund,
   refundCanceledEvent,
+  requestAdminRefund,
   requestUserRefund,
 } from "../core/tickets";
 import { eventStats, globalStats } from "../core/stats";
@@ -844,6 +846,29 @@ export const app = new Elysia()
         waitlistConversion: stats.offersMade ? stats.offersAccepted / stats.offersMade : 0,
       };
     }, { params: idParams })
+    .get("/admin/events/:id/orders", ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      return { orders: ordersForEvent(db, params.id), paymentsConfigured };
+    }, { params: idParams })
+    .post("/admin/events/:id/orders/:orderId/refund", async ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      if (!paymentProvider) return error(status, 503, "payments_not_configured");
+      try {
+        const result = await requestAdminRefund(db, paymentProvider, params.id, params.orderId, now());
+        if ("error" in result) return error(status, result.error === "order_not_found" ? 404 : 409, result.error);
+        fireEffects(result.effects);
+        const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+        return order ?? error(status, 404, "order_not_found");
+      } catch (cause) {
+        console.error(`Admin refund failed for order ${params.orderId}`, cause instanceof Error ? cause.message : "unknown error");
+        const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+        return order?.status === "refund_pending"
+          ? order
+          : error(status, 503, "payment_temporarily_unavailable");
+      }
+    }, { params: t.Object({ id: t.Numeric(), orderId: t.String({ minLength: 1 }) }) })
     .get("/admin/events/:id/link", async ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);

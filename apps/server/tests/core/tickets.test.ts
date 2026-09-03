@@ -4,16 +4,20 @@ import { createDb, migrate, type Db } from "@sku/db";
 import {
   cancelPendingOrder,
   createCheckout,
+  ordersForEvent,
   ordersForUser,
   reconcilePayment,
+  reconcileRefund,
   refundCanceledEvent,
+  requestAdminRefund,
   sweepTicketPayments,
 } from "../../src/core/tickets";
-import type {
-  PaymentProvider,
-  ProviderPayment,
-  ProviderPaymentStatus,
-  ProviderRefund,
+import {
+  PaymentProviderError,
+  type PaymentProvider,
+  type ProviderPayment,
+  type ProviderPaymentStatus,
+  type ProviderRefund,
 } from "../../src/payments/provider";
 
 class FakeProvider implements PaymentProvider {
@@ -23,6 +27,7 @@ class FakeProvider implements PaymentProvider {
   createCalls = 0;
   createInputs: Array<Parameters<PaymentProvider["createPayment"]>[0]> = [];
   refundInputs: Array<Parameters<PaymentProvider["createRefund"]>[0]> = [];
+  refundError: Error | null = null;
 
   async createPayment(input: Parameters<PaymentProvider["createPayment"]>[0]) {
     this.createCalls += 1;
@@ -51,6 +56,7 @@ class FakeProvider implements PaymentProvider {
 
   async createRefund(input: Parameters<PaymentProvider["createRefund"]>[0]) {
     this.refundInputs.push(input);
+    if (this.refundError) throw this.refundError;
     const existing = [...this.refunds.values()].find((refund) => refund.metadata.idempotence_key === input.idempotenceKey);
     if (existing) return existing;
     const refund: ProviderRefund = {
@@ -236,6 +242,110 @@ test("purchase history includes the event, basket lines, and payment controls", 
   }]);
 });
 
+test("admin event history includes ticket and merchandise-only orders with immutable basket details", async () => {
+  const ticketOrder = await checkout(1, [{ productId: 21, quantity: 1 }]);
+  if ("error" in ticketOrder) throw new Error(ticketOrder.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+
+  const merchOrder = await merchCheckout(2, [{ productId: 20, quantity: 1 }]);
+  if ("error" in merchOrder) throw new Error(merchOrder.error);
+  provider.setPaymentStatus("pay-2", "succeeded");
+  await reconcilePayment(db, provider, "pay-2", now);
+
+  const history = ordersForEvent(db, 1);
+  expect(history).toHaveLength(2);
+  expect(history.find((order) => order.orderId === merchOrder.orderId)).toMatchObject({
+    buyer: { userId: 2, firstName: "Other" },
+    amountMinor: 250000,
+    status: "fulfilled",
+    refundable: true,
+    items: [{ kind: "merchandise", name: "Club T-shirt / M", quantity: 1 }],
+  });
+  expect(history.find((order) => order.orderId === ticketOrder.orderId)).toMatchObject({
+    buyer: { userId: 1, firstName: "Runner" },
+    amountMinor: 200000,
+    status: "fulfilled",
+    refundable: true,
+    items: [
+      { kind: "ticket", name: "Standard", quantity: 1 },
+      { kind: "addon", name: "Photo pack", quantity: 1 },
+    ],
+  });
+});
+
+test("admin can request a full refund for one specific event order", async () => {
+  const checkoutResult = await checkout(1, [{ productId: 21, quantity: 1 }]);
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+
+  expect(await requestAdminRefund(db, provider, 999, checkoutResult.orderId, now)).toEqual({ error: "order_not_found" });
+  expect(await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).toMatchObject({
+    effects: [{ kind: "ticket_refunded", userId: 1, eventId: 1 }],
+  });
+  expect(provider.refundInputs[0]).toMatchObject({
+    orderId: checkoutResult.orderId,
+    amountMinor: 200000,
+    reason: "admin_requested",
+  });
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).toEqual({ error: "order_not_refundable" });
+});
+
+test("a definitive provider rejection fails the refund once and requires an explicit retry", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refundError = new PaymentProviderError("YooKassa /refunds returned 403", 403, JSON.stringify({
+    type: "error",
+    code: "forbidden",
+    description: "Refunds are restricted for this shop",
+  }));
+
+  expect(await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).toEqual({
+    effects: [{ kind: "ticket_refund_failed", userId: 1, eventId: 1 }],
+  });
+  expect(db.$client.query<{ status: string; failure_reason: string | null }, []>(
+    "SELECT status, failure_reason FROM refunds",
+  ).get()).toEqual({ status: "canceled", failure_reason: "Refunds are restricted for this shop" });
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({
+    status: "refund_failed",
+    refundFailureReason: "Refunds are restricted for this shop",
+    refundable: true,
+  });
+
+  await sweepTicketPayments(db, provider, now);
+  expect(provider.refundInputs).toHaveLength(1);
+
+  provider.refundError = null;
+  expect(await requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).toMatchObject({
+    effects: [{ kind: "ticket_refunded", userId: 1, eventId: 1 }],
+  });
+  expect(provider.refundInputs).toHaveLength(2);
+  expect(provider.refundInputs[1]?.idempotenceKey).not.toBe(provider.refundInputs[0]?.idempotenceKey);
+  expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM refunds").get()?.count).toBe(2);
+  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+});
+
+test("a transient provider failure leaves the refund pending for the sweeper", async () => {
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refundError = new PaymentProviderError("YooKassa /refunds returned 500", 500, "temporary failure");
+
+  await expect(requestAdminRefund(db, provider, 1, checkoutResult.orderId, now)).rejects.toThrow("returned 500");
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM refunds").get()?.status).toBe("pending");
+  expect(ordersForEvent(db, 1)[0]?.status).toBe("refund_pending");
+
+  provider.refundError = null;
+  await sweepTicketPayments(db, provider, now);
+  expect(provider.refundInputs).toHaveLength(2);
+  expect(ordersForEvent(db, 1)[0]?.status).toBe("refunded");
+});
+
 test("a user can abandon an unfinished basket and immediately start another checkout", async () => {
   const result = await checkout();
   if ("error" in result) throw new Error(result.error);
@@ -292,6 +402,51 @@ test("canceling an event refunds every fulfilled order and only then cancels its
       { description: "Club T-shirt / M", quantity: 2, unitAmountMinor: 250000 },
     ],
   });
+});
+
+test("a full refund created outside the app is matched by its YooKassa payment id", async () => {
+  await checkout();
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refunds.set("external-refund", {
+    id: "external-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 150000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+
+  expect(await reconcileRefund(db, provider, "external-refund", now)).toContainEqual({
+    kind: "ticket_refunded",
+    userId: 1,
+    eventId: 1,
+  });
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("refunded");
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("canceled");
+  expect(db.$client.query<{ provider_refund_id: string; reason: string }, []>(
+    "SELECT provider_refund_id, reason FROM refunds",
+  ).get()).toEqual({ provider_refund_id: "external-refund", reason: "external_refund" });
+});
+
+test("an external partial refund cannot be mistaken for a full order refund", async () => {
+  await checkout();
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await reconcilePayment(db, provider, "pay-1", now);
+  provider.refunds.set("partial-refund", {
+    id: "partial-refund",
+    paymentId: "pay-1",
+    status: "succeeded",
+    amountMinor: 50000,
+    currency: "RUB",
+    failureReason: null,
+    metadata: {},
+  });
+
+  await expect(reconcileRefund(db, provider, "partial-refund", now)).rejects.toThrow("is not a full RUB refund");
+  expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("fulfilled");
+  expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM refunds").get()?.count).toBe(0);
 });
 
 test("event cancellation refunds a merch-only order without changing registration state", async () => {

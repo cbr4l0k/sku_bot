@@ -1,8 +1,8 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import { sku, type AdminEventDraft, type EventStatus } from "../api";
-import { useI18n } from "../i18n";
+import { sku, type AdminEventDraft, type AdminPurchaseOrder, type EventStatus } from "../api";
+import { useI18n, type MessageKey } from "../i18n";
 import { bib, errorText, fullDate, fullName, percent } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource } from "../lib/useResource";
@@ -16,6 +16,7 @@ import { Sheet, SheetFooter, useConfirm, useToast } from "../ui/overlays";
 import {
   Button,
   Chip,
+  EmptyState,
   ErrorState,
   Loader,
   MiniBar,
@@ -96,6 +97,17 @@ const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose: () =>
 
 /* -------------------------------------------------------------------- screen */
 
+const purchaseStatusKey: Record<AdminPurchaseOrder["status"], MessageKey> = {
+  awaiting_payment: "purchases.status.awaiting_payment",
+  payment_succeeded: "purchases.status.payment_succeeded",
+  fulfilled: "purchases.status.fulfilled",
+  cancel_pending: "purchases.status.cancel_pending",
+  canceled: "purchases.status.canceled",
+  refund_pending: "purchases.status.refund_pending",
+  refunded: "purchases.status.refunded",
+  refund_failed: "purchases.status.refund_failed",
+};
+
 export const AdminEventScreen = () => {
   const { t, locale } = useI18n();
   const params = useParams();
@@ -110,9 +122,11 @@ export const AdminEventScreen = () => {
   const [assigning, setAssigning] = useState(false);
   const [editingTickets, setEditingTickets] = useState(false);
   const [editingProducts, setEditingProducts] = useState(false);
+  const [busyOrder, setBusyOrder] = useState<string | null>(null);
 
   const events = useResource(sku.organizerEvents);
   const stats = useResource(useCallback(() => sku.eventStats(id), [id]));
+  const purchases = useResource(useCallback(() => sku.eventPurchases(id), [id]), { pollMs: 15_000 });
 
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
 
@@ -211,6 +225,30 @@ export const AdminEventScreen = () => {
       },
       { onError: (error) => toast(errorText(t, error), "err") },
     );
+
+  const price = (minor: number, currency: string) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: minor % 100 === 0 ? 0 : 2,
+  }).format(minor / 100);
+
+  const refundOrder = async (order: AdminPurchaseOrder) => {
+    const amount = price(order.amountMinor, order.currency);
+    if (!(await confirm({
+      text: t("admin.refundConfirm", { name: fullName(order.buyer), amount }),
+      confirmLabel: t("admin.refundOrder"),
+      danger: true,
+    }))) return;
+    setBusyOrder(order.orderId);
+    void action.run(
+      async () => {
+        await sku.refundEventOrder(id, order.orderId);
+        toast(t("admin.refundRequested"));
+        await Promise.all([purchases.reload(true), stats.reload(true)]);
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    ).finally(() => setBusyOrder(null));
+  };
 
   if (events.loading && !events.data) {
     return (
@@ -329,6 +367,76 @@ export const AdminEventScreen = () => {
       ) : (
         <Loader label={t("common.loading")} />
       )}
+
+      <SectionRule label={t("admin.purchases")} />
+
+      {purchases.loading && !purchases.data ? <Loader label={t("common.loading")} /> : null}
+      {purchases.error && !purchases.data ? (
+        <ErrorState
+          message={errorText(t, purchases.error)}
+          retryLabel={t("common.retry")}
+          onRetry={() => void purchases.reload()}
+        />
+      ) : null}
+      {purchases.data?.orders.length === 0 ? <EmptyState text={t("admin.noPurchases")} /> : null}
+      {purchases.data && purchases.data.orders.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          {purchases.data.orders.map((order) => (
+            <article key={order.orderId} className="card px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="truncate text-[15px] font-semibold">{fullName(order.buyer)}</h2>
+                  <div className="num mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-hint">
+                    {order.buyer.username ? <TelegramUsername username={order.buyer.username} /> : null}
+                    {order.buyer.phone ? <span>{order.buyer.phone}</span> : null}
+                    <span>#{order.orderId.slice(0, 8)}</span>
+                  </div>
+                </div>
+                <Chip tone={order.status === "fulfilled" ? "soft" : order.status === "refund_pending" ? "flare" : "plain"}>
+                  {t(purchaseStatusKey[order.status])}
+                </Chip>
+              </div>
+              <p className="mt-2 text-[11px] text-hint">{t("admin.boughtAt", { date: fullDate(order.createdAt, locale) })}</p>
+              <div className="hairline my-3" />
+              <div className="flex flex-col gap-1.5">
+                {order.items.map((item, itemIndex) => (
+                  <div key={`${order.orderId}-${itemIndex}`} className="flex items-baseline justify-between gap-3 text-[13px]">
+                    <span className="min-w-0 break-words">
+                      {item.name}{item.variantName ? ` · ${item.variantName}` : ""}{item.quantity > 1 ? ` × ${item.quantity}` : ""}
+                    </span>
+                    <span className="num shrink-0 text-[12px] text-hint">
+                      {price(item.unitAmountMinor * item.quantity, order.currency)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="eyebrow">{t("purchases.total")}</span>
+                <span className="num text-[15px]">{price(order.amountMinor, order.currency)}</span>
+              </div>
+              {order.refundFailureReason ? (
+                <p className="mt-2 text-[12px] text-hint">{t("admin.refundFailure", { reason: order.refundFailureReason })}</p>
+              ) : null}
+              {order.refundable ? (
+                <Button
+                  block
+                  size="sm"
+                  variant="danger"
+                  className="mt-3"
+                  disabled={purchases.data?.paymentsConfigured !== true}
+                  loading={busyOrder === order.orderId}
+                  onClick={() => void refundOrder(order)}
+                >
+                  {t("admin.refundOrder")}
+                </Button>
+              ) : null}
+              {order.refundable && purchases.data?.paymentsConfigured !== true ? (
+                <p className="mt-2 text-[11px] text-hint">{t("admin.refundsUnavailable")}</p>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : null}
 
       {editing ? (
         <Sheet title={t("common.edit")} onClose={() => setEditing(false)}>

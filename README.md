@@ -77,6 +77,36 @@ docker compose start app
 
 Stale `-wal` and `-shm` sidecars must go with the old database; leaving them behind corrupts the restored one.
 
+## Event maintenance
+
+Use the repository scripts instead of inline `bun -e` commands. See the
+[maintenance scripts manual](scripts/README.md) for every command, argument, and
+safety check. Destructive cleanup scripts are previews by default and require
+`--apply` before they write anything:
+
+```sh
+# Find a participant's Telegram user id and inspect payment state.
+docker compose exec -T app bun run scripts/event-people.ts 17
+
+# Remove one registration after its paid ticket has been refunded.
+docker compose exec -T app bun run scripts/remove-event-person.ts 17 USER_ID
+docker compose exec -T app bun run scripts/remove-event-person.ts 17 USER_ID --apply
+
+# If the refund was created directly in YooKassa, reconcile it locally first.
+docker compose exec -T app bun run scripts/reconcile-yookassa-refund.ts REFUND_OR_PAYMENT_ID
+docker compose exec -T app bun run scripts/reconcile-yookassa-refund.ts REFUND_OR_PAYMENT_ID --apply
+
+# Reset registrations, queue, and local sales history while keeping the event setup.
+docker compose exec -T app bun run scripts/reset-event.ts 17
+docker compose exec -T app bun run scripts/reset-event.ts 17 --apply
+```
+
+The reset refuses to run while any order is not locally marked `refunded` or
+`canceled`. It permanently removes the event's local payment audit records, so take
+a database backup first. Removing one person preserves their payment history.
+Dashboard-created YooKassa refunds are matched using the immutable provider payment id;
+partial refunds are never treated as a fully refunded order.
+
 ## Environment
 
 | Variable | Purpose |
@@ -152,6 +182,10 @@ A paid attendee's cancellation keeps their registration and capacity reserved wh
 the refund is pending. It is canceled only after ЮKassa confirms the refund. If an
 event is canceled, refunds start automatically; the payment sweeper resumes any
 unfinished creation, cancellation, or refund work after restarts and outages.
+Branch admins can inspect the complete order history for each event, including
+merchandise-only purchases and refunded or canceled orders, and request a full
+refund for one exact order. The same provider verification, idempotency, participant
+notification, and delayed capacity release apply to an admin-requested refund.
 
 ### Enabling payments
 

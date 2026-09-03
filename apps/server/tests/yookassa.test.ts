@@ -5,8 +5,20 @@ import { YooKassaProvider } from "../src/payments/yookassa";
 test("YooKassa requests keep credentials server-side and carry idempotency, metadata, and receipt data", async () => {
   const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
     requests.push({ url: String(input), headers: new Headers(init?.headers), body });
+    if (String(input).includes("/refunds?")) {
+      return Response.json({
+        type: "list",
+        items: [{
+          id: "refund-1",
+          payment_id: "payment-1",
+          status: "succeeded",
+          amount: { value: "1500.00", currency: "RUB" },
+          metadata: {},
+        }],
+      });
+    }
     if (String(input).endsWith("/payments")) {
       return Response.json({
         id: "payment-1",
@@ -53,6 +65,11 @@ test("YooKassa requests keep credentials server-side and carry idempotency, meta
       receiptItems: [{ description: "Standard", quantity: 1, unitAmountMinor: 150000, paymentSubject: "service" }],
       idempotenceKey: "refund-key",
     });
+    expect(await provider.getRefundsForPayment("payment-1")).toMatchObject([{
+      id: "refund-1",
+      paymentId: "payment-1",
+      amountMinor: 150000,
+    }]);
 
     expect(requests[0]?.headers.get("authorization")).toBe(`Basic ${Buffer.from("shop:secret").toString("base64")}`);
     expect(requests[0]?.headers.get("idempotence-key")).toBe("payment-key");
@@ -73,6 +90,7 @@ test("YooKassa requests keep credentials server-side and carry idempotency, meta
       metadata: { order_id: "order-1" },
       receipt: { customer: { phone: "+79990000000" } },
     });
+    expect(requests[2]?.url).toBe("https://api.example/v3/refunds?payment_id=payment-1&limit=100");
   } finally {
     fetchSpy.mockRestore();
   }

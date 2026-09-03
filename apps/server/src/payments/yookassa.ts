@@ -20,6 +20,7 @@ const refundSchema = z.object({
   metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).default({}),
   cancellation_details: z.object({ reason: z.string().optional() }).optional(),
 });
+const refundListSchema = z.object({ items: z.array(refundSchema) });
 
 const minor = (value: string) => {
   const [major, fraction] = value.split(".");
@@ -155,5 +156,11 @@ export class YooKassaProvider implements PaymentProvider {
 
   async getRefund(refundId: string) {
     return this.#refund(await this.#request(`/refunds/${encodeURIComponent(refundId)}`));
+  }
+
+  async getRefundsForPayment(paymentId: string) {
+    const query = new URLSearchParams({ payment_id: paymentId, limit: "100" });
+    const list = refundListSchema.parse(await this.#request(`/refunds?${query}`));
+    return list.items.map((refund) => this.#refund(refund));
   }
 }

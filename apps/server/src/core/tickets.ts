@@ -7,6 +7,25 @@ const CHECKOUT_WINDOW_SECONDS = 60 * 60;
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
 const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
 
+const isDefinitiveProviderRejection = (error: unknown): error is PaymentProviderError =>
+  error instanceof PaymentProviderError
+  && error.status >= 400
+  && error.status < 500
+  && error.status !== 408
+  && error.status !== 429;
+
+const providerFailureReason = (error: PaymentProviderError) => {
+  try {
+    const body: unknown = JSON.parse(error.responseBody);
+    if (body && typeof body === "object" && "description" in body && typeof body.description === "string") {
+      return body.description;
+    }
+  } catch {
+    // Fall through to the raw provider response when it is not JSON.
+  }
+  return error.responseBody.trim() || error.message;
+};
+
 type TierRow = {
   id: number;
   event_id: number;
@@ -64,7 +83,8 @@ type RefundRow = {
   status: string;
   reason: RefundReason;
 };
-type RefundReason = "user_canceled" | "event_canceled" | "payment_after_cancellation";
+type RefundReason = "user_canceled" | "event_canceled" | "payment_after_cancellation" | "admin_requested" | "external_refund";
+type RequestedRefundReason = Exclude<RefundReason, "external_refund">;
 type OrderItemRow = {
   ticket_tier_id: number | null;
   event_product_id: number | null;
@@ -118,6 +138,26 @@ export type PurchaseOrder = Checkout & {
     unitAmountMinor: number;
     quantity: number;
   }>;
+};
+
+export type EventPurchaseOrder = {
+  orderId: string;
+  buyer: {
+    userId: number;
+    firstName: string;
+    lastName: string | null;
+    username: string | null;
+    phone: string | null;
+  };
+  amountMinor: number;
+  currency: string;
+  status: TicketOrderStatus;
+  createdAt: string;
+  paidAt: string | null;
+  refundedAt: string | null;
+  refundFailureReason: string | null;
+  refundable: boolean;
+  items: PurchaseOrder["items"];
 };
 
 const orderView = (order: OrderRow, confirmationUrl: string | null): Checkout => ({
@@ -423,7 +463,7 @@ export const ensureRefund = async (
   db: Db,
   provider: PaymentProvider,
   orderId: string,
-  reason: "user_canceled" | "event_canceled" | "payment_after_cancellation",
+  reason: RequestedRefundReason,
   now: Date,
 ): Promise<NotificationEffect[]> => {
   const prepared = transaction(db, () => {
@@ -439,7 +479,10 @@ export const ensureRefund = async (
       SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
       FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1
     `).get(orderId);
-    if (existing) return { order, attempt, refund: existing, done: false as const };
+    // A canceled provider refund is terminal. A later explicit retry needs a new
+    // local row and idempotence key; reusing the old one can only return the same
+    // canceled provider object forever.
+    if (existing && existing.status !== "canceled") return { order, attempt, refund: existing, done: false as const };
     const timestamp = seconds(now);
     const refund: RefundRow = {
       id: crypto.randomUUID(), order_id: orderId, payment_attempt_id: attempt.id,
@@ -457,24 +500,44 @@ export const ensureRefund = async (
   if (prepared.refund.provider_refund_id) {
     return applyRefund(db, prepared.refund, await provider.getRefund(prepared.refund.provider_refund_id), now);
   }
-  const remote = await provider.createRefund({
-    paymentId: prepared.attempt.provider_payment_id!,
-    amountMinor: prepared.order.amount_minor,
-    currency: "RUB",
-    orderId,
-    reason,
-    description: prepared.order.ticket_name ?? receiptItemsForOrder(db, prepared.order)[0]!.description,
-    receiptItems: receiptItemsForOrder(db, prepared.order),
-    ...(() => {
-      const phone = db.$client.query<{ phone: string | null }, [string]>(`
-        SELECT u.phone FROM users u JOIN ticket_orders o ON o.user_id = u.id WHERE o.id = ?
-      `).get(orderId)?.phone;
-      const digits = phone?.replace(/\D/g, "") ?? "";
-      return digits.length >= 8 && digits.length <= 15 ? { customerPhone: `+${digits}` } : {};
-    })(),
-    idempotenceKey: prepared.refund.idempotence_key,
-  });
-  return applyRefund(db, prepared.refund, remote, now);
+  try {
+    const remote = await provider.createRefund({
+      paymentId: prepared.attempt.provider_payment_id!,
+      amountMinor: prepared.order.amount_minor,
+      currency: "RUB",
+      orderId,
+      reason,
+      description: prepared.order.ticket_name ?? receiptItemsForOrder(db, prepared.order)[0]!.description,
+      receiptItems: receiptItemsForOrder(db, prepared.order),
+      ...(() => {
+        const phone = db.$client.query<{ phone: string | null }, [string]>(`
+          SELECT u.phone FROM users u JOIN ticket_orders o ON o.user_id = u.id WHERE o.id = ?
+        `).get(orderId)?.phone;
+        const digits = phone?.replace(/\D/g, "") ?? "";
+        return digits.length >= 8 && digits.length <= 15 ? { customerPhone: `+${digits}` } : {};
+      })(),
+      idempotenceKey: prepared.refund.idempotence_key,
+    });
+    return applyRefund(db, prepared.refund, remote, now);
+  } catch (error) {
+    // Authentication, permission, validation, and missing-resource errors cannot
+    // succeed by repeating the same request every 30 seconds. Record the failure
+    // and require an explicit retry after its cause has been corrected. Timeouts
+    // and rate limiting remain pending because they are expected to recover.
+    if (!isDefinitiveProviderRejection(error)) throw error;
+    const timestamp = seconds(now);
+    transaction(db, () => {
+      db.$client.query("UPDATE refunds SET status = 'canceled', failure_reason = ?, updated_at = ? WHERE id = ?")
+        .run(providerFailureReason(error), timestamp, prepared.refund.id);
+      db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
+        .run(timestamp, prepared.order.id);
+    });
+    return [{
+      kind: prepared.order.ticket_tier_id === null ? "purchase_refund_failed" : "ticket_refund_failed",
+      userId: prepared.order.user_id,
+      eventId: prepared.order.event_id,
+    }];
+  }
 };
 
 /** Fetching the payment here is the authenticity check; webhook JSON is never trusted. */
@@ -564,6 +627,21 @@ export const requestUserRefund = async (db: Db, provider: PaymentProvider, event
   return ensureRefund(db, provider, order.id, "user_canceled", now);
 };
 
+export const requestAdminRefund = async (
+  db: Db,
+  provider: PaymentProvider,
+  eventId: number,
+  orderId: string,
+  now: Date,
+): Promise<{ effects: NotificationEffect[] } | { error: "order_not_found" | "order_not_refundable" }> => {
+  const order = orderById(db, orderId);
+  if (!order || order.event_id !== eventId) return { error: "order_not_found" };
+  if (!["fulfilled", "payment_succeeded", "refund_failed"].includes(order.status)) {
+    return { error: "order_not_refundable" };
+  }
+  return { effects: await ensureRefund(db, provider, order.id, "admin_requested", now) };
+};
+
 export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundId: string, now: Date) => {
   const remote = await provider.getRefund(refundId);
   let refund = db.$client.query<RefundRow, [string]>(`
@@ -579,6 +657,65 @@ export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundI
       db.$client.query("UPDATE refunds SET provider_refund_id = ? WHERE id = ?").run(remote.id, refund.id);
       refund = { ...refund, provider_refund_id: remote.id };
     }
+  }
+  if (!refund) {
+    // Refunds created in the YooKassa dashboard do not carry the order metadata
+    // that we attach to API-created refunds. The refund object still contains the
+    // original payment id, which is a unique and authoritative local link.
+    refund = transaction(db, () => {
+      const attempt = db.$client.query<AttemptRow, [string]>(`
+        SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
+        FROM payment_attempts
+        WHERE provider_payment_id = ? AND status = 'succeeded'
+      `).get(remote.paymentId);
+      if (!attempt) return null;
+      if (remote.metadata.order_id && remote.metadata.order_id !== attempt.order_id) {
+        throw new Error(`Refund ${remote.id} order metadata does not match payment ${remote.paymentId}`);
+      }
+
+      const existing = db.$client.query<RefundRow, [string]>(`
+        SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
+        FROM refunds WHERE order_id = ? ORDER BY created_at DESC LIMIT 1
+      `).get(attempt.order_id);
+      if (existing) {
+        if (existing.provider_refund_id !== null && existing.provider_refund_id !== remote.id) {
+          throw new Error(`Order ${attempt.order_id} already has a different refund`);
+        }
+        db.$client.query("UPDATE refunds SET provider_refund_id = ? WHERE id = ?").run(remote.id, existing.id);
+        return { ...existing, provider_refund_id: remote.id };
+      }
+
+      const order = orderById(db, attempt.order_id);
+      if (!order) return null;
+      if (remote.amountMinor !== order.amount_minor || remote.currency !== order.currency) {
+        throw new Error(`External refund ${remote.id} is not a full ${order.currency} refund for order ${order.id}`);
+      }
+
+      const timestamp = seconds(now);
+      const created: RefundRow = {
+        id: crypto.randomUUID(),
+        order_id: order.id,
+        payment_attempt_id: attempt.id,
+        provider_refund_id: remote.id,
+        idempotence_key: crypto.randomUUID(),
+        amount_minor: order.amount_minor,
+        status: "pending",
+        reason: "external_refund",
+      };
+      db.$client.query(`
+        INSERT INTO refunds
+          (id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', 'external_refund', ?, ?)
+      `).run(
+        created.id, created.order_id, created.payment_attempt_id, created.provider_refund_id,
+        created.idempotence_key, created.amount_minor, timestamp, timestamp,
+      );
+      if (remote.status === "pending") {
+        db.$client.query("UPDATE ticket_orders SET status = 'refund_pending', updated_at = ? WHERE id = ?")
+          .run(timestamp, order.id);
+      }
+      return created;
+    });
   }
   return refund ? applyRefund(db, refund, remote, now) : [];
 };
@@ -636,9 +773,12 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
     FROM refunds WHERE status = 'pending'
   `).all();
   for (const refund of pendingRefunds) {
-    effects.push(...(refund.provider_refund_id
-      ? applyRefund(db, refund, await provider.getRefund(refund.provider_refund_id), now)
-      : await ensureRefund(db, provider, refund.order_id, refund.reason, now)));
+    if (refund.provider_refund_id) {
+      effects.push(...applyRefund(db, refund, await provider.getRefund(refund.provider_refund_id), now));
+    } else {
+      if (refund.reason === "external_refund") throw new Error(`External refund ${refund.id} has no provider id`);
+      effects.push(...await ensureRefund(db, provider, refund.order_id, refund.reason, now));
+    }
   }
 
   // A restart or temporary provider outage must not strand refunds triggered by
@@ -685,6 +825,56 @@ export const ordersForUser = (db: Db, userId: number): PurchaseOrder[] => {
     amountMinor: order.amount_minor,
     currency: order.currency,
     createdAt: new Date(order.created_at * 1000).toISOString(),
+    items: itemsForOrder(db, order.id).map((item) => ({
+      kind: item.kind,
+      name: item.name,
+      variantName: item.variant_name,
+      unitAmountMinor: item.unit_amount_minor,
+      quantity: item.quantity,
+    })),
+  }));
+};
+
+export const ordersForEvent = (db: Db, eventId: number): EventPurchaseOrder[] => {
+  const orders = db.$client.query<OrderRow & {
+    first_name: string;
+    last_name: string | null;
+    username: string | null;
+    phone: string | null;
+    created_at: number;
+    paid_at: number | null;
+    refunded_at: number | null;
+    refund_failure_reason: string | null;
+  }, [number]>(`
+    SELECT o.id, o.event_id, o.ticket_tier_id, o.user_id, o.ticket_name,
+      o.amount_minor, o.currency, o.status, o.expires_at, o.created_at,
+      o.paid_at, o.refunded_at,
+      u.first_name, u.last_name, u.username, u.phone,
+      (SELECT r.failure_reason FROM refunds r WHERE r.order_id = o.id ORDER BY r.created_at DESC LIMIT 1)
+        AS refund_failure_reason
+    FROM ticket_orders o
+    JOIN users u ON u.id = o.user_id
+    WHERE o.event_id = ?
+    ORDER BY o.created_at DESC, o.id DESC
+  `).all(eventId);
+
+  return orders.map((order) => ({
+    orderId: order.id,
+    buyer: {
+      userId: order.user_id,
+      firstName: order.first_name,
+      lastName: order.last_name,
+      username: order.username,
+      phone: order.phone,
+    },
+    amountMinor: order.amount_minor,
+    currency: order.currency,
+    status: order.status,
+    createdAt: new Date(order.created_at * 1000).toISOString(),
+    paidAt: order.paid_at === null ? null : new Date(order.paid_at * 1000).toISOString(),
+    refundedAt: order.refunded_at === null ? null : new Date(order.refunded_at * 1000).toISOString(),
+    refundFailureReason: order.refund_failure_reason,
+    refundable: ["fulfilled", "payment_succeeded", "refund_failed"].includes(order.status),
     items: itemsForOrder(db, order.id).map((item) => ({
       kind: item.kind,
       name: item.name,
