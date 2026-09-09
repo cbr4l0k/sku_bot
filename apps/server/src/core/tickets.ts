@@ -217,7 +217,7 @@ const eligible = (db: Db, eventId: number, userId: number) => db.$client.query<{
 `).get(eventId, eventId, userId)?.ok === 1;
 
 const confirmedCount = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>(
-  "SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')",
+  "SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in') AND is_staff = 0",
 ).get(eventId)?.count ?? 0;
 const pendingCount = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>(
   "SELECT count(*) AS count FROM ticket_orders WHERE event_id = ? AND ticket_tier_id IS NOT NULL AND status IN ('awaiting_payment', 'payment_succeeded')",

@@ -42,8 +42,9 @@ const publishedEvent = (eventId: number) => db.select({
   waitlistEnabled: events.waitlistEnabled,
 }).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"), isNull(events.endedAt))).get();
 
+/** Spots taken, which is never what the staff on the roster are holding. */
 const confirmedCount = (eventId: number) => db.select({ count: count() }).from(registrations)
-  .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"])))
+  .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"]), eq(registrations.isStaff, false)))
   .get()?.count ?? 0;
 const pendingTicketCount = (eventId: number) => db.select({ count: count() }).from(ticketOrders)
   .where(and(

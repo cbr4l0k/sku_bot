@@ -1,12 +1,16 @@
 import type { CitySlug } from "@sku/cities";
 import type { Db } from "@sku/db";
-type Registration = { event_id: number; user_id: number; status: string };
+type Registration = { event_id: number; user_id: number; status: string; is_staff: number };
 export const eventStats = (db: Db, eventId: number) => {
-  const registrations = db.$client.query<Registration, [number]>("SELECT event_id, user_id, status FROM registrations WHERE event_id = ?").all(eventId);
+  const all = db.$client.query<Registration, [number]>("SELECT event_id, user_id, status, is_staff FROM registrations WHERE event_id = ?").all(eventId);
+  // Staff hold no spot, so they are counted apart: mixing them into "registered"
+  // would flatter the attendance rate and understate how full a run really is.
+  const registrations = all.filter((row) => row.is_staff === 0);
+  const staff = all.filter((row) => row.is_staff === 1);
   const registered = registrations.filter((row) => row.status === "registered" || row.status === "checked_in").length;
   const checkedIn = registrations.filter((row) => row.status === "checked_in").length;
   const offers = db.$client.query<{ status: string }, [number]>("SELECT status FROM waitlist_offers WHERE event_id = ?").all(eventId);
-  return { registered, waitlisted: registrations.filter((row) => row.status === "waitlisted").length, checkedIn, attendanceRate: registered ? checkedIn / registered : 0, offersMade: offers.length, offersAccepted: offers.filter((row) => row.status === "accepted").length };
+  return { registered, waitlisted: registrations.filter((row) => row.status === "waitlisted").length, checkedIn, staff: staff.filter((row) => row.status !== "canceled").length, staffCheckedIn: staff.filter((row) => row.status === "checked_in").length, attendanceRate: registered ? checkedIn / registered : 0, offersMade: offers.length, offersAccepted: offers.filter((row) => row.status === "accepted").length };
 };
 /** Narrowed to one branch for a branch admin; the whole club when `city` is null. */
 export const globalStats = (db: Db, city: CitySlug | null = null) => {
@@ -14,9 +18,11 @@ export const globalStats = (db: Db, city: CitySlug | null = null) => {
     ? db.$client.query<{ id: number; capacity: number | null }, []>("SELECT id, capacity FROM events").all()
     : db.$client.query<{ id: number; capacity: number | null }, [string]>("SELECT id, capacity FROM events WHERE city = ?").all(city);
   const scope = new Set(events.map((row) => row.id));
+  // Club-wide numbers describe the people the club serves, not the people
+  // running it, so staff rows are left out of every one of them.
   const registrations = db.$client
-    .query<Registration, []>("SELECT event_id, user_id, status FROM registrations").all()
-    .filter((row) => scope.has(row.event_id));
+    .query<Registration, []>("SELECT event_id, user_id, status, is_staff FROM registrations").all()
+    .filter((row) => scope.has(row.event_id) && row.is_staff === 0);
   const confirmed = registrations.filter((row) => row.status === "registered" || row.status === "checked_in");
   const checkedIn = registrations.filter((row) => row.status === "checked_in");
   const capacityEvents = events.filter((row) => row.capacity !== null && row.capacity > 0);

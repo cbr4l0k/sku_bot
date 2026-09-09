@@ -70,6 +70,7 @@ import {
   requestAdminRefund,
   requestUserRefund,
 } from "../core/tickets";
+import { syncAllStaff, syncCityStaff, syncEventStaff } from "../core/staff";
 import { eventStats, globalStats } from "../core/stats";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
@@ -271,9 +272,18 @@ const purchaseLines = (eventId: number, userId: number) => db.$client
     handedOverAt: row.handed_over_at === null ? null : new Date(row.handed_over_at * 1000).toISOString(),
   }));
 
+/**
+ * Who is told when the event changes. Staff are on the roster by right of the
+ * job, so an organizer editing their own run is not also an attendee to notify
+ * about the edit.
+ */
 const activeParticipantIds = (eventId: number) => db.select({ userId: registrations.userId })
   .from(registrations)
-  .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in", "waitlisted"])))
+  .where(and(
+    eq(registrations.eventId, eventId),
+    inArray(registrations.status, ["registered", "checked_in", "waitlisted"]),
+    eq(registrations.isStaff, false),
+  ))
   .all()
   .map((row) => row.userId);
 
@@ -398,16 +408,16 @@ export const app = new Elysia()
       return db.select().from(events)
         .where(and(eq(events.status, "published"), isNull(events.endedAt), visibleToUser(user.id), inCityForUser(user.city, user.id)))
         .orderBy(asc(events.startsAt)).all().map((event) => {
-          const registration = db.select({ status: registrations.status }).from(registrations)
+          const registration = db.select({ status: registrations.status, isStaff: registrations.isStaff }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
           const offer = db.select({ id: waitlistOffers.id, expiresAt: waitlistOffers.expiresAt }).from(waitlistOffers)
             .where(and(eq(waitlistOffers.eventId, event.id), eq(waitlistOffers.userId, user.id), eq(waitlistOffers.status, "pending")))
             .orderBy(desc(waitlistOffers.offeredAt)).get();
           const confirmedCount = db.select({ value: sql<number>`count(*)` }).from(registrations)
-            .where(and(eq(registrations.eventId, event.id), inArray(registrations.status, ["registered", "checked_in"]))).get()?.value ?? 0;
+            .where(and(eq(registrations.eventId, event.id), inArray(registrations.status, ["registered", "checked_in"]), eq(registrations.isStaff, false))).get()?.value ?? 0;
           const waitlistSize = db.select({ value: sql<number>`count(*)` }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.status, "waitlisted"))).get()?.value ?? 0;
-          return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myPendingOffer: offer ? { id: offer.id, expiresAt: offer.expiresAt.toISOString() } : null, confirmedCount, waitlistSize };
+          return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myPendingOffer: offer ? { id: offer.id, expiresAt: offer.expiresAt.toISOString() } : null, confirmedCount, waitlistSize };
         });
     })
     .get("/events/:id", async ({ params, user, status }) => {
@@ -416,13 +426,13 @@ export const app = new Elysia()
       await syncMemberships(user.id, chatsOfEvent(db, event.id));
       // A restricted event stays invisible rather than forbidden — do not leak that it exists.
       if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
-      const registration = db.select({ status: registrations.status }).from(registrations)
+      const registration = db.select({ status: registrations.status, isStaff: registrations.isStaff }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
       const waitlisted = registration?.status === "waitlisted";
       const waitlistPosition = waitlisted ? db.select({ userId: registrations.userId }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.status, "waitlisted"))).orderBy(asc(registrations.createdAt), asc(registrations.id)).all()
         .findIndex((row) => row.userId === user.id) + 1 : null;
-      return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myWaitlistPosition: waitlistPosition };
+      return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myWaitlistPosition: waitlistPosition };
     }, { params: idParams })
     .post("/events/:id/join", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
@@ -594,6 +604,7 @@ export const app = new Elysia()
         return row;
       })();
       if (groups) setEventChats(db, created.id, groups);
+      syncEventStaff(db, created.id, now());
       return eventView(created);
     }, { body: eventCreateBody })
     .patch("/organizer/events/:id", ({ params, body, actor, status }) => {
@@ -786,6 +797,9 @@ export const app = new Elysia()
     .get("/organizer/events/:id/attendance", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
+      // The roster is the one screen that must never be stale about who is on it,
+      // and it is cheap to reconcile: a no-op once the rows are there.
+      syncEventStaff(db, params.id, now());
       const attendance = db.select({
         userId: users.id,
         firstName: users.firstName,
@@ -793,6 +807,7 @@ export const app = new Elysia()
         username: users.username,
         phone: users.phone,
         status: registrations.status,
+        isStaff: registrations.isStaff,
         checkedInAt: registrations.checkedInAt,
         ticketName: sql<string | null>`(
           SELECT o.ticket_name FROM ticket_orders o
@@ -805,7 +820,8 @@ export const app = new Elysia()
           ORDER BY o.created_at DESC LIMIT 1
         )`,
       })
-        .from(registrations).innerJoin(users, eq(registrations.userId, users.id)).where(eq(registrations.eventId, params.id)).orderBy(asc(registrations.createdAt)).all()
+        // Staff sit under the people the run is actually for.
+        .from(registrations).innerJoin(users, eq(registrations.userId, users.id)).where(eq(registrations.eventId, params.id)).orderBy(asc(registrations.isStaff), asc(registrations.createdAt)).all()
         .map((row) => ({
           ...row,
           checkedInAt: iso(row.checkedInAt),
@@ -910,6 +926,8 @@ export const app = new Elysia()
         ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
+      // A run that moved branch is staffed by the admins of the branch it moved to.
+      if (body.city !== undefined && body.city !== event.city) syncEventStaff(db, params.id, now());
       // Switching the queue back on hands out the spots the dormant queue missed.
       if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(issueOffers(db, params.id, now()));
       if (body.status === "canceled" && event.status !== "canceled") {
@@ -941,6 +959,7 @@ export const app = new Elysia()
         db.delete(eventOrganizers).where(eq(eventOrganizers.eventId, params.id)).run();
         for (const userId of [...new Set(body.userIds)]) db.insert(eventOrganizers).values({ eventId: params.id, userId }).run();
       })();
+      syncEventStaff(db, params.id, now());
       return { userIds: [...new Set(body.userIds)] };
     }, { params: idParams, body: t.Object({ userIds: t.Array(t.Integer()) }) })
     .get("/admin/events/:id/stats", ({ params, actor, status }) => {
@@ -998,12 +1017,16 @@ export const app = new Elysia()
     .post("/admin/users/:id/ban", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
-      db.update(users).set({ isBanned: true }).where(eq(users.id, params.id)).run(); return { ok: true };
+      db.update(users).set({ isBanned: true }).where(eq(users.id, params.id)).run();
+      syncAllStaff(db, now());
+      return { ok: true };
     }, { params: idParams })
     .post("/admin/users/:id/unban", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
-      db.update(users).set({ isBanned: false }).where(eq(users.id, params.id)).run(); return { ok: true };
+      db.update(users).set({ isBanned: false }).where(eq(users.id, params.id)).run();
+      syncAllStaff(db, now());
+      return { ok: true };
     }, { params: idParams })
     /**
      * Appoint or unappoint someone in one branch. A general admin may set anything;
@@ -1021,6 +1044,7 @@ export const app = new Elysia()
         db.insert(userCityRoles).values({ city: body.city, userId: params.id, role: body.role })
           .onConflictDoUpdate({ target: [userCityRoles.city, userCityRoles.userId], set: { role: body.role } }).run();
       }
+      syncCityStaff(db, body.city, now());
       return {
         roles: db.select({ city: userCityRoles.city, role: userCityRoles.role }).from(userCityRoles)
           .where(eq(userCityRoles.userId, params.id)).orderBy(asc(userCityRoles.city)).all(),
@@ -1057,13 +1081,17 @@ export const app = new Elysia()
     .post("/admin/users/:id/promote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
-      db.update(users).set({ isAdmin: true }).where(eq(users.id, params.id)).run(); return { ok: true };
+      db.update(users).set({ isAdmin: true }).where(eq(users.id, params.id)).run();
+      syncAllStaff(db, now());
+      return { ok: true };
     }, { params: idParams })
     .post("/admin/users/:id/demote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (adminIds.has(params.id)) return error(status, 409, "configured_admin_cannot_be_demoted");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
-      db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run(); return { ok: true };
+      db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run();
+      syncAllStaff(db, now());
+      return { ok: true };
     }, { params: idParams })
     .get("/admin/stats", ({ query, actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");

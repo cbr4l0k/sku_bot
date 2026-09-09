@@ -35,6 +35,9 @@ export const inviteCandidates = (db: Db): InviteCandidate[] => db.$client
       AND e.status = 'published'
       AND e.ended_at IS NULL
       AND r.status IN ('registered', 'checked_in')
+      -- Staff are on the roster by right of the job; they are not guests on
+      -- trial in the club's own chat, and must never be swept out of it.
+      AND r.is_staff = 0
       AND u.is_banned = 0
       AND NOT EXISTS (
         SELECT 1 FROM chat_guests g
@@ -97,6 +100,7 @@ export const settleTrials = (db: Db, eventId: number, now: Date): TrialVerdict[]
             AND other.status = 'published'
             AND other.ended_at IS NULL
             AND r.status IN ('registered', 'checked_in')
+            AND r.is_staff = 0
           ORDER BY other.starts_at
           LIMIT 1
         ) AS carriedTo

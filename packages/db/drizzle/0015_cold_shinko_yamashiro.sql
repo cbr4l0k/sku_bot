@@ -1,0 +1,1 @@
+ALTER TABLE `registrations` ADD `is_staff` integer DEFAULT false NOT NULL;

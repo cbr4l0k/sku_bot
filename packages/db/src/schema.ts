@@ -140,6 +140,14 @@ export const registrations = sqliteTable(
     eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
     userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     status: text("status").$type<RegistrationStatus>().notNull().default("registered"),
+    /**
+     * On the list by right of the job rather than by signing up. Staff rows are
+     * real registrations — they check in, hold a ticket, and appear on the
+     * roster like anyone else — but they are invisible to every count that
+     * decides how many spots are left, so running an event never costs the
+     * club one of its own places.
+     */
+    isStaff: integer("is_staff", { mode: "boolean" }).notNull().default(false),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
     checkedInAt: integer("checked_in_at", { mode: "timestamp" }),

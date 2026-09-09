@@ -106,6 +106,13 @@
       "when": 1788948559215,
       "tag": "0014_easy_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1788952636731,
+      "tag": "0015_cold_shinko_yamashiro",
+      "breakpoints": true
     }
   ]
 }

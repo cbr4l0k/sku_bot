@@ -6,6 +6,7 @@ import { bot } from "./bot";
 import { refreshChatStates } from "./bot/membership";
 import { syncConfiguredAdmins } from "./core/admins";
 import { seedChatsFromEnv } from "./core/chats";
+import { syncAllStaff } from "./core/staff";
 import { db } from "./db";
 import { loadEnv } from "./env";
 import { startSweeper } from "./sweeper";
@@ -15,6 +16,10 @@ const isProduction = env.NODE_ENV === "production";
 
 migrate(db);
 syncConfiguredAdmins(db, env.ADMIN_IDS);
+// Admins and organizers stand on every roster they are responsible for without
+// signing up for it. Done at boot so a change to ADMIN_IDS — the one source of
+// staff that no request passes through — lands with the deploy that made it.
+syncAllStaff(db, new Date());
 
 // The chat catalog moved out of the environment and into the database. Anything
 // still listed is lifted in under the branch that has been running everything so

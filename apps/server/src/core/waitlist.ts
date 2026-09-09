@@ -9,7 +9,8 @@ type OfferRow = { id: number; event_id: number; user_id: number; expires_at: num
 
 const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
 const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled, starts_at FROM events WHERE id = ?").get(eventId);
-const confirmed = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
+/** Spots actually taken. Staff rows are on the roster but hold no spot. */
+const confirmed = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in') AND is_staff = 0").get(eventId)?.count ?? 0;
 const reserved = (db: Db, eventId: number, now: number) => db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, now)?.count ?? 0;
 const free = (db: Db, eventId: number, now: number) => {
   const current = event(db, eventId);
@@ -98,6 +99,7 @@ export const sweepOffers = (db: Db, now: Date) => transaction(db, () => {
       AND (e.capacity IS NULL OR (
         SELECT count(*) FROM registrations confirmed
         WHERE confirmed.event_id = e.id AND confirmed.status IN ('registered', 'checked_in')
+          AND confirmed.is_staff = 0
       ) < e.capacity)
   `).all(timestamp + QUEUE_BROADCAST_LEAD_SECONDS);
   for (const row of urgentEvents) effects.push(...issue(db, row.event_id, timestamp));
@@ -152,7 +154,8 @@ export const reopenEvent = (db: Db, eventId: number, now: Date): { effects: Offe
 });
 
 export const cancelEvent = (db: Db, eventId: number): { userIds: number[]; effects: SupersededEffect[] } => transaction(db, () => {
-  const participants = db.$client.query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in', 'waitlisted')").all(eventId);
+  // Staff are not told their own event was called off the way an attendee is.
+  const participants = db.$client.query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in', 'waitlisted') AND is_staff = 0").all(eventId);
   db.$client.query("UPDATE events SET status = 'canceled' WHERE id = ?").run(eventId);
   return { userIds: [...new Set(participants.map((row) => row.user_id))], effects: supersede(db, eventId) };
 });

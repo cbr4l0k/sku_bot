@@ -25,7 +25,9 @@ export const joinEvent = (db: Db, eventId: number, userId: number, now: Date): J
                   WHERE event_chats.event_id = ? AND chat_members.user_id = ? AND chat_members.is_member = 1)) AS ok`,
   ).get(eventId, eventId, userId)?.ok;
   if (!eligible) return { error: "not_eligible" };
-  const confirmed = db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in')").get(eventId)?.count ?? 0;
+  // Staff are on the list but never in this number — running an event must not
+  // cost the club one of its own spots.
+  const confirmed = db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in') AND is_staff = 0").get(eventId)?.count ?? 0;
   const reserved = db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, timestamp)?.count ?? 0;
   const hasRoom = event.capacity === null || event.capacity - confirmed - reserved > 0;
   // With the queue off there is nowhere to put someone who arrives late.
