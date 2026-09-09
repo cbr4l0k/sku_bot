@@ -243,6 +243,40 @@ The server enforces the split rather than merely hiding buttons: `checkin-token`
 runner's `/checkin` both answer `409 ticketed_event` on a ticketed run, and `/events/:id/ticket`
 answers `409 not_ticketed` on a free one. The two doors cannot drift apart.
 
+### Staff are already on the list
+
+Whoever runs an event is on its roster without signing up for it, so they can check
+in — and, on a ticketed run, hold a ticket to be scanned — without taking a spot from
+the people the run is for. Three things put someone there:
+
+| Source | Reach |
+| --- | --- |
+| A club admin (`ADMIN_IDS`, or promoted in the admin screen) | Every event |
+| A branch **admin** | Every event of that branch |
+| Named on the event under **Organizers** | That event |
+
+A branch *organizer* is deliberately not staffed onto every run of their city. They may
+raise events there, but can only manage the ones they are named on, so being named is
+what puts them on a roster — the list matches exactly who the event screen lets in.
+
+These are ordinary registrations carrying an `is_staff` flag, which is why check-in,
+tickets, and merch handover work for staff with no special cases. The flag's only job is
+to make them invisible to every number that decides how full a run is: spots left, the
+queue's view of free places, ticket-checkout capacity, the bot's event card, and both the
+event and club-wide statistics. Staff are also left out of participant notifications — an
+organizer editing their own run is not an attendee to tell about the edit — and out of the
+event chat's guest trial, so they are never swept from the club's own chat for not
+checking in.
+
+Rosters are reconciled when an event is created, when its organizers change, when a
+branch role or club admin changes, when someone is banned or unbanned, when a run moves
+branch, and every time the attendance screen is opened. Reconciling only ever *adds* rows
+that are missing: someone who signed up as an ordinary participant keeps the spot they
+took, and someone who took themselves off an event stays off it. It withdraws a staff row
+only while it is untouched — still registered, never checked in — so losing the job clears
+you off future rosters, but anyone who actually turned up stays on the record of the
+night. Only events that have not ended and are not canceled are staffed at all.
+
 ### Handing over merch
 
 Paying for a hoodie and collecting it are different events, sometimes weeks apart, and someone
