@@ -25,7 +25,17 @@ import {
 } from "@sku/db";
 import { bot } from "../bot";
 import type { EventChange } from "../bot/event-card";
-import { checkIn, isEventOver, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../core/checkin";
+import {
+  checkIn,
+  isEventOver,
+  manualToggleCheckin,
+  mintCheckinToken,
+  mintTicketToken,
+  scanTicket,
+  toggleHandover,
+  verifyCheckinToken,
+  verifyTicketToken,
+} from "../core/checkin";
 import { chatState, chatTitle, refreshChatStates, telegramMembership } from "../bot/membership";
 import {
   canSeeEvent,
@@ -220,6 +230,46 @@ const administrable = (actor: Actor, eventId: number) => {
 
 const participantEvent = (eventId: number) => db.select().from(events)
   .where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
+
+/**
+ * An event where something was for sale — a tier, or merch on an otherwise free
+ * run. These are the events that switch to runner-held tickets: the organizer's
+ * projected code is still the fastest way through a free door, but the moment
+ * money is involved the club needs to know *who* came through and what they are
+ * owed, and only a scan of the runner's own ticket answers that.
+ */
+const isPaidEvent = (eventId: number) =>
+  db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, eventId)).get() !== undefined
+  || db.select({ id: eventProducts.id }).from(eventProducts).where(eq(eventProducts.eventId, eventId)).get() !== undefined;
+
+/** The tier they bought, by the name it carried at the time of sale. */
+const ticketNameFor = (eventId: number, userId: number) => db.select({ ticketName: ticketOrders.ticketName })
+  .from(ticketOrders)
+  .where(and(eq(ticketOrders.eventId, eventId), eq(ticketOrders.userId, userId), sql`${ticketOrders.ticketTierId} IS NOT NULL`))
+  .orderBy(desc(ticketOrders.createdAt)).get()?.ticketName ?? null;
+
+/**
+ * What someone bought besides the seat, per line, with whether it has changed
+ * hands. Refund-pending lines stay on the list: the money is still moving, and
+ * the club would rather see the row and decide than have it vanish at the door.
+ */
+const purchaseLines = (eventId: number, userId: number) => db.$client
+  .query<{ id: number; name: string; quantity: number; kind: "merchandise" | "addon"; handed_over_at: number | null }, [number, number]>(`
+    SELECT i.id, i.name || CASE WHEN i.variant_name IS NULL THEN '' ELSE ' — ' || i.variant_name END AS name,
+      i.quantity, i.kind, i.handed_over_at FROM order_items i
+    JOIN ticket_orders o ON o.id = i.order_id
+    WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
+      AND o.status IN ('fulfilled', 'refund_pending', 'refund_failed')
+    ORDER BY i.id
+  `)
+  .all(eventId, userId)
+  .map((row) => ({
+    id: row.id,
+    name: row.name,
+    quantity: row.quantity,
+    kind: row.kind,
+    handedOverAt: row.handed_over_at === null ? null : new Date(row.handed_over_at * 1000).toISOString(),
+  }));
 
 const activeParticipantIds = (eventId: number) => db.select({ userId: registrations.userId })
   .from(registrations)
@@ -475,10 +525,35 @@ export const app = new Elysia()
       if (user.isBanned) return error(status, 403, "banned");
       const token = verifyCheckinToken(env.CHECKIN_SECRET, body.code, now());
       if (!token) return error(status, 400, "invalid_or_stale_code");
+      if (isPaidEvent(token.eventId)) return error(status, 409, "ticketed_event");
       const result = checkIn(db, token.eventId, user.id, now());
       if ("error" in result) return error(status, 400, result.error);
       return result;
     }, { body: t.Object({ code: t.String({ minLength: 1 }) }) })
+    /**
+     * The ticket a runner shows at the door. Deliberately not a
+     * checked-in/not-checked-in gate: someone who has already been scanned may
+     * still be owed a hoodie, so the ticket keeps working and keeps listing
+     * what they came to collect.
+     */
+    .get("/events/:id/ticket", async ({ params, user, status }) => {
+      const event = participantEvent(params.id);
+      if (!event) return error(status, 404, "event_not_found");
+      await syncMemberships(user.id, chatsOfEvent(db, event.id));
+      if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
+      if (!isPaidEvent(event.id)) return error(status, 409, "not_ticketed");
+      const registration = db.select({ status: registrations.status }).from(registrations)
+        .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
+      if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) {
+        return error(status, 403, "not_registered");
+      }
+      return {
+        token: mintTicketToken(env.CHECKIN_SECRET, event.id, user.id),
+        status: registration.status,
+        ticketName: ticketNameFor(event.id, user.id),
+        items: purchaseLines(event.id, user.id),
+      };
+    }, { params: idParams })
 
     .get("/organizer/events", ({ user, isAdmin, actor }) => {
       if (isAdmin) return db.select().from(events).orderBy(desc(events.startsAt)).all().map(eventView);
@@ -734,24 +809,56 @@ export const app = new Elysia()
         .map((row) => ({
           ...row,
           checkedInAt: iso(row.checkedInAt),
-          purchaseItems: db.$client.query<{ name: string; quantity: number; kind: "merchandise" | "addon" }, [number, number]>(`
-            SELECT i.name || CASE WHEN i.variant_name IS NULL THEN '' ELSE ' — ' || i.variant_name END AS name,
-              i.quantity, i.kind FROM order_items i
-            JOIN ticket_orders o ON o.id = i.order_id
-            WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
-              AND o.status IN ('fulfilled', 'refund_pending', 'refund_failed')
-            ORDER BY i.id
-          `).all(params.id, row.userId),
+          purchaseItems: purchaseLines(params.id, row.userId),
         }));
-      return { registrations: attendance, counts: eventStats(db, params.id) };
+      return { registrations: attendance, counts: eventStats(db, params.id), ticketed: isPaidEvent(params.id) };
     }, { params: idParams })
     .get("/organizer/events/:id/checkin-token", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
       // No point showing a code nobody's scan would be accepted from.
       if (isEventOver(db, params.id)) return error(status, 409, "event_over");
+      // Paid runs go the other way round — the runner holds the ticket and the
+      // organizer scans it. Refused here, not merely hidden in the mini app, so
+      // the two doors cannot drift apart.
+      if (isPaidEvent(params.id)) return error(status, 409, "ticketed_event");
       return { token: mintCheckinToken(env.CHECKIN_SECRET, params.id, now()), expiresInSeconds: 45 };
     }, { params: idParams })
+    /**
+     * The door scan on a paid run. A ticket that has already been through is
+     * answered, not rejected: the organizer still needs the name on screen and
+     * the merch lines to tick off, and a second scan is how they get them back.
+     */
+    .post("/organizer/events/:id/scan", ({ params, body, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const ticket = verifyTicketToken(env.CHECKIN_SECRET, body.code);
+      if (!ticket) return error(status, 400, "invalid_ticket");
+      // Someone else's event, or last week's — say so plainly rather than "invalid".
+      if (ticket.eventId !== params.id) return error(status, 409, "wrong_event");
+      const result = scanTicket(db, params.id, ticket.userId, now());
+      if ("error" in result) return error(status, result.error === "event_over" ? 409 : 400, result.error);
+      const person = db.select().from(users).where(eq(users.id, ticket.userId)).get();
+      if (!person) return error(status, 404, "event_not_found");
+      return {
+        userId: person.id,
+        firstName: person.firstName,
+        lastName: person.lastName,
+        username: person.username,
+        phone: person.phone,
+        ticketName: ticketNameFor(params.id, person.id),
+        alreadyCheckedIn: result.alreadyCheckedIn,
+        checkedInAt: result.checkedInAt.toISOString(),
+        items: purchaseLines(params.id, person.id),
+      };
+    }, { params: idParams, body: t.Object({ code: t.String({ minLength: 1 }) }) })
+    /** Ticking one merch line off — from the scan panel, or later from the roster. */
+    .post("/organizer/events/:id/items/:itemId/handover", ({ params, user, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const result = toggleHandover(db, params.id, params.itemId, user.id, now());
+      return "error" in result ? error(status, 404, result.error) : { handedOverAt: iso(result.handedOverAt) };
+    }, { params: t.Object({ id: t.Numeric(), itemId: t.Numeric() }) })
     /** The event is over when whoever is running it says so — never on a timer. */
     .post("/organizer/events/:id/end", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);

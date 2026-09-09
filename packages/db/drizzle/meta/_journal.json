@@ -99,6 +99,13 @@
       "when": 1788365140062,
       "tag": "0013_crazy_demogoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788948559215,
+      "tag": "0014_easy_wendigo",
+      "breakpoints": true
     }
   ]
 }

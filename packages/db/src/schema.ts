@@ -261,6 +261,14 @@ export const orderItems = sqliteTable(
     variantName: text("variant_name"),
     unitAmountMinor: integer("unit_amount_minor").notNull(),
     quantity: integer("quantity").notNull(),
+    /**
+     * When the goods actually changed hands at the door. Distinct from the
+     * order's fulfilledAt, which only says the money settled and the seat was
+     * granted — someone can pay for a hoodie weeks before collecting it, and
+     * collect a t-shirt while leaving the cap behind, so this is per line.
+     */
+    handedOverAt: integer("handed_over_at", { mode: "timestamp" }),
+    handedOverBy: integer("handed_over_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (table) => [
