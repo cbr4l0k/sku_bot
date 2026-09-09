@@ -42,6 +42,7 @@ export const en: Dict = {
   "status.checked_in": "Checked in",
   "status.canceled": "Canceled",
   "status.offer": "Spot open",
+  "status.staff": "Staff",
 
   "action.join": "Sign up",
   "action.joinWaitlist": "Join waitlist",
@@ -58,6 +59,7 @@ export const en: Dict = {
   "detail.openMap": "Open map for {location}",
   "detail.spots": "Spots",
   "detail.waitlistHint": "When a spot frees up you get an invite — you will have 20 minutes to take it.",
+  "detail.staffHint": "You are on this list as staff, so you are not holding a runner's spot. Check in as usual.",
   "detail.registeredHint": "You are in. Come on time and check in with the QR at the start.",
   "detail.checkedInHint": "Check-in accepted. Have a great run!",
   "detail.confirmCancel": "Cancel your signup? The spot goes to the next person right away.",
@@ -156,6 +158,7 @@ export const en: Dict = {
   "organizer.handoverTitle": "Collecting",
   "organizer.handedOver": "Handed over",
   "organizer.nothingToHandOver": "Nothing to hand over",
+  "organizer.staffCount": "Staff",
   "organizer.searchPeople": "Find a runner",
   "organizer.checkedInOf": "{a} of {b} checked in",
   "organizer.noRegistrations": "Nobody signed up yet",

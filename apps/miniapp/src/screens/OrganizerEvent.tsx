@@ -192,6 +192,7 @@ const PersonRow = ({
         <div className="num mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-hint">
           {person.username ? <TelegramUsername username={person.username} /> : null}
           {person.phone ? <span className="break-all">{person.phone}</span> : null}
+          {person.isStaff ? <Chip tone="soft">{t("status.staff")}</Chip> : null}
           {person.status === "waitlisted" ? <Chip>{t("status.waitlisted")}</Chip> : null}
           {person.status === "canceled" ? <Chip>{t("status.canceled")}</Chip> : null}
           {person.ticketName ? <Chip tone="soft">{person.ticketName}</Chip> : null}
@@ -449,6 +450,11 @@ export const OrganizerEventScreen = () => {
           <Chip>
             {t("admin.statWaitlisted")} {counts?.waitlisted ?? 0}
           </Chip>
+          {counts?.staff ? (
+            <Chip tone="soft">
+              {t("organizer.staffCount")} {counts.staffCheckedIn}/{counts.staff}
+            </Chip>
+          ) : null}
         </div>
       </section>
 

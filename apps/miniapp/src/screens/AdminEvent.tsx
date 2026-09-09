@@ -348,7 +348,13 @@ export const AdminEventScreen = () => {
               value={String(data.registered)}
               hint={event.capacity === null ? t("events.freeEntry") : `${t("common.of")} ${event.capacity}`}
             />
-            <StatTile label={t("admin.statCheckedIn")} value={String(data.checkedIn)} />
+            <StatTile
+              label={t("admin.statCheckedIn")}
+              value={String(data.checkedIn)}
+              /* Staff check in too, but they are not part of the number above —
+                 they never took a spot to attend. */
+              hint={data.staff ? `${t("organizer.staffCount")} ${data.staffCheckedIn}/${data.staff}` : undefined}
+            />
             <StatTile label={t("admin.statWaitlisted")} value={String(data.waitlisted)} />
             <StatTile label={t("admin.statNoShow")} value={String(noShow)} hint={percent(data.noShowRate)} />
           </div>

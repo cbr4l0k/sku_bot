@@ -41,6 +41,7 @@ export const ru = {
   "status.checked_in": "Отмечен",
   "status.canceled": "Отменено",
   "status.offer": "Место свободно",
+  "status.staff": "Организатор",
 
   "action.join": "Записаться",
   "action.joinWaitlist": "Встать в очередь",
@@ -57,6 +58,7 @@ export const ru = {
   "detail.openMap": "Открыть карту: {location}",
   "detail.spots": "Места",
   "detail.waitlistHint": "Когда место освободится, придёт приглашение — у тебя будет 20 минут, чтобы его принять.",
+  "detail.staffHint": "Ты в списке как организатор — место участника при этом не занято. Отметиться можно как обычно.",
   "detail.registeredHint": "Ты в составе. Приходи вовремя и отметься по QR на старте.",
   "detail.checkedInHint": "Отметка принята. Хорошей тренировки!",
   "detail.confirmCancel": "Точно отменяешь запись? Место сразу уйдёт следующему из очереди.",
@@ -155,6 +157,7 @@ export const ru = {
   "organizer.handoverTitle": "Забирает",
   "organizer.handedOver": "Выдано",
   "organizer.nothingToHandOver": "Забирать нечего",
+  "organizer.staffCount": "Организаторы",
   "organizer.searchPeople": "Найти участника",
   "organizer.checkedInOf": "{a} из {b} отмечено",
   "organizer.noRegistrations": "Пока никто не записался",

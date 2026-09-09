@@ -70,6 +70,9 @@ export const EventDetailScreen = () => {
   const left = detail.capacity === null ? null : Math.max(0, detail.capacity - confirmed - detail.pendingTicketCount);
   const offer = card?.myPendingOffer ?? null;
   const status = detail.myRegistrationStatus;
+  // On the list by right of the job: they hold no spot, so there is no spot for
+  // them to give back either.
+  const staff = detail.myStaffEntry;
   // "Over" is an organizer's call, not the clock's: an event whose start time has
   // passed is still live — and still checkable-in — until someone ends it.
   const over = detail.endedAt !== null;
@@ -431,7 +434,8 @@ export const EventDetailScreen = () => {
       {status === "waitlisted" ? (
         <p className="mb-4 text-[13px] leading-relaxed text-hint">{t("detail.waitlistHint")}</p>
       ) : null}
-      {status === "registered" ? <p className="mb-4 text-[13px] text-hint">{t("detail.registeredHint")}</p> : null}
+      {staff ? <p className="mb-4 text-[13px] leading-relaxed text-hint">{t("detail.staffHint")}</p> : null}
+      {status === "registered" && !staff ? <p className="mb-4 text-[13px] text-hint">{t("detail.registeredHint")}</p> : null}
       {status === "checked_in" ? <p className="mb-4 text-[13px] text-hint">{t("detail.checkedInHint")}</p> : null}
 
       <div className="sticky bottom-[calc(6rem_+_env(safe-area-inset-bottom,0px))] flex flex-col gap-2">
@@ -452,9 +456,11 @@ export const EventDetailScreen = () => {
                 {t("action.checkin")}
               </Button>
             ) : null}
-            <Button variant="danger" block loading={action.pending} onClick={() => void cancel()}>
-              {t("action.cancel")}
-            </Button>
+            {staff ? null : (
+              <Button variant="danger" block loading={action.pending} onClick={() => void cancel()}>
+                {t("action.cancel")}
+              </Button>
+            )}
           </>
         ) : status === "waitlisted" ? (
           <Button variant="ghost" block loading={action.pending} onClick={() => void cancel()}>
