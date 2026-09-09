@@ -189,6 +189,59 @@ Unlike the cleanup scripts, this command has no preview mode: a valid invocation
 applies immediately. It fails without changes if the user is not waitlisted or the
 position is outside the current queue.
 
+## `export-event.ts`
+
+Exports one event to an `.xlsx` workbook: the roster, the money, and the pick list
+of merchandise to bring on the day. Use it to hand an organizer something they can
+open in Excel, Numbers, or Google Sheets without touching the database.
+
+```sh
+docker compose exec -T app bun run scripts/export-event.ts EVENT_ID - > event-17.xlsx
+```
+
+Keep `-T` and the `-` argument: `-` writes the workbook to standard output, the
+redirect happens on the host, and allocating a TTY would corrupt the binary file.
+Progress is printed to standard error, so it never lands in the workbook.
+
+Given a path instead of `-`, the script writes the file inside the container, which
+is only useful for a mounted volume:
+
+```sh
+docker compose exec -T app bun run scripts/export-event.ts 17 /app/data/event-17.xlsx
+```
+
+Locally, the path form is the convenient one, and the default is `./event-<id>.xlsx`:
+
+```sh
+DATABASE_PATH=./data/sku.db bun run scripts/export-event.ts 17
+```
+
+The workbook has six tabs:
+
+- **Event** — title, branch, status, start, location, capacity, organizers, plus
+  head-count and money totals.
+- **Registrations** — one row per registration: user id, name, `@username`, phone,
+  status, queue position for waitlisted people, check-in time, what they paid, and
+  any merchandise they are owed.
+- **Orders** — one row per order with its ЮKassa payment id and every timestamp of
+  the payment state machine.
+- **Order items** — the priced line items behind those orders.
+- **Sales** — quantity and revenue per ticket tier and per product variant, split
+  into paid, refunded, and unsettled. This is the sheet to order shirts from.
+- **Refunds** — the local refund audit trail, including failures.
+
+Times are formatted in `Europe/Moscow`, the timezone every branch currently keeps.
+Money is written in rubles as numbers, so a column can be summed in the spreadsheet;
+the database stores kopecks. "Paid" means an order sitting in `payment_succeeded`
+or `fulfilled`.
+
+Someone who bought merchandise without holding a spot has no registration row, so
+they appear on the Orders, Order items, and Sales tabs but not on Registrations.
+
+This script is read-only. It writes the file with `scripts/xlsx.ts`, a small
+SpreadsheetML writer in this repository, so exporting adds no dependency to the
+image.
+
 ## Running outside Docker
 
 For a local development database, set `DATABASE_PATH` explicitly and omit the
