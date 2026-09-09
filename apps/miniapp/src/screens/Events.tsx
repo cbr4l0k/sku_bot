@@ -12,8 +12,13 @@ export const EventsScreen = () => {
   const navigate = useNavigate();
   const events = useResource(sku.events, { pollMs: 45_000 });
 
+  // Only free runs still check in by scanning the organizer's code; on a
+  // ticketed one the shortcut would open a scanner the server refuses.
   const canScanSomething = (events.data ?? []).some(
-    (event) => event.myRegistrationStatus === "registered" || event.myRegistrationStatus === "checked_in",
+    (event) =>
+      event.myRegistrationStatus === "registered" &&
+      event.ticketTiers.length === 0 &&
+      event.products.length === 0,
   );
 
   return (

@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
-import { sku, type AttendanceRow, type EventDraft } from "../api";
+import { sku, type AttendanceRow, type EventDraft, type ScannedTicket } from "../api";
 import { useI18n } from "../i18n";
 import { bib, countdown, errorText, fullDate, fullName } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
-import { haptic } from "../telegram";
+import { canScan, haptic, scanQr } from "../telegram";
 import { CountdownRing, EventStatusChip } from "../ui/event";
 import { EventForm } from "../ui/eventForm";
 import { EventProductEditor } from "../ui/eventProducts";
 import { TicketTierEditor } from "../ui/ticketTiers";
-import { Sheet, useConfirm, useOverlayLock, useToast } from "../ui/overlays";
+import { Sheet, SheetFooter, useConfirm, useOverlayLock, useToast } from "../ui/overlays";
 import {
   Button,
   Chip,
@@ -74,18 +74,109 @@ const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => void })
   );
 };
 
+/* ------------------------------------------------------------------ handover */
+
+type PurchaseLine = AttendanceRow["purchaseItems"][number];
+
+/**
+ * One merch line, tappable. It is the same control in the scan panel and in the
+ * roster, because it is the same act — the roster copy is what saves a night
+ * where someone was let through without a scan.
+ */
+const HandoverChip = ({
+  item,
+  pending,
+  onToggle,
+}: {
+  item: PurchaseLine;
+  pending: boolean;
+  onToggle: () => void;
+}) => {
+  const handed = item.handedOverAt !== null;
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={onToggle}
+      className={`chip ${handed ? "chip-flare" : "chip-soft"} active:scale-95 ${pending ? "opacity-50" : ""}`}
+      style={{ transition: "transform 0.12s" }}
+    >
+      {handed ? "✓ " : ""}
+      {item.name}
+      {item.quantity > 1 ? ` ×${item.quantity}` : ""}
+    </button>
+  );
+};
+
+/* --------------------------------------------------------------- scan result */
+
+const ScanPanel = ({
+  scanned,
+  pending,
+  busyItem,
+  onHandover,
+  onScanAgain,
+  onClose,
+}: {
+  scanned: ScannedTicket;
+  pending: boolean;
+  busyItem: number | null;
+  onHandover: (itemId: number) => void;
+  onScanAgain: () => void;
+  onClose: () => void;
+}) => {
+  const { t } = useI18n();
+  return (
+    <Sheet title={fullName(scanned)} onClose={onClose}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Chip tone={scanned.alreadyCheckedIn ? "plain" : "flare"}>
+          {scanned.alreadyCheckedIn ? t("organizer.alreadyCheckedIn") : t("organizer.justCheckedIn")}
+        </Chip>
+        {scanned.ticketName ? <Chip tone="soft">{scanned.ticketName}</Chip> : null}
+        {scanned.username ? <TelegramUsername username={scanned.username} /> : null}
+      </div>
+
+      <div className="eyebrow mt-5 mb-2">{t("organizer.handoverTitle")}</div>
+      {scanned.items.length === 0 ? (
+        <p className="text-[13px] text-hint">{t("organizer.nothingToHandOver")}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {scanned.items.map((item) => (
+            <HandoverChip
+              key={item.id}
+              item={item}
+              pending={busyItem === item.id}
+              onToggle={() => onHandover(item.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      <SheetFooter>
+        <Button block loading={pending} disabled={!canScan()} onClick={onScanAgain}>
+          {t("organizer.scanAgain")}
+        </Button>
+      </SheetFooter>
+    </Sheet>
+  );
+};
+
 /* ------------------------------------------------------------ attendance row */
 
 const PersonRow = ({
   person,
   index,
   pending,
+  busyItem,
   onToggle,
+  onHandover,
 }: {
   person: AttendanceRow;
   index: number;
   pending: boolean;
+  busyItem: number | null;
   onToggle: () => void;
+  onHandover: (itemId: number) => void;
 }) => {
   const { t } = useI18n();
   const togglable = person.status === "registered" || person.status === "checked_in";
@@ -104,8 +195,13 @@ const PersonRow = ({
           {person.status === "waitlisted" ? <Chip>{t("status.waitlisted")}</Chip> : null}
           {person.status === "canceled" ? <Chip>{t("status.canceled")}</Chip> : null}
           {person.ticketName ? <Chip tone="soft">{person.ticketName}</Chip> : null}
-          {person.purchaseItems.map((item, itemIndex) => (
-            <Chip key={`${item.kind}-${item.name}-${itemIndex}`} tone="soft">{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</Chip>
+          {person.purchaseItems.map((item) => (
+            <HandoverChip
+              key={item.id}
+              item={item}
+              pending={busyItem === item.id}
+              onToggle={() => onHandover(item.id)}
+            />
           ))}
           {person.paymentStatus && person.paymentStatus !== "fulfilled" ? <Chip>{person.paymentStatus}</Chip> : null}
         </div>
@@ -156,6 +252,8 @@ export const OrganizerEventScreen = () => {
   const [editingTickets, setEditingTickets] = useState(false);
   const [editingProducts, setEditingProducts] = useState(false);
   const [busyUser, setBusyUser] = useState<number | null>(null);
+  const [busyItem, setBusyItem] = useState<number | null>(null);
+  const [scanned, setScanned] = useState<ScannedTicket | null>(null);
 
   const events = useResource(sku.organizerEvents);
   const attendance = useResource(useCallback(() => sku.attendance(id), [id]), { pollMs: 15_000 });
@@ -163,6 +261,8 @@ export const OrganizerEventScreen = () => {
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
   const over = event?.endedAt != null;
   const counts = attendance.data?.counts ?? null;
+  // The server decides which door this event uses; the screen just follows it.
+  const ticketed = attendance.data?.ticketed ?? false;
 
   const rows = (attendance.data?.registrations ?? []).filter((person) => {
     const needle = query.trim().toLowerCase();
@@ -191,6 +291,55 @@ export const OrganizerEventScreen = () => {
       .finally(() => setBusyUser(null));
   };
 
+  /** Ticking a merch line off, from either the scan panel or the roster. */
+  const handover = (itemId: number) => {
+    setBusyItem(itemId);
+    const patch = (item: PurchaseLine, handedOverAt: string | null) =>
+      item.id === itemId ? { ...item, handedOverAt } : item;
+    void action
+      .run(
+        async () => {
+          const result = await sku.toggleHandover(id, itemId);
+          haptic.tap(result.handedOverAt ? "medium" : "light");
+          attendance.mutate((current) => ({
+            ...current,
+            registrations: current.registrations.map((row) => ({
+              ...row,
+              purchaseItems: row.purchaseItems.map((item) => patch(item, result.handedOverAt)),
+            })),
+          }));
+          setScanned((current) =>
+            current === null ? null : { ...current, items: current.items.map((item) => patch(item, result.handedOverAt)) },
+          );
+        },
+        { onError: (error) => toast(errorText(t, error), "err") },
+      )
+      .finally(() => setBusyItem(null));
+  };
+
+  /**
+   * The door on a ticketed run: the runner holds the ticket, so the organizer
+   * scans. The panel stays up afterwards because the scan is only half the job —
+   * the merch still has to change hands.
+   */
+  const scan = () =>
+    void action.run(
+      async () => {
+        const code = await scanQr(t("organizer.scanText"));
+        if (code === null) return;
+        const result = await sku.scanTicket(id, code.trim());
+        haptic.notify(result.alreadyCheckedIn ? "warning" : "success");
+        setScanned(result);
+        await attendance.reload(true);
+      },
+      {
+        onError: (error) => {
+          haptic.notify("error");
+          toast(errorText(t, error), "err");
+        },
+      },
+    );
+
   // The class is over when the person running it says so, so ending it is an action
   // here rather than something the start time does on its own.
   const end = async () => {
@@ -200,6 +349,7 @@ export const OrganizerEventScreen = () => {
         await sku.endEvent(id);
         toast(t("organizer.toastEnded"));
         setShowQr(false);
+        setScanned(null);
         await Promise.all([events.reload(true), attendance.reload(true)]);
       },
       { onError: (error) => toast(errorText(t, error), "err") },
@@ -309,6 +459,10 @@ export const OrganizerEventScreen = () => {
           <Button block loading={action.pending} onClick={reopen}>
             {t("organizer.reopenEvent")}
           </Button>
+        ) : ticketed ? (
+          <Button block loading={action.pending} disabled={!canScan()} onClick={scan}>
+            {t("organizer.scanTickets")}
+          </Button>
         ) : (
           <Button block onClick={() => setShowQr(true)}>
             {t("organizer.showQr")}
@@ -328,6 +482,12 @@ export const OrganizerEventScreen = () => {
           </Button>
         ) : null}
       </div>
+
+      {ticketed && !over ? (
+        <p className="mb-4 text-[13px] leading-relaxed text-hint">
+          {canScan() ? t("organizer.scanHint") : t("checkin.unavailable")}
+        </p>
+      ) : null}
 
       {over ? null : (
         <Button variant="ghost" block className="mb-4" loading={action.pending} onClick={() => void end()}>
@@ -352,13 +512,26 @@ export const OrganizerEventScreen = () => {
               person={person}
               index={index}
               pending={busyUser === person.userId}
+              busyItem={busyItem}
               onToggle={() => toggle(person)}
+              onHandover={handover}
             />
           ))
         )}
       </section>
 
       {showQr ? <QrStage eventId={id} onClose={() => setShowQr(false)} /> : null}
+
+      {scanned ? (
+        <ScanPanel
+          scanned={scanned}
+          pending={action.pending}
+          busyItem={busyItem}
+          onHandover={handover}
+          onScanAgain={scan}
+          onClose={() => setScanned(null)}
+        />
+      ) : null}
 
       {editing ? (
         <Sheet title={t("organizer.edit")} onClose={() => setEditing(false)}>

@@ -85,6 +85,9 @@ export type EventDetail = Ok<typeof eventById.get>;
 export type EventSummary = Ok<typeof api.organizer.events.get>[number];
 export type Attendance = Ok<typeof organizerEvent.attendance.get>;
 export type AttendanceRow = Attendance["registrations"][number];
+export type MyTicket = Ok<typeof eventById.ticket.get>;
+export type TicketLine = MyTicket["items"][number];
+export type ScannedTicket = Ok<typeof organizerEvent.scan.post>;
 export type EventStats = Ok<typeof adminEvent.stats.get>;
 export type EventPurchases = Ok<typeof adminEvent.orders.get>;
 export type AdminPurchaseOrder = EventPurchases["orders"][number];
@@ -145,6 +148,7 @@ export const sku = {
   cancel: (id: number) => call(api.events({ id }).cancel.post(undefined, auth())),
   acceptOffer: (id: number) => call(api.offers({ id }).accept.post(undefined, auth())),
   checkin: (code: string) => call(api.checkin.post({ code }, auth())),
+  myTicket: (id: number) => call(api.events({ id }).ticket.get(auth())),
 
   organizerEvents: () => call(api.organizer.events.get(auth())),
   updateEvent: (id: number, body: Partial<EventDraft>) => call(api.organizer.events({ id }).patch(body, auth())),
@@ -158,6 +162,9 @@ export const sku = {
   reopenEvent: (id: number) => call(api.organizer.events({ id }).reopen.post(undefined, auth())),
   toggleAttendance: (id: number, userId: number) =>
     call(api.organizer.events({ id }).attendance({ userId }).post(undefined, auth())),
+  scanTicket: (id: number, code: string) => call(api.organizer.events({ id }).scan.post({ code }, auth())),
+  toggleHandover: (id: number, itemId: number) =>
+    call(api.organizer.events({ id }).items({ itemId }).handover.post(undefined, auth())),
 
   createEvent: (body: AdminEventDraft & { status?: EventStatus }) => call(api.organizer.events.post(body, auth())),
   adminUpdateEvent: (id: number, body: Partial<AdminEventDraft> & { status?: EventStatus }) =>

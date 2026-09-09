@@ -16,6 +16,7 @@ import { MineScreen } from "./screens/Mine";
 import { OrganizerScreen } from "./screens/Organizer";
 import { OrganizerEventScreen } from "./screens/OrganizerEvent";
 import { ProfileScreen } from "./screens/Profile";
+import { TicketScreen } from "./screens/Ticket";
 import { SessionProvider, useSession } from "./session";
 import { initViewport, insideTelegram, startParam } from "./telegram";
 import { CityPicker } from "./ui/cityPicker";
@@ -143,6 +144,7 @@ const Shell = () => (
     <Routes>
       <Route path="/" element={<EventsScreen />} />
       <Route path="/events/:id" element={<EventDetailScreen />} />
+      <Route path="/events/:id/ticket" element={<TicketScreen />} />
       <Route path="/mine" element={<MineScreen />} />
       <Route path="/checkin" element={<CheckinScreen />} />
       <Route path="/profile" element={<ProfileScreen />} />

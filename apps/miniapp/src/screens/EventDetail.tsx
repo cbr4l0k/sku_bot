@@ -76,6 +76,10 @@ export const EventDetailScreen = () => {
   const underway = !over && isPast(detail.startsAt);
   const joinable = detail.status === "published" && !over;
   const paidEvent = detail.ticketTiers.length > 0;
+  // Anything with a price on it — a tier, or merch on an otherwise free run —
+  // puts the ticket in the runner's hands instead of sending them to scan the
+  // organizer's code. Mirrors isPaidEvent on the server.
+  const ticketed = paidEvent || detail.products.length > 0;
   const canBuyTicket = status !== "registered" && status !== "checked_in";
   const availableTiers = detail.ticketTiers.filter((tier) => {
     const time = Date.now();
@@ -437,7 +441,13 @@ export const EventDetailScreen = () => {
           </div>
         ) : status === "registered" || status === "checked_in" ? (
           <>
-            {status === "registered" ? (
+            {/* On a ticketed run the ticket stays useful after check-in: it is
+                also the list of what is still to be collected. */}
+            {ticketed ? (
+              <Button block sweep={sweep} onClick={() => navigate(`/events/${id}/ticket`)}>
+                {t("action.showTicket")}
+              </Button>
+            ) : status === "registered" ? (
               <Button block sweep={sweep} onClick={() => navigate("/checkin")}>
                 {t("action.checkin")}
               </Button>
