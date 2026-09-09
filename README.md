@@ -219,6 +219,44 @@ would itself need a tier-specific payment reservation. Sold-out paid tiers there
 close cleanly. Events with payment history cannot be hard-deleted; cancel them so the
 financial audit trail and refunds remain intact.
 
+## At the door
+
+There are two doors, and the event decides which one it uses. An event with a ticket tier
+or a sellable SKU on it is **ticketed**; everything else is free.
+
+**Free events — the runner scans.** The organizer opens **Show QR** and the screen mints a
+rotating event code (`skuchk.<event>.<slot>.<sig>`, 45s slots, previous slot still accepted).
+Runners scan it from **Check in** and mark themselves. It is the fastest way through a large
+free door because everyone can scan the same projected code at once. The code proves someone
+was near the screen — not who they are — which is why it stops here.
+
+**Ticketed events — the organizer scans.** The runner opens **Show ticket** and the organizer
+scans it with **Scan tickets**. The ticket (`skutkt.<event>.<user>.<sig>`) binds the person as
+well as the event and deliberately does **not** rotate: the runner is holding it, and the door
+is the worst possible place to demand connectivity from them. Sharing is defeated by the scan
+being single-use against the registration rather than by a short expiry — a forwarded
+screenshot lands on "was already checked in" and names whoever burned it first. A second scan
+is answered rather than refused, because the organizer still needs the name and the merch
+lines back on screen.
+
+The server enforces the split rather than merely hiding buttons: `checkin-token` and the
+runner's `/checkin` both answer `409 ticketed_event` on a ticketed run, and `/events/:id/ticket`
+answers `409 not_ticketed` on a free one. The two doors cannot drift apart.
+
+### Handing over merch
+
+Paying for a hoodie and collecting it are different events, sometimes weeks apart, and someone
+can collect a t-shirt while leaving the cap behind — so `order_items` carries `handed_over_at`
+and `handed_over_by` **per line**, distinct from the order's `fulfilled_at`, which only says the
+money settled.
+
+Scanning a ticket puts that person's outstanding lines on screen as tappable chips; tapping one
+records who handed it over. The same chips sit on every roster row, which is what saves a night
+where someone was waved through without a scan or a phone died at the counter. They toggle,
+because the commonest correction at a busy counter is an undo. The runner's own ticket screen
+lists the same lines and marks them collected as they are ticked off, so they can see what they
+are still owed without asking.
+
 ## The queue
 
 Every event carries a queue switch, toggled from the event's admin screen. It is **on** by
@@ -243,11 +281,12 @@ out any spots that came free while it was off.
 ## When an event is over
 
 Nothing about the clock ends an event. It runs — listed, joinable, and open for check-in —
-until an organizer or admin presses **End event** on its screen. That is what makes the QR
-usable *after* the class, which is when people actually get around to scanning it, and it
+until an organizer or admin presses **End event** on its screen. That is what keeps the door
+open *after* the class, which is when people actually get around to being scanned, and it
 lets a walk-in sign up mid-session.
 
-Ending an event closes check-in (the QR stops minting, and a scan answers `event_over`),
+Ending an event closes both doors (the projected QR stops minting, and either kind of scan
+answers `event_over`),
 stops further signups, retires any pending queue offers, and drops the event out of the
 participant list. Two things deliberately survive it: the attendance list stays editable by
 hand, so the roster can be corrected afterwards, and **Reopen event** undoes an end that came
