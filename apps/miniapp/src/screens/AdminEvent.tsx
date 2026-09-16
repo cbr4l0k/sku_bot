@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import type { CitySlug } from "@sku/cities";
+
 import { sku, type AdminEventDraft, type AdminPurchaseOrder, type EventStatus } from "../api";
 import { useI18n, type MessageKey } from "../i18n";
 import { bib, errorText, fullDate, fullName, percent } from "../lib/format";
@@ -97,6 +99,77 @@ const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose: () =>
 
 /* -------------------------------------------------------------------- screen */
 
+/**
+ * Filing one run under a series after the fact. The deploy backfill groups the
+ * copy-pasted history it can recognise, but it only ever groups two or more
+ * identical runs — a session that was renamed, or the first of a new habit,
+ * lands here instead, and without this its numbers would sit outside the series
+ * analytics forever.
+ */
+const SeriesSheet = ({
+  eventId,
+  city,
+  current,
+  onClose,
+  onChanged,
+}: {
+  eventId: number;
+  city: CitySlug;
+  current: number | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) => {
+  const { t } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const series = useResource(sku.series);
+  // A run may only join a series of its own branch; the server enforces it too.
+  const options = (series.data ?? []).filter((row) => row.city === city);
+
+  const choose = (seriesId: number | null) =>
+    void action.run(
+      async () => {
+        await (seriesId === null ? sku.detachFromSeries(eventId) : sku.attachToSeries(eventId, seriesId));
+        toast(t(seriesId === null ? "toast.detached" : "toast.attached"));
+        onClose();
+        onChanged();
+      },
+      { onError: (error) => toast(errorText(t, error), "err") },
+    );
+
+  return (
+    <Sheet title={t("series.attachTitle")} onClose={onClose}>
+      <p className="mb-4 text-[12px] leading-snug text-hint">{t("series.attachHint")}</p>
+      {series.loading && !series.data ? <Loader label={t("common.loading")} /> : null}
+      {series.data && options.length === 0 ? <EmptyState text={t("series.empty")} /> : null}
+      <div className="flex flex-col gap-2">
+        {options.map((row) => (
+          <button
+            key={row.id}
+            type="button"
+            disabled={action.pending}
+            onClick={() => choose(row.id)}
+            className={`card flex items-center justify-between gap-3 px-4 py-3 text-left active:scale-[0.985] ${
+              row.id === current ? "card-mine pl-5" : ""
+            }`}
+          >
+            <span className="min-w-0">
+              <span className="display block truncate text-[14px]">{row.title}</span>
+              <span className="block truncate text-[12px] text-hint">{row.location}</span>
+            </span>
+            {row.id === current ? <Chip tone="flare">{t("series.inSeries")}</Chip> : null}
+          </button>
+        ))}
+      </div>
+      {current === null ? null : (
+        <Button block variant="danger" size="sm" className="mt-4" loading={action.pending} onClick={() => choose(null)}>
+          {t("series.detach")}
+        </Button>
+      )}
+    </Sheet>
+  );
+};
+
 const purchaseStatusKey: Record<AdminPurchaseOrder["status"], MessageKey> = {
   awaiting_payment: "purchases.status.awaiting_payment",
   payment_succeeded: "purchases.status.payment_succeeded",
@@ -123,10 +196,12 @@ export const AdminEventScreen = () => {
   const [editingTickets, setEditingTickets] = useState(false);
   const [editingProducts, setEditingProducts] = useState(false);
   const [busyOrder, setBusyOrder] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
 
   const events = useResource(sku.organizerEvents);
   const stats = useResource(useCallback(() => sku.eventStats(id), [id]));
   const purchases = useResource(useCallback(() => sku.eventPurchases(id), [id]), { pollMs: 15_000 });
+  const seriesList = useResource(sku.series);
 
   const event = (events.data ?? []).find((item) => item.id === id) ?? null;
 
@@ -337,6 +412,20 @@ export const AdminEventScreen = () => {
           </Button>
         ) : null}
       </div>
+
+      <SectionRule label={t("series.title")} />
+      <button
+        type="button"
+        onClick={() => setLinking(true)}
+        className="card flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left active:scale-[0.985]"
+      >
+        <span className="min-w-0 text-[14px]">
+          {event.seriesId === null
+            ? t("series.attach")
+            : ((seriesList.data ?? []).find((row) => row.id === event.seriesId)?.title ?? t("series.inSeries"))}
+        </span>
+        <span className="eyebrow shrink-0">{event.seriesId === null ? "+" : "\u203A"}</span>
+      </button>
 
       <SectionRule label={t("admin.stats")} />
 

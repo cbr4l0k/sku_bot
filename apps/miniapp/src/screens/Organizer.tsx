@@ -1,20 +1,23 @@
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { sku } from "../api";
 import { useI18n } from "../i18n";
 import { bib, errorText, isPast } from "../lib/format";
 import { useResource } from "../lib/useResource";
+import { useSession } from "../session";
 import { DateBlock, EventStatusChip } from "../ui/event";
 import { Chip, EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
+import { SeriesList } from "./Series";
 
-export const OrganizerScreen = () => {
+type Tab = "events" | "series";
+
+const EventsTab = () => {
   const { t } = useI18n();
   const events = useResource(sku.organizerEvents);
 
   return (
-    <Screen>
-      <PageTitle title={t("organizer.title")} />
-
+    <>
       {events.loading && !events.data ? <Loader label={t("common.loading")} /> : null}
       {events.error && !events.data ? (
         <ErrorState
@@ -45,6 +48,9 @@ export const OrganizerScreen = () => {
                 {/* Started, and still waiting for someone to end it — the one state
                     an organizer needs to spot from the list. */}
                 {!event.endedAt && isPast(event.startsAt) ? <Chip tone="flare">{t("organizer.live")}</Chip> : null}
+                {/* A run raised from a template says so, so a draft that appeared
+                    on its own is never mistaken for one somebody forgot about. */}
+                {event.seriesId === null ? null : <Chip tone="soft">{t("series.inSeries")}</Chip>}
                 <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
                   {event.capacity === null ? t("events.freeEntry") : `${t("detail.spots")} ${event.capacity}`}
                 </span>
@@ -53,6 +59,44 @@ export const OrganizerScreen = () => {
           </Link>
         ))}
       </div>
+    </>
+  );
+};
+
+export const OrganizerScreen = () => {
+  const { t } = useI18n();
+  const { me } = useSession();
+  const [tab, setTab] = useState<Tab>("events");
+  // Anyone who reaches this screen may look. The list itself is the authority —
+  // it returns a branch admin's own branches and, for everyone else, only the
+  // series they are actually named on — so gating the tab on a role as well
+  // would hide a template from the very organizer who runs it every week.
+  // Raising a new series stays a branch-admin power, enforced inside the list.
+  const canSeeSeries = Boolean(me);
+
+  return (
+    <Screen>
+      <PageTitle title={t("organizer.title")} />
+
+      {canSeeSeries ? (
+        <div className="mb-5 flex gap-1.5 rounded-full border border-hair p-1">
+          {(["events", "series"] as const).map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setTab(item)}
+              data-active={tab === item}
+              className="tab min-w-0 flex-1 flex-row justify-center py-2"
+            >
+              <span className="max-w-full truncate">
+                {t(item === "events" ? "admin.tabEvents" : "series.title")}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === "events" || !canSeeSeries ? <EventsTab /> : <SeriesList />}
     </Screen>
   );
 };

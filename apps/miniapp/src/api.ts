@@ -133,6 +133,29 @@ export type EventGroup = EventSummary["groups"][number];
 /** Chat restrictions and the guest chat ride along with the event, but only admins may set them. */
 export type AdminEventDraft = EventDraft & { groups?: number[]; homeChatId?: number | null };
 
+/** A recurring run's template. `nextStartsAt` is the one date a human approved. */
+export type SeriesSummary = Ok<typeof api.organizer.series.get>[number];
+export type SeriesDetail = Ok<ReturnType<typeof api.organizer.series>["get"]>;
+export type SeriesStats = Ok<ReturnType<typeof api.organizer.series>["stats"]["get"]>;
+export type SeriesOccurrence = SeriesStats["occurrences"][number];
+
+export type SeriesDraft = {
+  city: CitySlug;
+  title: string;
+  description: string;
+  location: string;
+  locationUrl: string | null;
+  capacity: number | null;
+  /** Null when every date is set by hand — the irregular case. */
+  nextStartsAt: string | null;
+  cadenceDays: number | null;
+  leadDays?: number;
+  waitlistEnabled?: boolean;
+  groups?: number[];
+  homeChatId?: number | null;
+  active?: boolean;
+};
+
 export const sku = {
   me: () => call(api.me.get(auth())),
   setMe: (body: { locale?: Locale; city?: CitySlug; firstName?: string; lastName?: string }) => call(api.me.patch(body, auth())),
@@ -187,4 +210,19 @@ export const sku = {
   setCityRole: (id: number, city: CitySlug, role: CityRole | null) =>
     call(api.admin.users({ id }).roles.put({ city, role }, auth())),
   globalStats: (city?: CitySlug) => call(api.admin.stats.get({ ...auth(), query: city ? { city } : {} })),
+
+  series: () => call(api.organizer.series.get(auth())),
+  seriesDetail: (id: number) => call(api.organizer.series({ id }).get(auth())),
+  createSeries: (body: SeriesDraft) => call(api.organizer.series.post(body, auth())),
+  updateSeries: (id: number, body: Partial<SeriesDraft>) => call(api.organizer.series({ id }).patch(body, auth())),
+  spawnOccurrence: (id: number) => call(api.organizer.series({ id }).spawn.post(undefined, auth())),
+  skipOccurrence: (id: number) => call(api.organizer.series({ id }).skip.post(undefined, auth())),
+  seriesStats: (id: number) => call(api.organizer.series({ id }).stats.get(auth())),
+  setSeriesTicketTiers: (id: number, tiers: TicketTierDraft[]) =>
+    call(api.organizer.series({ id })["ticket-tiers"].put({ tiers }, auth())),
+  setSeriesProducts: (id: number, products: EventProductDraft[]) =>
+    call(api.organizer.series({ id }).products.put({ products }, auth())),
+  attachToSeries: (eventId: number, seriesId: number) =>
+    call(api.admin.events({ id: eventId }).series.post({ seriesId }, auth())),
+  detachFromSeries: (eventId: number) => call(api.admin.events({ id: eventId }).series.delete(undefined, auth())),
 };
