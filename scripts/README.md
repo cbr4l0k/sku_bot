@@ -53,6 +53,50 @@ docker compose exec -T app bun run scripts/event-people.ts 17
 This script is read-only. A person can still appear here with registration status
 `canceled`; use `remove-event-person.ts` to remove that historical registration row.
 
+## `add-event-person.ts`
+
+Puts one person on an event's roster when they cannot do it themselves: no signal
+at the door, a Telegram outage, a Mini App that will not load. The person may be
+given as a numeric `USER_ID` or as `@username`.
+
+Preview:
+
+```sh
+docker compose exec -T app bun run scripts/add-event-person.ts EVENT_ID @username
+```
+
+Apply after checking the event, spot count, and person printed by the preview:
+
+```sh
+docker compose exec -T app bun run scripts/add-event-person.ts EVENT_ID @username --apply
+```
+
+The outcome mirrors the Join button: a spot while the event has room, and the back
+of the queue once it is full. A person who lands in the queue can then be moved to
+the front with `move-queue-user.ts`.
+
+The script refuses, changing nothing, when the event is not published, has been
+ended, is full with its queue switched off, or when the person is banned or
+already on the roster. Someone who has never opened the bot has no user row and
+cannot be added at all — they have to send it `/start` once.
+
+Two of the Join button's rules are treated differently on purpose, because whoever
+runs this command is the authority those rules exist to protect:
+
+- A **chat-restricted event** is reported rather than refused. The preview prints
+  the cached Telegram membership for each chat gating the event, warns when the
+  app would have turned the person away, and adds them anyway.
+- A **ticketed event** refuses without `--comp`. This command writes no order and
+  takes no payment, so adding someone to an event that sells tickets gives a paid
+  spot away for free; `--comp` says that is intended.
+
+```sh
+docker compose exec -T app bun run scripts/add-event-person.ts EVENT_ID @username --comp --apply
+```
+
+The bot does not message the person, so tell them yourself. If the event has a
+chat, their invite follows within a minute from the usual sweeper.
+
 ## `remove-event-person.ts`
 
 Removes one person's registration and waitlist offers from one event. It does not

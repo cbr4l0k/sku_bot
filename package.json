@@ -11,6 +11,7 @@
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:migrate": "bun run --cwd packages/db db:migrate",
     "event:people": "bun run scripts/event-people.ts",
+    "event:add-person": "bun run scripts/add-event-person.ts",
     "event:remove-person": "bun run scripts/remove-event-person.ts",
     "event:reset": "bun run scripts/reset-event.ts",
     "event:export": "bun run scripts/export-event.ts",
