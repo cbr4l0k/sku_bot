@@ -10,12 +10,18 @@ import {
   eventProductVariants,
   eventProducts,
   eventOrganizers,
+  eventSeries,
   events,
   inArray,
   isNull,
   ne,
   or,
   registrations,
+  seriesChats,
+  seriesOrganizers,
+  seriesProductVariants,
+  seriesProducts,
+  seriesTicketTiers,
   sql,
   ticketOrders,
   ticketTiers,
@@ -72,6 +78,7 @@ import {
 } from "../core/tickets";
 import { syncAllStaff, syncCityStaff, syncEventStaff } from "../core/staff";
 import { eventStats, globalStats } from "../core/stats";
+import { attachEvent, detachEvent, seriesStats, skipNext, spawnOccurrence } from "../core/series";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
 import { loadEnv } from "../env";
@@ -175,6 +182,31 @@ const eventView = (event: typeof events.$inferSelect) => ({
     )).get()?.value ?? 0,
 });
 
+const seriesTierView = (tier: typeof seriesTicketTiers.$inferSelect) => ({
+  ...tier,
+  createdAt: tier.createdAt.toISOString(),
+  updatedAt: tier.updatedAt.toISOString(),
+});
+
+const seriesProductView = (product: typeof seriesProducts.$inferSelect) => ({
+  ...product,
+  createdAt: product.createdAt.toISOString(),
+  updatedAt: product.updatedAt.toISOString(),
+  variants: db.select().from(seriesProductVariants).where(eq(seriesProductVariants.productId, product.id))
+    .orderBy(asc(seriesProductVariants.sortOrder), asc(seriesProductVariants.id)).all().map((variant) => ({
+      ...variant,
+      createdAt: variant.createdAt.toISOString(),
+      updatedAt: variant.updatedAt.toISOString(),
+    })),
+});
+
+const seriesView = (series: typeof eventSeries.$inferSelect) => ({
+  ...series,
+  nextStartsAt: iso(series.nextStartsAt),
+  createdAt: series.createdAt.toISOString(),
+  updatedAt: series.updatedAt.toISOString(),
+});
+
 /**
  * A chat belongs to exactly one branch, so an event may only reach chats of its
  * own. This is what keeps a Kazan admin out of Moscow's groups. Stored rows
@@ -227,6 +259,20 @@ const administrable = (actor: Actor, eventId: number) => {
   if (!event) return { denied: "event_not_found" as const, code: 404 as const };
   if (!canAdminCity(actor, event.city)) return { denied: "forbidden" as const, code: 403 as const };
   return { event };
+};
+
+/**
+ * Editing a template changes every future draft and therefore belongs to branch
+ * admins. Spawning is narrower: a named organizer may press the button because
+ * the copied organizer row guarantees they can manage the event it creates.
+ */
+const manageableSeries = (actor: Actor, seriesId: number, namedOrganizer = false) => {
+  const series = db.select().from(eventSeries).where(eq(eventSeries.id, seriesId)).get();
+  if (!series) return { denied: "series_not_found" as const, code: 404 as const };
+  const named = namedOrganizer && Boolean(db.select({ seriesId: seriesOrganizers.seriesId }).from(seriesOrganizers)
+    .where(and(eq(seriesOrganizers.seriesId, seriesId), eq(seriesOrganizers.userId, actor.userId))).get());
+  if (!canAdminCity(actor, series.city) && !named) return { denied: "forbidden" as const, code: 403 as const };
+  return { series };
 };
 
 const participantEvent = (eventId: number) => db.select().from(events)
@@ -334,6 +380,45 @@ const eventProductBody = t.Object({
   active: t.Optional(t.Boolean()),
   variants: t.Optional(t.Array(t.Object({
     id: t.Optional(t.Integer({ minimum: 1 })),
+    name: t.String({ minLength: 1, maxLength: 40 }),
+    stock: t.Nullable(t.Integer({ minimum: 1 })),
+    active: t.Optional(t.Boolean()),
+  }), { maxItems: 30 })),
+});
+
+const seriesFields = t.Object({
+  city: citySchema,
+  title: t.String({ minLength: 1 }),
+  description: t.String(),
+  location: t.String({ minLength: 1 }),
+  locationUrl: t.Optional(t.Nullable(t.String())),
+  capacity: t.Nullable(t.Integer({ minimum: 0 })),
+  waitlistEnabled: t.Optional(t.Boolean()),
+  homeChatId: t.Optional(t.Nullable(t.Integer())),
+  nextStartsAt: t.Nullable(t.String()),
+  cadenceDays: t.Nullable(t.Integer({ minimum: 1 })),
+  leadDays: t.Optional(t.Integer({ minimum: 0 })),
+  active: t.Optional(t.Boolean()),
+  groups: t.Optional(t.Array(t.Integer())),
+  organizerIds: t.Optional(t.Array(t.Integer())),
+});
+const seriesCreateBody = seriesFields;
+const seriesPatchBody = t.Partial(seriesFields);
+const seriesTicketTierBody = t.Object({
+  name: t.String({ minLength: 1, maxLength: 80 }),
+  priceMinor: t.Integer({ minimum: 100 }),
+  quota: t.Nullable(t.Integer({ minimum: 1 })),
+  active: t.Optional(t.Boolean()),
+});
+const seriesProductBody = t.Object({
+  kind: t.Union([t.Literal("merchandise"), t.Literal("addon")]),
+  name: t.String({ minLength: 1, maxLength: 80 }),
+  description: t.Optional(t.Nullable(t.String({ maxLength: 240 }))),
+  priceMinor: t.Integer({ minimum: 100 }),
+  stock: t.Nullable(t.Integer({ minimum: 1 })),
+  maxPerOrder: t.Integer({ minimum: 1, maximum: 20 }),
+  active: t.Optional(t.Boolean()),
+  variants: t.Optional(t.Array(t.Object({
     name: t.String({ minLength: 1, maxLength: 40 }),
     stock: t.Nullable(t.Integer({ minimum: 1 })),
     active: t.Optional(t.Boolean()),
@@ -564,6 +649,204 @@ export const app = new Elysia()
         items: purchaseLines(event.id, user.id),
       };
     }, { params: idParams })
+
+    .get("/organizer/series", ({ user, isAdmin, actor }) => {
+      if (isAdmin) return db.select().from(eventSeries).orderBy(desc(eventSeries.nextStartsAt), desc(eventSeries.id)).all().map(seriesView);
+      const runs = adminCities(actor);
+      const byCity = runs.length
+        ? db.select().from(eventSeries).where(inArray(eventSeries.city, runs)).all()
+        : [];
+      const byName = db.select({ series: eventSeries }).from(seriesOrganizers)
+        .innerJoin(eventSeries, eq(seriesOrganizers.seriesId, eventSeries.id))
+        .where(eq(seriesOrganizers.userId, user.id)).all().map((row) => row.series);
+      const merged = new Map([...byCity, ...byName].map((series) => [series.id, series]));
+      return [...merged.values()]
+        .sort((a, b) => (b.nextStartsAt?.getTime() ?? 0) - (a.nextStartsAt?.getTime() ?? 0) || b.id - a.id)
+        .map(seriesView);
+    })
+    .post("/organizer/series", ({ body, user, actor, status }) => {
+      if (!canAdminCity(actor, body.city)) return error(status, 403, "forbidden");
+      const nextStartsAt = body.nextStartsAt === null ? null : parseDate(body.nextStartsAt);
+      if (nextStartsAt === undefined) return error(status, 400, "invalid_next_starts_at");
+      const locationUrl = body.locationUrl === undefined ? null : parseLocationUrl(body.locationUrl);
+      if (locationUrl === undefined) return error(status, 400, "invalid_location_url");
+      if (body.groups && unknownGroup(body.city, body.groups)) return error(status, 400, "unknown_group");
+      if (unknownHomeChat(body.city, body.homeChatId)) return error(status, 400, "unknown_home_chat");
+      const groups = [...new Set(body.groups ?? [])];
+      const organizerIds = [...new Set(body.organizerIds ?? [])];
+      const created = db.$client.transaction(() => {
+        const series = db.insert(eventSeries).values({
+          city: body.city,
+          title: body.title,
+          description: body.description,
+          location: body.location,
+          locationUrl,
+          capacity: body.capacity,
+          waitlistEnabled: body.waitlistEnabled,
+          homeChatId: body.homeChatId,
+          nextStartsAt,
+          cadenceDays: body.cadenceDays,
+          leadDays: body.leadDays,
+          active: body.active,
+          createdBy: user.id,
+        }).returning().get();
+        for (const chatId of groups) db.insert(seriesChats).values({ seriesId: series.id, chatId }).run();
+        for (const userId of organizerIds) db.insert(seriesOrganizers).values({ seriesId: series.id, userId }).run();
+        return series;
+      })();
+      return seriesView(created);
+    }, { body: seriesCreateBody })
+    .get("/organizer/series/:id", ({ params, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const occurrenceRows = db.select().from(events).where(eq(events.seriesId, params.id)).orderBy(asc(events.startsAt), asc(events.id)).all();
+      const boundary = now().getTime();
+      return {
+        ...seriesView(found.series),
+        groups: db.select({ chatId: seriesChats.chatId }).from(seriesChats)
+          .where(eq(seriesChats.seriesId, params.id)).orderBy(asc(seriesChats.chatId)).all().map((row) => row.chatId),
+        organizerIds: db.select({ userId: seriesOrganizers.userId }).from(seriesOrganizers)
+          .where(eq(seriesOrganizers.seriesId, params.id)).orderBy(asc(seriesOrganizers.userId)).all().map((row) => row.userId),
+        ticketTiers: db.select().from(seriesTicketTiers).where(eq(seriesTicketTiers.seriesId, params.id))
+          .orderBy(asc(seriesTicketTiers.sortOrder), asc(seriesTicketTiers.id)).all().map(seriesTierView),
+        products: db.select().from(seriesProducts).where(eq(seriesProducts.seriesId, params.id))
+          .orderBy(asc(seriesProducts.sortOrder), asc(seriesProducts.id)).all().map(seriesProductView),
+        upcomingOccurrences: occurrenceRows.filter((event) => event.startsAt.getTime() >= boundary).map(eventView),
+        pastOccurrences: occurrenceRows.filter((event) => event.startsAt.getTime() < boundary).map(eventView),
+      };
+    }, { params: idParams })
+    .patch("/organizer/series/:id", ({ params, body, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const targetCity = body.city ?? found.series.city;
+      if (body.city !== undefined && body.city !== found.series.city && !canAdminCity(actor, body.city)) {
+        return error(status, 403, "forbidden");
+      }
+      const nextStartsAt = body.nextStartsAt === undefined
+        ? undefined
+        : body.nextStartsAt === null ? null : parseDate(body.nextStartsAt);
+      if (body.nextStartsAt !== undefined && nextStartsAt === undefined) return error(status, 400, "invalid_next_starts_at");
+      const locationUrl = body.locationUrl === undefined ? undefined : parseLocationUrl(body.locationUrl);
+      if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
+      if (body.groups && unknownGroup(targetCity, body.groups)) return error(status, 400, "unknown_group");
+      if (unknownHomeChat(targetCity, body.homeChatId)) return error(status, 400, "unknown_home_chat");
+      db.$client.transaction(() => {
+        db.update(eventSeries).set({
+          ...(body.city === undefined ? {} : { city: body.city }),
+          ...(body.title === undefined ? {} : { title: body.title }),
+          ...(body.description === undefined ? {} : { description: body.description }),
+          ...(body.location === undefined ? {} : { location: body.location }),
+          ...(locationUrl === undefined ? {} : { locationUrl }),
+          ...(body.capacity === undefined ? {} : { capacity: body.capacity }),
+          ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }),
+          ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }),
+          ...(nextStartsAt === undefined ? {} : { nextStartsAt }),
+          ...(body.cadenceDays === undefined ? {} : { cadenceDays: body.cadenceDays }),
+          ...(body.leadDays === undefined ? {} : { leadDays: body.leadDays }),
+          ...(body.active === undefined ? {} : { active: body.active }),
+          updatedAt: now(),
+        }).where(eq(eventSeries.id, params.id)).run();
+        if (body.groups !== undefined) {
+          db.delete(seriesChats).where(eq(seriesChats.seriesId, params.id)).run();
+          for (const chatId of [...new Set(body.groups)]) db.insert(seriesChats).values({ seriesId: params.id, chatId }).run();
+        }
+        if (body.organizerIds !== undefined) {
+          db.delete(seriesOrganizers).where(eq(seriesOrganizers.seriesId, params.id)).run();
+          for (const userId of [...new Set(body.organizerIds)]) db.insert(seriesOrganizers).values({ seriesId: params.id, userId }).run();
+        }
+      })();
+      const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
+      return updated ? seriesView(updated) : error(status, 404, "series_not_found");
+    }, { params: idParams, body: seriesPatchBody })
+    .post("/organizer/series/:id/spawn", ({ params, actor, status }) => {
+      const found = manageableSeries(actor, params.id, true);
+      if (found.denied) return error(status, found.code, found.denied);
+      const result = spawnOccurrence(db, params.id, now());
+      if ("error" in result) return error(status, result.error === "series_not_found" ? 404 : 409, result.error);
+      const event = db.select().from(events).where(eq(events.id, result.eventId)).get();
+      return event ? eventView(event) : error(status, 404, "event_not_found");
+    }, { params: idParams })
+    .post("/organizer/series/:id/skip", ({ params, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const result = skipNext(db, params.id, now());
+      if ("error" in result) return error(status, result.error === "series_not_found" ? 404 : 409, result.error);
+      const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
+      return updated ? seriesView(updated) : error(status, 404, "series_not_found");
+    }, { params: idParams })
+    .get("/organizer/series/:id/stats", ({ params, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const stats = seriesStats(db, params.id);
+      return {
+        ...stats,
+        occurrences: stats.occurrences.map((occurrence) => ({
+          ...occurrence,
+          startsAt: occurrence.startsAt.toISOString(),
+        })),
+      };
+    }, { params: idParams })
+    .put("/organizer/series/:id/ticket-tiers", ({ params, body, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const parsed = body.tiers.map((tier) => ({ ...tier, name: tier.name.trim() }));
+      if (parsed.some((tier) => !tier.name)) return error(status, 400, "invalid_ticket_tier");
+      db.$client.transaction(() => {
+        db.delete(seriesTicketTiers).where(eq(seriesTicketTiers.seriesId, params.id)).run();
+        parsed.forEach((tier, sortOrder) => db.insert(seriesTicketTiers).values({
+          seriesId: params.id,
+          name: tier.name,
+          priceMinor: tier.priceMinor,
+          quota: tier.quota,
+          active: tier.active ?? true,
+          sortOrder,
+        }).run());
+      })();
+      return { tiers: db.select().from(seriesTicketTiers).where(eq(seriesTicketTiers.seriesId, params.id))
+        .orderBy(asc(seriesTicketTiers.sortOrder), asc(seriesTicketTiers.id)).all().map(seriesTierView) };
+    }, { params: idParams, body: t.Object({ tiers: t.Array(seriesTicketTierBody, { maxItems: 20 }) }) })
+    .put("/organizer/series/:id/products", ({ params, body, actor, status }) => {
+      const found = manageableSeries(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const parsed = body.products.map((product) => ({
+        ...product,
+        name: product.name.trim(),
+        description: product.description?.trim() || null,
+        variants: product.variants?.map((variant) => ({ ...variant, name: variant.name.trim() })),
+      }));
+      if (parsed.some((product) => !product.name || product.variants?.some((variant) => !variant.name))) {
+        return error(status, 400, "invalid_product");
+      }
+      if (parsed.some((product) => {
+        const names = product.variants?.map((variant) => variant.name.toLocaleLowerCase()) ?? [];
+        return new Set(names).size !== names.length;
+      })) return error(status, 400, "duplicate_product_variant");
+      db.$client.transaction(() => {
+        db.delete(seriesProducts).where(eq(seriesProducts.seriesId, params.id)).run();
+        parsed.forEach((product, sortOrder) => {
+          const productId = db.insert(seriesProducts).values({
+            seriesId: params.id,
+            kind: product.kind,
+            name: product.name,
+            description: product.description,
+            priceMinor: product.priceMinor,
+            stock: product.variants?.length ? null : product.stock,
+            maxPerOrder: product.maxPerOrder,
+            active: product.active ?? true,
+            sortOrder,
+          }).returning({ id: seriesProducts.id }).get().id;
+          product.variants?.forEach((variant, variantSortOrder) => db.insert(seriesProductVariants).values({
+            productId,
+            name: variant.name,
+            stock: variant.stock,
+            active: variant.active ?? true,
+            sortOrder: variantSortOrder,
+          }).run());
+        });
+      })();
+      return { products: db.select().from(seriesProducts).where(eq(seriesProducts.seriesId, params.id))
+        .orderBy(asc(seriesProducts.sortOrder), asc(seriesProducts.id)).all().map(seriesProductView) };
+    }, { params: idParams, body: t.Object({ products: t.Array(seriesProductBody, { maxItems: 40 }) }) })
 
     .get("/organizer/events", ({ user, isAdmin, actor }) => {
       if (isAdmin) return db.select().from(events).orderBy(desc(events.startsAt)).all().map(eventView);
@@ -951,6 +1234,25 @@ export const app = new Elysia()
       if (hasOrders) return error(status, 409, "event_has_payment_history");
       db.delete(events).where(eq(events.id, params.id)).run();
       return { ok: true };
+    }, { params: idParams })
+    .post("/admin/events/:id/series", ({ params, body, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const result = attachEvent(db, params.id, body.seriesId);
+      if ("error" in result) {
+        const code = result.error === "event_not_found" || result.error === "series_not_found" ? 404 : 409;
+        return error(status, code, result.error);
+      }
+      const event = db.select().from(events).where(eq(events.id, params.id)).get();
+      return event ? eventView(event) : error(status, 404, "event_not_found");
+    }, { params: idParams, body: t.Object({ seriesId: t.Integer({ minimum: 1 }) }) })
+    .delete("/admin/events/:id/series", ({ params, actor, status }) => {
+      const found = administrable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const result = detachEvent(db, params.id);
+      if ("error" in result) return error(status, 404, result.error);
+      const event = db.select().from(events).where(eq(events.id, params.id)).get();
+      return event ? eventView(event) : error(status, 404, "event_not_found");
     }, { params: idParams })
     .put("/admin/events/:id/organizers", ({ params, body, actor, status }) => {
       const found = administrable(actor, params.id);
