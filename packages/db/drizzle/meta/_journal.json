@@ -113,6 +113,13 @@
       "when": 1788952636731,
       "tag": "0015_cold_shinko_yamashiro",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1789123141907,
+      "tag": "0016_glossy_dragon_lord",
+      "breakpoints": true
     }
   ]
 }

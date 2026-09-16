@@ -58,6 +58,34 @@ export const users = sqliteTable("users", {
   createdAt: createdAt(),
 });
 
+export const eventSeries = sqliteTable("event_series", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  city: text("city").$type<CitySlug>().notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  location: text("location").notNull(),
+  locationUrl: text("location_url"),
+  capacity: integer("capacity"),
+  waitlistEnabled: integer("waitlist_enabled", { mode: "boolean" }).notNull().default(true),
+  homeChatId: integer("home_chat_id"),
+  /**
+   * The next occurrence's date is a human decision, never an inference. Null
+   * means nobody has named the next one yet, so there is nothing to raise.
+   */
+  nextStartsAt: integer("next_starts_at", { mode: "timestamp" }),
+  /**
+   * A suggestion for after a spawn, not a recurrence rule. Null keeps every
+   * future date in human hands; a value merely proposes that many days later.
+   */
+  cadenceDays: integer("cadence_days"),
+  /** Drafts appear ahead of the run so a human has time to review and publish them. */
+  leadDays: integer("lead_days").notNull().default(14),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdBy: integer("created_by").notNull().references(() => users.id),
+  createdAt: createdAt(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+});
+
 export const events = sqliteTable(
   "events",
   {
@@ -88,11 +116,96 @@ export const events = sqliteTable(
      * funnel its runners into one group. Null means nobody is invited anywhere.
      */
     homeChatId: integer("home_chat_id"),
+    /**
+     * Historical runs must survive their planning template: registrations and
+     * paid orders belong to the event, so removing a series only removes the link.
+     */
+    seriesId: integer("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
     createdBy: integer("created_by").notNull().references(() => users.id),
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
   },
-  (table) => [index("events_city_status_starts_at_idx").on(table.city, table.status, table.startsAt)],
+  (table) => [
+    index("events_city_status_starts_at_idx").on(table.city, table.status, table.startsAt),
+    index("events_series_id_starts_at_idx").on(table.seriesId, table.startsAt),
+  ],
+);
+
+/** Chats copied into each occurrence so later template edits cannot rewrite history. */
+export const seriesChats = sqliteTable(
+  "series_chats",
+  {
+    seriesId: integer("series_id").notNull().references(() => eventSeries.id, { onDelete: "cascade" }),
+    chatId: integer("chat_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.seriesId, table.chatId] })],
+);
+
+export const seriesOrganizers = sqliteTable(
+  "series_organizers",
+  {
+    seriesId: integer("series_id").notNull().references(() => eventSeries.id, { onDelete: "cascade" }),
+    userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  },
+  (table) => [primaryKey({ columns: [table.seriesId, table.userId] })],
+);
+
+/** Prices and quotas are copied, never shared, because every run owns its inventory. */
+export const seriesTicketTiers = sqliteTable(
+  "series_ticket_tiers",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    seriesId: integer("series_id").notNull().references(() => eventSeries.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    priceMinor: integer("price_minor").notNull(),
+    quota: integer("quota"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [index("series_ticket_tiers_series_id_sort_order_idx").on(table.seriesId, table.sortOrder, table.id)],
+);
+
+/** Product stock is a starting point for a fresh occurrence, not a shared pool. */
+export const seriesProducts = sqliteTable(
+  "series_products",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    seriesId: integer("series_id").notNull().references(() => eventSeries.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<EventProductKind>().notNull().default("merchandise"),
+    name: text("name").notNull(),
+    description: text("description"),
+    priceMinor: integer("price_minor").notNull(),
+    stock: integer("stock"),
+    maxPerOrder: integer("max_per_order").notNull().default(1),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [index("series_products_series_id_sort_order_idx").on(table.seriesId, table.sortOrder, table.id)],
+);
+
+/** Variant stock follows its product into each run so orders keep exact parents. */
+export const seriesProductVariants = sqliteTable(
+  "series_product_variants",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    productId: integer("product_id").notNull().references(() => seriesProducts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    stock: integer("stock"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
+  },
+  (table) => [
+    index("series_product_variants_product_id_sort_order_idx").on(table.productId, table.sortOrder, table.id),
+    uniqueIndex("series_product_variants_active_product_id_name_unique")
+      .on(table.productId, table.name)
+      .where(sql`${table.active} = true`),
+  ],
 );
 
 /**
