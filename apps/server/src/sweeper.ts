@@ -3,6 +3,7 @@ import { syncChatGuests } from "./bot/guests";
 import { dispatchEffects } from "./notify";
 import { sweepOffers } from "./core/waitlist";
 import { sweepTicketPayments } from "./core/tickets";
+import { dueSeries, spawnOccurrence } from "./core/series";
 import { paymentProvider } from "./payments";
 
 /** Each pass stands alone: one failing must not hold back the others. */
@@ -31,11 +32,17 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
  * Offers turn on a 20-minute expiry, so they are swept often. Chat guests are not
  * racing a deadline — a minute between someone taking a spot and the invite landing
  * is nothing — and each pass can cost a Telegram lookup per person, so they get a
- * slower lane of their own rather than riding along every 30 seconds.
+ * slower lane of their own rather than riding along every 30 seconds. Series are
+ * slower again: their lead is measured in days, and an hourly pass still leaves a
+ * human the whole review window promised by the template.
  */
-export const startSweeper = (db: Db, intervalMs = 30_000, guestIntervalMs = 60_000) => {
+export const startSweeper = (db: Db, intervalMs = 30_000, guestIntervalMs = 60_000, seriesIntervalMs = 60 * 60 * 1000) => {
   const stopOffers = every(intervalMs, guarded("Offer", () => dispatchEffects(sweepOffers(db, new Date()))));
   const stopGuests = every(guestIntervalMs, guarded("Chat guest", () => syncChatGuests(db, new Date())));
+  const stopSeries = every(seriesIntervalMs, guarded("Series", async () => {
+    const sweepAt = new Date();
+    for (const seriesId of dueSeries(db, sweepAt)) spawnOccurrence(db, seriesId, sweepAt);
+  }));
   const configuredProvider = paymentProvider;
   const stopPayments = configuredProvider
     ? every(intervalMs, guarded("Payment", () => sweepTicketPayments(db, configuredProvider, new Date()).then(dispatchEffects)))
@@ -44,6 +51,7 @@ export const startSweeper = (db: Db, intervalMs = 30_000, guestIntervalMs = 60_0
   return () => {
     stopOffers();
     stopGuests();
+    stopSeries();
     stopPayments();
   };
 };
