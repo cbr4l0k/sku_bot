@@ -10,6 +10,8 @@
     "test": "bun test",
     "db:generate": "bun run --cwd packages/db db:generate",
     "db:migrate": "bun run --cwd packages/db db:migrate",
+    "db:backup": "bun run scripts/backup.ts",
+    "db:restore": "bun run scripts/restore.ts",
     "event:people": "bun run scripts/event-people.ts",
     "event:add-person": "bun run scripts/add-event-person.ts",
     "event:remove-person": "bun run scripts/remove-event-person.ts",

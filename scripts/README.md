@@ -28,11 +28,51 @@ changes from the WAL file and writes only the binary database to standard output
 docker compose exec -T app bun run scripts/backup.ts > sku-$(date +%F).db
 ```
 
+The package shortcut is `bun run db:backup`.
+
 Keep `-T`: allocating a TTY can corrupt the binary output. The redirect happens on
 the host, so the resulting file is created in your current host directory.
 
 This script is read-only with respect to the live database. Take a backup before
 using `reset-event.ts` or doing unusual production repair work.
+
+## `restore.ts`
+
+Validates and loads a database file produced by `backup.ts`. Preview is the
+default and reports the backup and current database metadata without changing
+anything:
+
+```sh
+DATABASE_PATH=./data/sku.db bun run db:restore ./sku-2026-09-23.db
+```
+
+Stop every process using the database before applying the restore. The script
+validates the backup again, saves the current database beside it with a
+`.pre-restore-<timestamp>` suffix, and then atomically replaces the database:
+
+```sh
+DATABASE_PATH=./data/sku.db bun run db:restore ./sku-2026-09-23.db --apply
+```
+
+On the server running Docker, put the backup in the repository directory, rebuild
+the image, and keep the application stopped for the preview/apply sequence. The
+read-only bind mount makes the server-local backup available to the one-off
+container:
+
+```sh
+docker compose up -d --build
+docker compose stop app
+docker compose run --rm --no-deps -T -v "$PWD:/backup:ro" app bun run db:restore /backup/sku-2026-09-23.db
+docker compose run --rm --no-deps -T -v "$PWD:/backup:ro" app bun run db:restore /backup/sku-2026-09-23.db --apply
+docker compose up -d app
+```
+
+The pre-restore safety snapshot remains in the database volume.
+
+Do not restore through `docker compose exec` while the bot is running. SQLite
+connections already held by the bot would continue using the replaced file's old
+inode. If the restored database is wrong, stop the app again and use the printed
+pre-restore snapshot as the input to this same command.
 
 ## `event-people.ts`
 
