@@ -326,6 +326,26 @@ This script is read-only. It writes the file with `scripts/xlsx.ts`, a small
 SpreadsheetML writer in this repository, so exporting adds no dependency to the
 image.
 
+## `series-top.ts`
+
+Lists the top participants of every series, ranked by how many of its runs they
+checked in to. Pass a series id to look at just one, and `--limit` to change how
+many people are shown per series (10 by default):
+
+```sh
+docker compose exec -T app bun run scripts/series-top.ts
+docker compose exec -T app bun run scripts/series-top.ts 3 --limit 20
+```
+
+The package shortcut is `bun run series:top`.
+
+The ranking matches the regulars on the series screen: only check-ins count, and
+staff check-ins count too, so an admin who turned up appears like anyone else. The
+`staff` column marks people who were on a roster as staff at least once. `confirmed`
+counts runs they held a spot on, whether or not they showed up.
+
+This script is read-only.
+
 ## Running outside Docker
 
 For a local development database, set `DATABASE_PATH` explicitly and omit the

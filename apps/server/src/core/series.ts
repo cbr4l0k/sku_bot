@@ -194,7 +194,7 @@ export const detachEvent = (db: Db, eventId: number): { ok: true } | { error: "e
 };
 
 type OccurrenceRow = { id: number; title: string; starts_at: number; capacity: number | null };
-type ParticipantRow = { user_id: number; status: string };
+type ParticipantRow = { user_id: number; status: string; is_staff: number };
 
 export const seriesStats = (db: Db, seriesId: number) => {
   const rows = db.$client.query<OccurrenceRow, [number]>(`
@@ -217,11 +217,16 @@ export const seriesStats = (db: Db, seriesId: number) => {
     const counts = eventStats(db, event.id);
     // Series analytics describe participants, never the people staffing the run;
     // staff rows are excluded from every participant count just as in stats.ts.
-    const participants = db.$client.query<ParticipantRow, [number]>(`
-      SELECT user_id, status FROM registrations
-      WHERE event_id = ? AND is_staff = 0
-        AND status IN ('registered', 'checked_in')
+    // Regulars are the exception: they reward turning up, and an admin who
+    // checked in turned up just like anyone else.
+    const confirmed = db.$client.query<ParticipantRow, [number]>(`
+      SELECT user_id, status, is_staff FROM registrations
+      WHERE event_id = ? AND status IN ('registered', 'checked_in')
     `).all(event.id);
+    for (const row of confirmed) {
+      if (row.status === "checked_in") checkedInByUser.set(row.user_id, (checkedInByUser.get(row.user_id) ?? 0) + 1);
+    }
+    const participants = confirmed.filter((row) => row.is_staff === 0);
     let newcomers = 0;
     let returning = 0;
     for (const participant of participants) {
@@ -230,9 +235,6 @@ export const seriesStats = (db: Db, seriesId: number) => {
       if (firstConfirmedAt.get(participant.user_id) === event.starts_at) newcomers++;
       else returning++;
       confirmedByUser.set(participant.user_id, (confirmedByUser.get(participant.user_id) ?? 0) + 1);
-      if (participant.status === "checked_in") {
-        checkedInByUser.set(participant.user_id, (checkedInByUser.get(participant.user_id) ?? 0) + 1);
-      }
     }
     const settled = db.$client.query<{ value: number | null }, [number]>(`
       SELECT sum(i.unit_amount_minor * i.quantity) AS value

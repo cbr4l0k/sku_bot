@@ -17,8 +17,10 @@
     "event:remove-person": "bun run scripts/remove-event-person.ts",
     "event:move-queue-user": "bun run scripts/move-queue-user.ts",
     "event:reset": "bun run scripts/reset-event.ts",
+    "event:guests": "bun run scripts/guests.ts",
     "event:export": "bun run scripts/export-event.ts",
     "series:backfill": "bun run scripts/backfill-series.ts",
+    "series:top": "bun run scripts/series-top.ts",
     "refund:reconcile": "bun run scripts/reconcile-yookassa-refund.ts"
   }
 }

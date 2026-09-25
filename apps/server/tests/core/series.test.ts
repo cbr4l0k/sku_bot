@@ -209,7 +209,9 @@ test("series stats distinguish newcomers, returning runners, retention and settl
     { newcomers: 1, returning: 2, registered: 3, waitlisted: 0 },
   ]);
   expect(stats.totals).toMatchObject({ occurrences: 3, uniqueParticipants: 4, revenueMinor: 500 });
+  // Staff are left out of participant counts but still earn a place among the regulars.
   expect(stats.regulars).toEqual([
+    { userId: 1, firstName: "U1", attended: 3 },
     { userId: 2, firstName: "U2", attended: 2 },
     { userId: 3, firstName: "U3", attended: 1 },
     { userId: 4, firstName: "U4", attended: 1 },
