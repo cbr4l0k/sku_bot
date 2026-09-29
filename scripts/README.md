@@ -385,3 +385,21 @@ everyone. Change the event's chats in the admin screen, then run the script agai
 
 If a forgotten id is still listed in `EVENT_GROUPS`, remove it there too, or the
 next restart will file it again.
+
+## `clear-queue.ts`
+
+Empties one event's waiting list. People who are registered or checked in are not
+touched. The preview lists the queue in order, including anyone holding a pending
+spot offer:
+
+```sh
+docker compose exec -T app bun run scripts/clear-queue.ts EVENT_ID
+docker compose exec -T app bun run scripts/clear-queue.ts EVENT_ID --apply
+```
+
+The package shortcut is `bun run event:clear-queue`.
+
+Each queued person is canceled the same way as when they leave the queue
+themselves: the registration becomes `canceled`, so history and stats are kept
+and they can join again, and any pending offer is superseded, so an Accept button
+still on their screen answers "spot taken". Nobody is notified.
