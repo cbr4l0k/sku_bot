@@ -357,3 +357,31 @@ DATABASE_PATH=./data/sku.db bun run scripts/event-people.ts 17
 
 Be especially careful not to point a destructive command at a copied production
 database unless that is intentional.
+
+## `prune-chats.ts`
+
+Forgets the group chats the bot has been removed from. The bot files a chat as
+soon as it joins, but never unfiles it, so admin screens keep offering groups it
+can no longer reach. The script asks Telegram about the bot's own membership in
+every catalogued chat:
+
+```sh
+docker compose exec -T app bun run scripts/prune-chats.ts
+docker compose exec -T app bun run scripts/prune-chats.ts --apply
+```
+
+The package shortcut is `bun run chats:prune`.
+
+A chat is only forgotten when Telegram clearly says the bot is out (left, kicked,
+403, or "chat not found"). Rate limits, network errors and unfamiliar answers keep
+the chat and make the command exit non-zero. A group's old id after an upgrade to
+a supergroup is also kept; the bot carries it over itself.
+
+Forgetting a chat removes its catalog row, cached memberships and guest trials,
+clears it as an event or series home chat, and drops it from events that are
+still gated by another chat. A chat that is the only gate of a live event or of a
+series is kept and reported, because removing it would open that event to
+everyone. Change the event's chats in the admin screen, then run the script again.
+
+If a forgotten id is still listed in `EVENT_GROUPS`, remove it there too, or the
+next restart will file it again.
