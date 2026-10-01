@@ -27,7 +27,6 @@ export const ru = {
   "common.back": "Назад",
 
   "events.title": "Ближайшие",
-  "events.subtitle": "Записывайся заранее — места разбирают быстро",
   "events.empty": "Пока нет анонсов. Загляни позже — тренировки появляются каждую неделю.",
   "events.freeEntry": "Без ограничений",
   "events.spotsLeft": "осталось {n}",

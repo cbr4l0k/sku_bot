@@ -39,8 +39,6 @@ export const EventsScreen = () => {
         }
       />
 
-      <p className="mb-5 max-w-[85%] text-[13px] leading-relaxed text-hint">{t("events.subtitle")}</p>
-
       {events.loading && !events.data ? <Loader label={t("common.loading")} /> : null}
 
       {events.error && !events.data ? (

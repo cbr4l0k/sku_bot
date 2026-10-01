@@ -1,6 +1,7 @@
 import { blockquote, bold, code, format, join, link } from "gramio";
 import type { LanguageMap } from "@gramio/i18n";
 import type { EventUpdatedFields } from "../event-card";
+import { clubEmoji } from "../club-emoji";
 
 export const en = {
   welcome: "Welcome to the running club! Let's get you ready for the next run.",
@@ -8,10 +9,10 @@ export const en = {
   contactButton: "📱 Share my contact",
   contactSaved: "All set — your contact is saved.",
   contactRejected: "Please share your own contact using the button below.",
-  hero: () => format`${bold("🏃 Running Club")}
+  hero: () => format`${clubEmoji()} ${bold("Skuratov Running Club")}
 
-${blockquote("Runs, training sessions, and good company — all in one place.")}`,
-  openApp: "🏃 Open the app",
+${blockquote("Sign up for runs and training sessions, pick a ticket, and keep track of your registrations.")}`,
+  openApp: "Open the app",
   openEvent: "Open event",
   chooseTicket: "Choose ticket",
   ticketOption: (name: string, price: string) => `🎟 ${name} · ${price}`,

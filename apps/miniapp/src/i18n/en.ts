@@ -28,7 +28,6 @@ export const en: Dict = {
   "common.back": "Back",
 
   "events.title": "Upcoming",
-  "events.subtitle": "Sign up early — spots go fast",
   "events.empty": "No announcements yet. Check back soon — new sessions land every week.",
   "events.freeEntry": "Free entry",
   "events.spotsLeft": "{n} left",

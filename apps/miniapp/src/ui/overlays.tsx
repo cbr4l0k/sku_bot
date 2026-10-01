@@ -37,7 +37,7 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
           <div
             key={toast.id}
             style={{ animation: "toastIn 0.3s var(--ease-out-back)" }}
-            className="paper flex max-w-[92%] items-center gap-2.5 rounded-full border border-hair px-4 py-2.5 shadow-[0_16px_44px_-20px_rgb(1_32_36/0.45)] backdrop-blur-md"
+            className="paper flex max-w-[92%] items-center gap-2.5 rounded-full border border-hair px-4 py-2.5 shadow-[0_16px_44px_-20px_rgb(1_32_36/0.45)]"
           >
             <span
               className="inline-block h-2 w-2 shrink-0 rounded-full"
