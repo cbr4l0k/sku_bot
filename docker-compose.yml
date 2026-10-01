@@ -15,6 +15,9 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    # Lets Caddy reach the VPN's Xray on the host (172.17.0.1:10000).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     ports:

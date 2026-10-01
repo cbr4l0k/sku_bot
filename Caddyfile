@@ -2,3 +2,14 @@
     encode gzip
     reverse_proxy app:3000
 }
+
+{$VPN_DOMAIN:vpn.localhost} {
+    handle {$VPN_PATH:/disabled}* {
+        reverse_proxy h2c://host.docker.internal:10000 {
+            flush_interval -1
+        }
+    }
+    handle {
+        respond "It works." 200
+    }
+}
