@@ -1227,6 +1227,9 @@ export const app = new Elysia()
         username: person.username,
         phone: person.phone,
         ticketName: ticketNameFor(params.id, person.id),
+        // The same number the runner sees on their ticket.
+        number: db.select({ id: registrations.id }).from(registrations)
+          .where(and(eq(registrations.eventId, params.id), eq(registrations.userId, person.id))).get()?.id ?? null,
         alreadyCheckedIn: result.alreadyCheckedIn,
         checkedInAt: result.checkedInAt.toISOString(),
         items: purchaseLines(params.id, person.id),

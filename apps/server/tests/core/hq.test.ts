@@ -79,7 +79,7 @@ describe("hq overview", () => {
     expect(hq.live).toEqual([expect.objectContaining({ id: live, checkedIn: 1, total: 2, minutesSinceStart: 12, ticketed: false })]);
     expect(hq.todo).toEqual([
       { kind: "end_event", eventId: stale, title: "run", startsAt: expect.any(String), hoursSinceStart: 14 },
-      { kind: "publish_draft", eventId: draft, title: "run", startsAt: expect.any(String), seriesId },
+      { kind: "publish_draft", eventId: draft, title: "run", city: expect.any(String), startsAt: expect.any(String), seriesId },
     ]);
     expect(hq.next.map(({ id, phase, registered, waitlisted, revenueMinor }) => ({ id, phase, registered, waitlisted, revenueMinor }))).toEqual([
       { id: draft, phase: "draft", registered: 0, waitlisted: 0, revenueMinor: null },

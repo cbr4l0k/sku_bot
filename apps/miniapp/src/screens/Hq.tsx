@@ -61,6 +61,8 @@ const HqEvents = () => {
   const { me } = useSession();
   const hq = useResource(sku.hq, { pollMs: 30_000 });
   const isAdmin = Boolean(me?.isAdmin || me?.adminCities.length);
+  // Publishing is the branch's call, so it is checked per draft, not per person.
+  const canPublish = (city: string) => Boolean(me?.isAdmin || me?.adminCities.some((own) => own === city));
 
   if (!hq.data) {
     return hq.loading ? (
@@ -88,7 +90,7 @@ const HqEvents = () => {
           <Rule label={t("hq.todo")} aside={String(todo.length)} />
           <div className="card rise">
             {todo.map((item) => (
-              <TodoRow key={`${item.kind}-${item.eventId}`} item={item} canPublish={isAdmin} onDone={reload} />
+              <TodoRow key={`${item.kind}-${item.eventId}`} item={item} canPublish={item.kind === "publish_draft" && canPublish(item.city)} onDone={reload} />
             ))}
           </div>
         </>

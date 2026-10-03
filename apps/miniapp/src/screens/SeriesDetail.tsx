@@ -81,7 +81,7 @@ export const SeriesDetailScreen = () => {
       <h1 className="hero rise mb-5 break-words">{series.title}</h1>
 
       <NextUpCard
-        occurrence={series.upcomingOccurrences[0] ?? null}
+        occurrence={series.upcomingOccurrences.find((event) => event.status !== "canceled" && event.endedAt === null) ?? null}
         nextStartsAt={series.nextStartsAt}
         leadDays={series.leadDays}
         cadenceDays={series.cadenceDays}

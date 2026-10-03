@@ -49,6 +49,11 @@ export const NextUpCard = ({
   // The template's own controls; under a raised run they act on the date after it.
   const templateControls = nextStartsAt ? (
     <>
+      {occurrence ? (
+        <Button size="sm" variant="ghost" loading={busy} onClick={onSpawn}>
+          {t("series.createNow")}
+        </Button>
+      ) : null}
       <Button size="sm" variant="ghost" onClick={open} disabled={busy}>
         {t("series.move")}
       </Button>
@@ -81,14 +86,12 @@ export const NextUpCard = ({
               {isDraft ? t("series.openDraft") : t("hq.open")}
             </Link>
             <div className="hairline my-3.5" />
-            <div className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 text-[12px] text-hint">
-                {nextStartsAt
-                  ? t("series.afterThat", { date: `${shortDate(nextStartsAt, locale)}, ${timeOf(nextStartsAt, locale)}`, n: leadDays })
-                  : t("series.nextNone")}
-              </p>
-              {templateControls}
-            </div>
+            <p className="text-[12px] text-hint">
+              {nextStartsAt
+                ? t("series.afterThat", { date: `${shortDate(nextStartsAt, locale)}, ${timeOf(nextStartsAt, locale)}`, n: leadDays })
+                : t("series.nextNone")}
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">{templateControls}</div>
           </>
         ) : nextStartsAt ? (
           <>

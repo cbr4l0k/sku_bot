@@ -114,7 +114,7 @@ export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
 
   const live = [];
   const todo: (
-    | { kind: "publish_draft"; eventId: number; title: string; startsAt: string; seriesId: number }
+    | { kind: "publish_draft"; eventId: number; title: string; city: string; startsAt: string; seriesId: number }
     | { kind: "end_event"; eventId: number; title: string; startsAt: string; hoursSinceStart: number }
   )[] = [];
   const next = [];
@@ -144,7 +144,7 @@ export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
     // A draft whose date already passed was never going to be run; it is not "next".
     if (event.starts_at <= timestamp) continue;
     if (phase === "draft" && event.series_id !== null) {
-      todo.push({ kind: "publish_draft", eventId: event.id, title: event.title, startsAt, seriesId: event.series_id });
+      todo.push({ kind: "publish_draft", eventId: event.id, title: event.title, city: event.city, startsAt, seriesId: event.series_id });
     }
     if (next.length >= nextLimit) continue;
     const counts = eventStats(db, event.id);
