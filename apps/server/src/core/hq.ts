@@ -174,9 +174,16 @@ export const seriesSummary = (db: Db, seriesId: number, now: Date) => {
     "SELECT active, next_starts_at, updated_at FROM event_series WHERE id = ?",
   ).get(seriesId);
   // "Held" means someone ran it and said it was over; a canceled run was not held.
-  const held = db.$client.query<{ id: number }, [number]>(
-    "SELECT id FROM events WHERE series_id = ? AND ended_at IS NOT NULL AND status <> 'canceled'",
-  ).all(seriesId);
+  // One grouped pass over the held runs rather than a roster load per run: a
+  // weekly series is fifty of these a year.
+  const held = db.$client.query<{ registered: number; checked_in: number }, [number]>(`
+    SELECT
+      count(CASE WHEN r.is_staff = 0 AND r.status IN ('registered', 'checked_in') THEN 1 END) AS registered,
+      count(CASE WHEN r.is_staff = 0 AND r.status = 'checked_in' THEN 1 END) AS checked_in
+    FROM events e LEFT JOIN registrations r ON r.event_id = e.id
+    WHERE e.series_id = ? AND e.ended_at IS NOT NULL AND e.status <> 'canceled'
+    GROUP BY e.id
+  `).all(seriesId);
   const upcoming = db.$client.query<{ id: number; starts_at: number; status: string }, [number, number]>(`
     SELECT id, starts_at, status FROM events
     WHERE series_id = ? AND status <> 'canceled' AND ended_at IS NULL AND starts_at > ?
@@ -186,12 +193,13 @@ export const seriesSummary = (db: Db, seriesId: number, now: Date) => {
     SELECT u.first_name FROM series_organizers o JOIN users u ON u.id = o.user_id
     WHERE o.series_id = ? ORDER BY u.first_name
   `).all(seriesId).map((row) => row.first_name);
-  const rates = held.map((event) => eventStats(db, event.id)).filter((counts) => counts.registered > 0);
+  // Same policy as seriesStats' held-only turnout: an empty held run counts as 0%.
+  const rates = held.map((row) => (row.registered ? row.checked_in / row.registered : 0));
   const nextUp = upcoming?.starts_at ?? series?.next_starts_at ?? null;
   const active = Boolean(series?.active);
   return {
     held: held.length,
-    avgTurnout: rates.length ? rates.reduce((sum, counts) => sum + counts.attendanceRate, 0) / rates.length : null,
+    avgTurnout: rates.length ? rates.reduce((sum, rate) => sum + rate, 0) / rates.length : null,
     leaders,
     status: !active ? "paused" as const
       : upcoming?.status === "draft" ? "draft_ready" as const
@@ -308,8 +316,9 @@ const nextInSeries = (db: Db, seriesId: number, after: number) => {
   if (occurrence) {
     return { seriesId, title: series.title, active: Boolean(series.active), eventId: occurrence.id, startsAt: isoAt(occurrence.starts_at), draftAt: null };
   }
-  // Not spawned yet: the date a human approved, and when its draft will appear.
-  const startsAt = series.active ? series.next_starts_at : null;
+  // Not spawned yet: the date a human approved, and when its draft will appear —
+  // but only if it actually comes after this run.
+  const startsAt = series.active && series.next_starts_at !== null && series.next_starts_at > after ? series.next_starts_at : null;
   return {
     seriesId,
     title: series.title,

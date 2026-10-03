@@ -212,6 +212,20 @@ describe("series aggregates", () => {
     expect(seriesSummary(db, createSeries(0), now).status).toBe("paused");
   });
 
+  test("an empty held run counts as 0% turnout, as in series stats", () => {
+    const seriesId = createSeries();
+    const full = event({ startsIn: -72 * HOUR, endedAgo: 70 * HOUR, seriesId });
+    register(full, 2, "checked_in");
+    event({ startsIn: -48 * HOUR, endedAgo: 46 * HOUR, seriesId });
+    expect(seriesSummary(db, seriesId, now).avgTurnout).toBe(0.5);
+  });
+
+  test("a template date before this run is not its successor", () => {
+    const seriesId = createSeries(1, unix(now) + HOUR);
+    const id = event({ startsIn: 3 * HOUR, seriesId });
+    expect(eventSummary(db, id, now)!.nextInSeries).toMatchObject({ eventId: null, startsAt: null, draftAt: null });
+  });
+
   test("series stats average over held runs only and split first-timers from returning", () => {
     const seriesId = createSeries();
     const outside = event({ startsIn: -30 * 24 * HOUR, endedAgo: 29 * 24 * HOUR });

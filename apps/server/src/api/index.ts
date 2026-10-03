@@ -761,6 +761,12 @@ export const app = new Elysia()
           .where(eq(seriesChats.seriesId, params.id)).orderBy(asc(seriesChats.chatId)).all().map((row) => row.chatId),
         organizerIds: db.select({ userId: seriesOrganizers.userId }).from(seriesOrganizers)
           .where(eq(seriesOrganizers.seriesId, params.id)).orderBy(asc(seriesOrganizers.userId)).all().map((row) => row.userId),
+        // Names for the template's "led by" and "chat" lines.
+        organizers: db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName }).from(seriesOrganizers)
+          .innerJoin(users, eq(seriesOrganizers.userId, users.id))
+          .where(eq(seriesOrganizers.seriesId, params.id)).orderBy(asc(users.firstName)).all(),
+        chats: db.select({ chatId: seriesChats.chatId }).from(seriesChats).where(eq(seriesChats.seriesId, params.id)).all()
+          .map((row) => ({ id: row.chatId, title: chatTitle(row.chatId) ?? String(row.chatId) })),
         ticketTiers: db.select().from(seriesTicketTiers).where(eq(seriesTicketTiers.seriesId, params.id))
           .orderBy(asc(seriesTicketTiers.sortOrder), asc(seriesTicketTiers.id)).all().map(seriesTierView),
         products: db.select().from(seriesProducts).where(eq(seriesProducts.seriesId, params.id))
