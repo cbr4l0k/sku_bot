@@ -173,7 +173,8 @@
 @layer components {
   .paper,
   .card,
-  .tabbar {
+  .tabbar,
+  .dock {
     --ink: var(--brand-ink);
     --ink-dim: var(--paper-ink-dim);
     --chip-ink: var(--brand-ink);
@@ -628,10 +629,217 @@
     }
   }
 
+  /* ------------------------------------------------------------------ dock
+     One floating pill at the foot of every screen. On a section it is the tab
+     bar; on an event or a checkout it becomes that screen's single action, and
+     it morphs rather than cuts: the same element widens, deepens to
+     --brand-deep and trades its tabs for a label, so the eye follows one shape
+     from list to action and back. Width is set inline from the measured tab
+     row, because a transition cannot run to or from `auto`. */
+  .dock {
+    position: fixed;
+    left: 50%;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    z-index: 40;
+    max-width: calc(100% - 16px);
+    border-radius: 999px;
+    border: 1px solid var(--hair);
+    background: var(--tabbar-bg);
+    backdrop-filter: blur(14px) saturate(1.4);
+    box-shadow: 0 14px 40px -18px rgb(1 32 36 / 0.45);
+    overflow: hidden;
+    transform: translateX(-50%);
+    transition:
+      width 0.42s var(--ease-out-back),
+      height 0.42s var(--ease-out-back),
+      background-color 0.3s ease,
+      border-color 0.3s ease;
+  }
+
+  .dock[data-mode="action"] {
+    border-color: rgb(255 255 255 / 0.18);
+    background: var(--brand-deep);
+  }
+
+  .dock[data-mode="action"][data-tone="quiet"] {
+    background: color-mix(in oklab, var(--brand-deep) 55%, var(--paper));
+  }
+
+  .dock-tabs {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    display: flex;
+    gap: 2px;
+    width: max-content;
+    padding: 5px;
+    transform: translateX(-50%);
+    transition:
+      opacity 0.2s ease,
+      transform 0.36s var(--ease-out-back);
+  }
+
+  .dock[data-mode="action"] .dock-tabs {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.86);
+    pointer-events: none;
+  }
+
+  .dock-action {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 22px;
+    color: #ffffff;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease 0.12s;
+  }
+
+  .dock[data-mode="action"] .dock-action {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .dock-action:disabled {
+    cursor: default;
+  }
+
+  .dock-action:active:not(:disabled) .dock-label {
+    transform: scale(0.97);
+  }
+
+  /* A new action in the same pill (Sign up → Show ticket) swaps its label in
+     place: the pill holds still and only the words change. */
+  .dock-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: dockLabel 0.3s var(--ease-out-back) backwards;
+    transition: transform 0.12s var(--ease-out-back);
+  }
+
+  @media (max-width: 400px) {
+    .dock-tabs {
+      gap: 0;
+      padding: 4px;
+    }
+  }
+
   /* See useOverlayLock: WebKit can paint this blurred bar above an open sheet,
      so the bar leaves the layout entirely while an overlay is up. */
-  body[data-overlay] .tabbar {
+  body[data-overlay] .tabbar,
+  body[data-overlay] .dock {
     display: none;
+  }
+
+  /* --------------------------------------------------------- list surfaces */
+
+  /* A row of a card: label column, content, chevron. Rows separate themselves
+     with a hairline so a card of rows needs no extra markup. */
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    text-align: left;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .row + .row {
+    border-top: 1px solid var(--hair);
+  }
+
+  button.row:active,
+  a.row:active {
+    background: var(--veil);
+  }
+
+  .chev {
+    font-family: var(--font-mono);
+    color: var(--ink-dim);
+    font-size: 14px;
+  }
+
+  /* A choice on white: radio rows for tickets and branches. */
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    background: #ffffff;
+    cursor: pointer;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+  }
+
+  .opt input {
+    accent-color: var(--brand-deep);
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    flex: none;
+  }
+
+  .opt:has(input:checked) {
+    border-color: var(--brand-deep);
+    box-shadow: inset 0 0 0 1px var(--brand-deep);
+  }
+
+  .opt:has(input:disabled) {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  /* Segmented control: the tab pill, laid flat. */
+  .seg {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid var(--hair);
+  }
+
+  .seg .tab {
+    flex: 1;
+    flex-direction: row;
+    justify-content: center;
+    padding: 9px 8px;
+    font-size: 10px;
+  }
+
+  .av {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #ffffff;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  :root[data-field-ink="dark"] .av {
+    color: var(--ink-deep);
   }
 
   /* -------------------------------------------------------------- entrance */
@@ -715,6 +923,13 @@
   to {
     transform: scale(1.9);
     opacity: 0;
+  }
+}
+
+@keyframes dockLabel {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
   }
 }
 

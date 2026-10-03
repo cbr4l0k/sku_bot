@@ -1,65 +1,163 @@
-import { useNavigate } from "react-router";
+import { useCallback, useState } from "react";
+import { Link, useNavigate } from "react-router";
 
-import { sku } from "../api";
-import { useI18n } from "../i18n";
-import { errorText } from "../lib/format";
-import { useResource } from "../lib/useResource";
-import { EventCard } from "../ui/event";
-import { EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
+import { sku, type EventCard as EventCardData } from "../api";
+import { useI18n, type MessageKey } from "../i18n";
+import { errorText, relativeDayKey, shortDate, timeOf, untilStart, weekStart } from "../lib/format";
+import { useResource, useTicker } from "../lib/useResource";
+import { haptic } from "../telegram";
+import { EventCard, fromPrice } from "../ui/event";
+import { Button, EmptyState, ErrorState, Loader, PageTitle, Screen, SectionRule } from "../ui/primitives";
+
+type Filter = "all" | "open" | "free";
+
+const FILTERS: ReadonlyArray<{ value: Filter; key: MessageKey }> = [
+  { value: "all", key: "events.filter.all" },
+  { value: "open", key: "events.filter.open" },
+  { value: "free", key: "events.filter.free" },
+];
+
+const holdsSpot = (event: EventCardData) =>
+  event.myRegistrationStatus === "registered" || event.myRegistrationStatus === "checked_in";
+
+/** Anything with a price on it puts the ticket in the runner's hands. Mirrors isPaidEvent on the server. */
+export const isTicketed = (event: Pick<EventCardData, "ticketTiers" | "products">) =>
+  event.ticketTiers.length > 0 || event.products.length > 0;
+
+const spotsOpen = (event: EventCardData) => event.capacity === null || event.confirmedCount < event.capacity;
+
+const WEEK = 7 * 86_400_000;
 
 export const EventsScreen = () => {
   const { t } = useI18n();
-  const navigate = useNavigate();
   const events = useResource(sku.events, { pollMs: 45_000 });
+  const [filter, setFilter] = useState<Filter>("all");
 
-  // Only free runs still check in by scanning the organizer's code; on a
-  // ticketed one the shortcut would open a scanner the server refuses.
-  const canScanSomething = (events.data ?? []).some(
-    (event) =>
-      event.myRegistrationStatus === "registered" &&
-      event.ticketTiers.length === 0 &&
-      event.products.length === 0,
-  );
+  const list = events.data ?? [];
+  const next = list.find(holdsSpot) ?? null;
+  const rest = list
+    .filter((event) => event.id !== next?.id)
+    .filter((event) => (filter === "open" ? spotsOpen(event) : filter === "free" ? fromPrice(event) === null : true));
+
+  // Runs group by calendar week, Monday first, the way a club plans them.
+  const thisWeek = weekStart(new Date());
+  const groups = new Map<MessageKey, EventCardData[]>();
+  for (const event of rest) {
+    const offset = Math.round((weekStart(new Date(event.startsAt)) - thisWeek) / WEEK);
+    const key: MessageKey = offset <= 0 ? "events.week.this" : offset === 1 ? "events.week.next" : "events.week.later";
+    groups.set(key, [...(groups.get(key) ?? []), event]);
+  }
 
   return (
     <Screen>
-      <PageTitle
-        title={t("events.title")}
-        aside={
-          canScanSomething ? (
-            <button
-              type="button"
-              onClick={() => navigate("/checkin")}
-              className="chip chip-soft active:scale-95"
-              style={{ transition: "transform 0.12s" }}
-            >
-              ⌗ {t("action.checkin")}
-            </button>
-          ) : null
-        }
-      />
+      <PageTitle title={t("events.title")} />
 
       {events.loading && !events.data ? <Loader label={t("common.loading")} /> : null}
 
       {events.error && !events.data ? (
-        <ErrorState
-          message={errorText(t, events.error)}
-          retryLabel={t("common.retry")}
-          onRetry={() => void events.reload()}
-        />
+        <ErrorState message={errorText(t, events.error)} retryLabel={t("common.retry")} onRetry={() => void events.reload()} />
       ) : null}
 
-      {events.data ? (
-        events.data.length === 0 ? (
-          <EmptyState text={t("events.empty")} />
-        ) : (
+      {events.data && list.length === 0 ? <EmptyState text={t("events.empty")} /> : null}
+
+      {next ? <NextRun event={next} /> : null}
+
+      {list.length > (next ? 1 : 0) ? (
+        <div className="mt-[22px] flex gap-1.5" role="group" aria-label={t("events.filter.label")}>
+          {FILTERS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={filter === option.value}
+              className={`chip px-3 py-[7px] ${filter === option.value ? "chip-flare" : ""}`}
+              onClick={() => {
+                haptic.select();
+                setFilter(option.value);
+              }}
+            >
+              {t(option.key)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {[...groups].map(([key, items]) => (
+        <section key={key}>
+          <SectionRule label={t(key)} />
           <div className="flex flex-col gap-3">
-            {events.data.map((event, index) => (
+            {items.map((event, index) => (
               <EventCard key={event.id} event={event} index={index} />
             ))}
           </div>
-        )
-      ) : null}
+        </section>
+      ))}
+
+      {events.data && rest.length === 0 && list.length > (next ? 1 : 0) ? <EmptyState text={t("events.filter.empty")} /> : null}
     </Screen>
   );
 };
+
+/**
+ * "Your next run": the countdown and one button, so the thing a runner opens the
+ * app for on race morning is the first thing on it.
+ */
+const NextRun = ({ event }: { event: EventCardData }) => {
+  const { t, locale } = useI18n();
+  const navigate = useNavigate();
+  const now = useTicker(30_000);
+  const ticketed = isTicketed(event);
+  const checkedIn = event.myRegistrationStatus === "checked_in";
+  const ticket = useResource(useCallback(() => sku.myTicket(event.id), [event.id]), { enabled: ticketed, pollMs: 60_000 });
+  const toCollect = (ticket.data?.items ?? []).filter((item) => item.handedOverAt === null).length;
+  const relative = relativeDayKey(event.startsAt);
+  const when = `${relative ? t(relative) : shortDate(event.startsAt, locale)}, ${timeOf(event.startsAt, locale)}`;
+  const msLeft = new Date(event.startsAt).getTime() - now;
+
+  return (
+    <article className="card rise p-[18px]">
+      <div className="eyebrow mb-3">{t("events.next")}</div>
+      <Link to={`/events/${event.id}`} className="block">
+        <h2 className="display mb-1.5 text-[22px] leading-[1.05] break-words">{event.title}</h2>
+        <p className="mb-4 text-[13px] text-hint">
+          {when} · {event.location}
+        </p>
+      </Link>
+      <dl className="mb-4 grid grid-cols-3 gap-2">
+        <Figure label={t("events.untilStart")} value={msLeft > 0 ? untilStart(msLeft, (n) => t("events.days", { n })) : t("events.live")} />
+        <Figure
+          label={t("events.roster")}
+          value={event.capacity === null ? `${event.confirmedCount}` : `${event.confirmedCount}/${event.capacity}`}
+        />
+        {ticketed ? (
+          <Figure label={t("events.toCollect")} value={ticket.data ? String(toCollect) : "—"} />
+        ) : (
+          <Figure label={t("events.entry")} value="QR" />
+        )}
+      </dl>
+      {ticketed ? (
+        <>
+          <Button block onClick={() => navigate(`/events/${event.id}/ticket`)}>
+            {t("action.showTicket")}
+          </Button>
+          <p className="mt-2.5 text-center text-[12px] text-hint">{t("events.ticketHint")}</p>
+        </>
+      ) : checkedIn ? (
+        <p className="text-center text-[13px] text-hint">{t("detail.checkedInHint")}</p>
+      ) : (
+        <>
+          <Button block onClick={() => navigate("/checkin")}>
+            {t("action.scan")}
+          </Button>
+          <p className="mt-2.5 text-center text-[12px] text-hint">{t("events.scanHint")}</p>
+        </>
+      )}
+    </article>
+  );
+};
+
+const Figure = ({ label, value }: { label: string; value: string }) => (
+  <div>
+    <dt className="eyebrow text-[9px]">{label}</dt>
+    <dd className="num text-[20px]">{value}</dd>
+  </div>
+);

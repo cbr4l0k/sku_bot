@@ -79,3 +79,65 @@ export const toLocalInput = (iso: string): string => {
 };
 
 export const fromLocalInput = (value: string): string => new Date(value).toISOString();
+
+/** Rubles without the kopecks unless there are some: "1 700 ₽". */
+export const money = (minor: number, locale: Locale, currency = "RUB"): string =>
+  new Intl.NumberFormat(tags[locale], {
+    style: "currency",
+    currency,
+    maximumFractionDigits: minor % 100 === 0 ? 0 : 2,
+  }).format(minor / 100);
+
+/** "Пт 20.09" — the compact date the poster lines use. */
+export const shortDate = (iso: string, locale: Locale): string => {
+  const weekday = new Intl.DateTimeFormat(tags[locale], { weekday: "short" }).format(parseDate(iso)).replace(".", "");
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${dayNumber(iso, locale)}.${monthNumber(iso, locale)}`;
+};
+
+/** "12.09" — a date in a list row. */
+export const dayMonth = (iso: string, locale: Locale): string => `${dayNumber(iso, locale)}.${monthNumber(iso, locale)}`;
+
+/** "июля" / "July", for "since …" — Russian wants the genitive, which only the day format gives. */
+export const monthSince = (iso: string, locale: Locale): string =>
+  locale === "en"
+    ? new Intl.DateTimeFormat(tags.en, { month: "long" }).format(parseDate(iso))
+    : new Intl.DateTimeFormat(tags.ru, { day: "numeric", month: "long" }).format(parseDate(iso)).replace(/^\d+\s/, "");
+
+/** "мая 2024" / "May 2024", for "in the club since …". */
+export const monthYear = (iso: string, locale: Locale): string => `${monthSince(iso, locale)} ${parseDate(iso).getFullYear()}`;
+
+/** Two letters for an avatar. */
+export const initials = (person: { firstName: string; lastName?: string | null }): string =>
+  [person.firstName, person.lastName ?? ""].map((part) => part.charAt(0)).join("").slice(0, 2).toUpperCase();
+
+/** Whole days between two calendar dates in the viewer's zone. */
+export const daysUntil = (iso: string, now: Date = new Date()): number =>
+  Math.round((startOfDay(parseDate(iso)) - startOfDay(now)) / DAY);
+
+/** Monday of the week the date falls in, as a day stamp — the key events group under. */
+export const weekStart = (date: Date): number => {
+  const day = startOfDay(date);
+  const weekday = (new Date(day).getDay() + 6) % 7;
+  return day - weekday * DAY;
+};
+
+/** Until the start, chronograph style: "02:14" (h:mm) inside a day, "3 д" beyond it. */
+export const untilStart = (msLeft: number, dayLabel: (n: number) => string): string => {
+  if (msLeft >= DAY) return dayLabel(Math.floor(msLeft / DAY));
+  const totalMinutes = Math.max(0, Math.floor(msLeft / 60_000));
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(Math.floor(totalMinutes / 60))}:${pad(totalMinutes % 60)}`;
+};
+
+/** "четверг, 12 сентября" — the day without the time. */
+export const longDay = (iso: string, locale: Locale): string =>
+  new Intl.DateTimeFormat(tags[locale], { weekday: "long", day: "numeric", month: "long" }).format(parseDate(iso));
+
+const englishSuffix = (n: number): string => {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return "th";
+  return ["th", "st", "nd", "rd"][n % 10] ?? "th";
+};
+
+/** A place in a queue: "3-й" / "3rd". */
+export const ordinal = (n: number, locale: Locale): string => (locale === "ru" ? `${n}-й` : `${n}${englishSuffix(n)}`);

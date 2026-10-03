@@ -5,10 +5,11 @@ import { useI18n } from "../i18n";
 import { Button, Field, TextInput } from "./primitives";
 import { SheetFooter } from "./overlays";
 
-type EditableTier = { id?: number; name: string; price: string; quota: string; claimed: number; salesStartAt?: string | null; salesEndAt?: string | null };
+type EditableTier = { id?: number; name: string; description: string; price: string; quota: string; claimed: number; salesStartAt?: string | null; salesEndAt?: string | null };
 const editable = (tier: TicketTier): EditableTier => ({
   id: tier.id,
   name: tier.name,
+  description: tier.description ?? "",
   price: (tier.priceMinor / 100).toFixed(tier.priceMinor % 100 === 0 ? 0 : 2),
   quota: tier.quota === null ? "" : String(tier.quota),
   claimed: tier.claimed,
@@ -27,7 +28,7 @@ export const TicketTierEditor = ({
 }) => {
   const { t } = useI18n();
   const [tiers, setTiers] = useState<EditableTier[]>(() => initial.filter((tier) => tier.active).map(editable));
-  const set = (index: number, field: "name" | "price" | "quota", value: string) =>
+  const set = (index: number, field: "name" | "description" | "price" | "quota", value: string) =>
     setTiers((current) => current.map((tier, position) => position === index ? { ...tier, [field]: value } : tier));
   const valid = tiers.every((tier) => tier.name.trim() && Number(tier.price) >= 1 && (tier.quota === "" || Number(tier.quota) >= 1));
 
@@ -36,6 +37,7 @@ export const TicketTierEditor = ({
     onSave(tiers.map((tier) => ({
       ...(tier.id === undefined ? {} : { id: tier.id }),
       name: tier.name.trim(),
+      description: tier.description.trim() || null,
       priceMinor: Math.round(Number(tier.price) * 100),
       quota: tier.quota === "" ? null : Number(tier.quota),
       active: true,
@@ -51,6 +53,9 @@ export const TicketTierEditor = ({
         <section key={tier.id ?? `new-${index}`} className="card flex flex-col gap-3 px-3 py-3">
           <Field label={t("tickets.name")}>
             <TextInput value={tier.name} maxLength={80} onChange={(event) => set(index, "name", event.target.value)} />
+          </Field>
+          <Field label={t("tickets.description")}>
+            <TextInput value={tier.description} maxLength={160} placeholder={t("tickets.descriptionPlaceholder")} onChange={(event) => set(index, "description", event.target.value)} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label={t("tickets.price")}>
@@ -74,7 +79,7 @@ export const TicketTierEditor = ({
           </Button>
         </section>
       ))}
-      <Button variant="ghost" onClick={() => setTiers((current) => [...current, { name: "", price: "", quota: "", claimed: 0 }])}>
+      <Button variant="ghost" onClick={() => setTiers((current) => [...current, { name: "", description: "", price: "", quota: "", claimed: 0 }])}>
         + {t("tickets.add")}
       </Button>
       <SheetFooter>

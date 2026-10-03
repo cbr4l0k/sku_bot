@@ -99,6 +99,7 @@ export type EventStatus = EventSummary["status"];
 export type RegistrationStatus = NonNullable<EventCard["myRegistrationStatus"]>;
 export type TicketTier = EventDetail["ticketTiers"][number];
 export type TicketTierDraft = Pick<TicketTier, "name" | "priceMinor" | "quota" | "active"> & {
+  description?: string | null;
   id?: number;
   salesStartAt?: string | null;
   salesEndAt?: string | null;
@@ -158,6 +159,7 @@ export type SeriesDraft = {
 
 export const sku = {
   me: () => call(api.me.get(auth())),
+  history: () => call(api.me.history.get(auth())),
   setMe: (body: { locale?: Locale; city?: CitySlug; firstName?: string; lastName?: string }) => call(api.me.patch(body, auth())),
 
   events: () => call(api.events.get(auth())),

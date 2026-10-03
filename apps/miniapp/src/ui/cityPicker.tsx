@@ -1,55 +1,48 @@
+import { useId } from "react";
+
 import { cityList, type CitySlug } from "@sku/cities";
 
 import { useI18n } from "../i18n";
 import { haptic } from "../telegram";
 
 /**
- * Picking a branch. Each option carries its own colours rather than the current
- * theme's, so the choice shows you what you are choosing — Moscow's chip is red
- * on the teal field and stays red once you have picked it.
+ * Picking a branch: radio rows on white, each with the branch's own colour as
+ * its dot, so the choice shows you what you are choosing rather than wearing
+ * the current theme.
  */
 export const CityPicker = ({
   value,
   onPick,
   disabled = false,
+  hint,
 }: {
   value: CitySlug | null;
   onPick: (city: CitySlug) => void;
   disabled?: boolean;
+  hint?: string;
 }) => {
   const { locale } = useI18n();
+  const name = useId();
 
   return (
-    <div className="flex flex-col gap-2">
-      {cityList.map((city) => {
-        const active = city.slug === value;
-        return (
-          <button
-            key={city.slug}
-            type="button"
+    <div className="card flex flex-col gap-1.5 p-2 text-left" role="radiogroup">
+      {cityList.map((city) => (
+        <label key={city.slug} className="opt">
+          <input
+            type="radio"
+            name={name}
+            checked={city.slug === value}
             disabled={disabled}
-            aria-pressed={active}
-            onClick={() => {
-              if (active) return;
+            onChange={() => {
               haptic.select();
               onPick(city.slug);
             }}
-            className="btn w-full justify-start gap-3 disabled:opacity-50"
-            style={{
-              background: active ? city.brand : "transparent",
-              color: active ? (city.fieldInk === "light" ? "#ffffff" : "var(--ink-deep)") : "var(--ghost-ink)",
-              boxShadow: active ? "none" : "inset 0 0 0 1px var(--ghost-line, var(--hair))",
-            }}
-          >
-            <span
-              aria-hidden
-              className="inline-block h-3 w-3 shrink-0 rounded-full"
-              style={{ background: city.brandLift, boxShadow: `0 0 0 2px ${city.brand}` }}
-            />
-            <span className="truncate">{city.name[locale]}</span>
-          </button>
-        );
-      })}
+          />
+          <span aria-hidden className="h-3 w-3 shrink-0 rounded-full" style={{ background: city.brand }} />
+          <span className="flex-1 font-semibold">{city.name[locale]}</span>
+        </label>
+      ))}
+      {hint ? <p className="mx-2 mt-1 mb-1.5 text-[12px] text-hint">{hint}</p> : null}
     </div>
   );
 };

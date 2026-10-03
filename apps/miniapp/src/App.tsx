@@ -10,62 +10,23 @@ import { useResource } from "./lib/useResource";
 import { AdminScreen } from "./screens/Admin";
 import { AdminEventScreen } from "./screens/AdminEvent";
 import { CheckinScreen } from "./screens/Checkin";
+import { CheckoutScreen } from "./screens/Checkout";
 import { EventDetailScreen } from "./screens/EventDetail";
 import { EventsScreen } from "./screens/Events";
+import { HistoryScreen } from "./screens/History";
 import { MineScreen } from "./screens/Mine";
 import { OrganizerScreen } from "./screens/Organizer";
 import { OrganizerEventScreen } from "./screens/OrganizerEvent";
 import { ProfileScreen } from "./screens/Profile";
 import { SeriesDetailScreen } from "./screens/SeriesDetail";
 import { TicketScreen } from "./screens/Ticket";
-import { SessionProvider, useSession } from "./session";
+import { SessionProvider } from "./session";
 import { initViewport, insideTelegram, startParam } from "./telegram";
 import { CityPicker } from "./ui/cityPicker";
+import { Dock, DockProvider } from "./ui/dock";
 import { ConfirmProvider, ToastProvider } from "./ui/overlays";
 import { Spinner } from "./ui/primitives";
 import { Backdrop, SwooshMark } from "./ui/swoosh";
-
-/* ------------------------------------------------------------------ tab bar */
-
-const TABS = [
-  { to: "/", key: "nav.events", glyph: "◎" },
-  { to: "/mine", key: "nav.mine", glyph: "▤" },
-  { to: "/organizer", key: "nav.organizer", glyph: "⌁" },
-  { to: "/admin", key: "nav.admin", glyph: "⌘" },
-  { to: "/profile", key: "nav.profile", glyph: "◍" },
-] as const;
-
-const TabBar = () => {
-  const { t } = useI18n();
-  const { me } = useSession();
-  const location = useLocation();
-  const navigate = useNavigate();
-
-  const visible = TABS.filter((tab) => {
-    if (tab.to === "/organizer") return Boolean(me?.isOrganizerOfAny || me?.isAdmin || me?.organizerCities.length);
-    if (tab.to === "/admin") return Boolean(me?.isAdmin || me?.adminCities.length);
-    return true;
-  });
-
-  const active = (to: string) => (to === "/" ? location.pathname === "/" : location.pathname.startsWith(to));
-
-  return (
-    <nav className="tabbar">
-      {visible.map((tab) => (
-        <button
-          key={tab.to}
-          type="button"
-          className="tab"
-          data-active={active(tab.to)}
-          onClick={() => navigate(tab.to)}
-        >
-          <span className="text-[13px] leading-none">{tab.glyph}</span>
-          <span className="max-w-full truncate">{t(tab.key)}</span>
-        </button>
-      ))}
-    </nav>
-  );
-};
 
 /* ------------------------------------------------------------- start_param */
 
@@ -139,14 +100,16 @@ const OutsideBanner = () => {
 /* ---------------------------------------------------------------- app shell */
 
 const Shell = () => (
-  <>
+  <DockProvider>
     <StartParamRedirect />
     {insideTelegram() ? null : <OutsideBanner />}
     <Routes>
       <Route path="/" element={<EventsScreen />} />
       <Route path="/events/:id" element={<EventDetailScreen />} />
       <Route path="/events/:id/ticket" element={<TicketScreen />} />
+      <Route path="/events/:id/checkout" element={<CheckoutScreen />} />
       <Route path="/mine" element={<MineScreen />} />
+      <Route path="/history" element={<HistoryScreen />} />
       <Route path="/checkin" element={<CheckinScreen />} />
       <Route path="/profile" element={<ProfileScreen />} />
       <Route path="/organizer" element={<OrganizerScreen />} />
@@ -156,8 +119,8 @@ const Shell = () => (
       <Route path="/admin/events/:id" element={<AdminEventScreen />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-    <TabBar />
-  </>
+    <Dock />
+  </DockProvider>
 );
 
 const Boot = () => {

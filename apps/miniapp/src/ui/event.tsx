@@ -3,8 +3,8 @@ import { Link } from "react-router";
 import { CITIES } from "@sku/cities";
 
 import type { EventCard as EventCardData, EventStatus, RegistrationStatus } from "../api";
-import { useI18n } from "../i18n";
-import { dayNumber, monthNumber, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
+import { useI18n, type Translate } from "../i18n";
+import { dayNumber, money, monthNumber, ordinal, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
 import { useSession } from "../session";
 import { GroupChips } from "./groups";
 import { Chip, Track } from "./primitives";
@@ -55,10 +55,28 @@ export const DateBlock = ({ iso }: { iso: string }) => {
   );
 };
 
+/** Cheapest ticket on sale, or null on a free run. */
+export const fromPrice = (event: Pick<EventCardData, "ticketTiers">): number | null => {
+  const prices = event.ticketTiers.filter((tier) => tier.active).map((tier) => tier.priceMinor);
+  return prices.length ? Math.min(...prices) : null;
+};
+
+/** "Бесплатно" or "от 500 ₽" — what it costs to get in. */
+export const PriceChip = ({ event, tone = "plain" }: { event: Pick<EventCardData, "ticketTiers">; tone?: "plain" | "soft" }) => {
+  const { t, locale } = useI18n();
+  const price = fromPrice(event);
+  return <Chip tone={tone}>{price === null ? t("events.free") : t("events.fromPrice", { price: money(price, locale) })}</Chip>;
+};
+
+/** Spots left, or Full, or the head count on an uncapped run. */
+export const spotsLabel = (t: Translate, capacity: number | null, left: number | null): string =>
+  capacity === null ? t("events.freeEntry") : left === 0 ? t("events.full") : t("events.spotsLeft", { n: left ?? 0 });
+
 export const EventCard = ({ event, index }: { event: EventCardData; index: number }) => {
   const { t, locale } = useI18n();
   const { me } = useSession();
-  const mine = event.myRegistrationStatus !== null && event.myRegistrationStatus !== "canceled";
+  const status = event.myRegistrationStatus;
+  const mine = status !== null && status !== "canceled";
   // A run only names its branch when it is not the one you are browsing — which
   // happens when you followed a link from elsewhere, or kept a spot after moving.
   const elsewhere = me?.city && event.city !== me.city ? CITIES[event.city] : null;
@@ -68,9 +86,7 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
     <Link
       to={`/events/${event.id}`}
       style={{ "--i": index } as React.CSSProperties}
-      className={`card rise block px-4 py-4 transition-[transform,box-shadow] duration-150 active:scale-[0.985] ${
-        mine ? "card-mine pl-5" : ""
-      }`}
+      className="card rise block p-4 transition-transform duration-150 active:scale-[0.985]"
     >
       <div className="flex gap-3.5">
         <DateBlock iso={event.startsAt} />
@@ -80,28 +96,26 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
           <Track
             value={event.confirmedCount}
             max={event.capacity}
-            label={
-              event.capacity === null
-                ? t("events.freeEntry")
-                : left === 0
-                  ? t("events.full")
-                  : t("events.spotsLeft", { n: left ?? 0 })
-            }
+            label={spotsLabel(t, event.capacity, left)}
             right={event.capacity === null ? `${event.confirmedCount}` : `${event.confirmedCount}/${event.capacity}`}
           />
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <StatusBadge status={event.myRegistrationStatus} hasOffer={event.myPendingOffer !== null} />
+            {mine || event.myPendingOffer ? (
+              <StatusBadge status={status} hasOffer={event.myPendingOffer !== null} />
+            ) : (
+              <PriceChip event={event} />
+            )}
+            {status === "waitlisted" && event.myWaitlistPosition !== null && !event.myPendingOffer ? (
+              <span className="num self-center text-[10px] tracking-[0.12em] text-hint uppercase">
+                {t("events.queuePosition", { place: ordinal(event.myWaitlistPosition, locale) })}
+              </span>
+            ) : null}
             {elsewhere ? (
               <span className="chip" style={{ background: elsewhere.brand, color: elsewhere.fieldInk === "light" ? "#ffffff" : "var(--ink-deep)" }}>
                 {elsewhere.name[locale]}
               </span>
             ) : null}
             <GroupChips groups={event.groups} />
-            {event.waitlistSize > 0 && !mine ? (
-              <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
-                {t("events.waitlistSize", { n: event.waitlistSize })}
-              </span>
-            ) : null}
           </div>
         </div>
       </div>
