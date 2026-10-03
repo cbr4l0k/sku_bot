@@ -187,3 +187,46 @@ export const Sheet = ({
 export const SheetFooter = ({ children }: { children: ReactNode }) => (
   <div className="paper sticky bottom-0 -mx-5 -mb-5 mt-1 border-t border-hair px-5 pt-4 pb-5">{children}</div>
 );
+
+/**
+ * A decision in the middle of the screen — cancelling an event, the result of a
+ * scan. Heavier than a sheet on purpose: the club mark, a headline, and nothing
+ * behind it can be touched until it is answered.
+ */
+export const Dialog = ({
+  eyebrow,
+  title,
+  onClose,
+  role = "dialog",
+  children,
+}: {
+  eyebrow?: string;
+  title: string;
+  onClose: () => void;
+  role?: "dialog" | "alertdialog";
+  children: ReactNode;
+}) => {
+  const { t } = useI18n();
+  useOverlayLock();
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <button type="button" aria-label={t("common.close")} onClick={onClose} className="fade-in absolute inset-0 bg-black/50 backdrop-blur-[2px]" />
+      <div
+        role={role}
+        aria-modal="true"
+        aria-label={title}
+        className="paper sheet-in relative max-h-[90dvh] w-full max-w-[460px] overflow-y-auto rounded-[22px] border border-hair px-5 pt-6 pb-5 shadow-[0_30px_70px_-30px_rgb(1_32_36/0.7)]"
+      >
+        <button type="button" onClick={onClose} className="eyebrow absolute top-3 right-3 p-2.5" aria-label={t("common.close")}>
+          ✕
+        </button>
+        <div className="flex flex-col items-center gap-2 text-center">
+          <SwooshMark className="h-9 w-9" />
+          {eyebrow ? <div className="eyebrow mt-1.5">{eyebrow}</div> : null}
+          <h2 className="display text-[22px] leading-[1.05]">{title}</h2>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+};

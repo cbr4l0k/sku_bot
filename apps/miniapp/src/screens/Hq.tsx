@@ -54,7 +54,7 @@ export const HqScreen = () => {
 };
 
 /** The event screen an organizer runs a run from. */
-export const manageHref = (id: number) => `/organizer/events/${id}`;
+export const manageHref = (id: number) => `/hq/events/${id}`;
 
 const HqEvents = () => {
   const { t } = useI18n();

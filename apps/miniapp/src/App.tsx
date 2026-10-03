@@ -8,7 +8,6 @@ import { CityProvider } from "./city";
 import { I18nProvider, useI18n } from "./i18n";
 import { useResource } from "./lib/useResource";
 import { AdminScreen } from "./screens/Admin";
-import { AdminEventScreen } from "./screens/AdminEvent";
 import { CheckinScreen } from "./screens/Checkin";
 import { CheckoutScreen } from "./screens/Checkout";
 import { EventDetailScreen } from "./screens/EventDetail";
@@ -17,7 +16,7 @@ import { HistoryScreen } from "./screens/History";
 import { MineScreen } from "./screens/Mine";
 import { HqScreen } from "./screens/Hq";
 import { AllEventsScreen } from "./screens/Organizer";
-import { OrganizerEventScreen } from "./screens/OrganizerEvent";
+import { EventManageScreen, ManageRedirect } from "./screens/EventManage";
 import { ProfileScreen } from "./screens/Profile";
 import { SeriesDetailScreen } from "./screens/SeriesDetail";
 import { TicketScreen } from "./screens/Ticket";
@@ -116,10 +115,11 @@ const Shell = () => (
       <Route path="/hq" element={<HqScreen />} />
       <Route path="/hq/all" element={<AllEventsScreen />} />
       <Route path="/organizer" element={<Navigate to="/hq" replace />} />
-      <Route path="/organizer/events/:id" element={<OrganizerEventScreen />} />
+      <Route path="/hq/events/:id" element={<EventManageScreen />} />
+      <Route path="/organizer/events/:id" element={<ManageRedirect />} />
       <Route path="/series/:id" element={<SeriesDetailScreen />} />
       <Route path="/admin" element={<AdminScreen />} />
-      <Route path="/admin/events/:id" element={<AdminEventScreen />} />
+      <Route path="/admin/events/:id" element={<ManageRedirect />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     <Dock />

@@ -1271,7 +1271,9 @@ export const app = new Elysia()
       if (found.denied) return error(status, found.code, found.denied);
       const summary = eventSummary(db, params.id, now());
       // Cancelling is a branch admin's call; the screen needs to know whether to offer it.
-      return summary ? { ...summary, canCancel: canAdminCity(actor, found.event.city) } : error(status, 404, "event_not_found");
+      return summary
+        ? { ...summary, canCancel: canAdminCity(actor, found.event.city), organizers: organizersOf(params.id) }
+        : error(status, 404, "event_not_found");
     }, { params: idParams })
 
     .patch("/admin/events/:id", ({ params, body, actor, status }) => {
