@@ -87,7 +87,7 @@ export const EventManageScreen = () => {
     );
 
   if (!summary.data || !attendance.data || !event) {
-    const failed = summary.error ?? attendance.error ?? (events.data && !event ? new Error("event_not_found") : null);
+    const failed = summary.error ?? attendance.error ?? events.error ?? (events.data && !event ? new Error("event_not_found") : null);
     return (
       <Screen>
         {failed && !summary.loading ? (
@@ -177,7 +177,7 @@ export const EventManageScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
-  const removeDraft = async () => {
+  const removeEvent = async () => {
     if (!(await confirm({ text: t("admin.confirmDelete"), confirmLabel: t("common.delete"), danger: true }))) return;
     void action.run(
       async () => {
@@ -202,13 +202,7 @@ export const EventManageScreen = () => {
       <PhaseBar phase={phase} />
 
       {phase === "canceled" ? (
-        <NowCard text={t("manage.nowCanceled")}>
-          {canAdmin ? (
-            <Button size="sm" variant="danger" block loading={action.pending} onClick={() => void removeDraft()}>
-              {t("admin.deleteEvent")}
-            </Button>
-          ) : null}
-        </NowCard>
+        <NowCard text={t("manage.nowCanceled")} />
       ) : phase === "draft" ? (
         <NowCard text={t(canAdmin ? "manage.nowDraft" : "manage.nowDraftOrganizer")}>
           {canAdmin ? (
@@ -261,6 +255,7 @@ export const EventManageScreen = () => {
           onShowQr={() => setOverlay("qr")}
           onToggle={toggle}
           onHandover={handover}
+          onRoster={() => setOverlay("roster")}
           onEnd={() => void end()}
         />
       ) : null}
@@ -308,32 +303,34 @@ export const EventManageScreen = () => {
         ) : null
       ) : null}
 
-      {phase === "wrapup" && canAdmin && ticketed ? (
-        <section className="card mt-2.5">
-          <LinkRow label={t("manage.purchases")} onPress={() => setOverlay("purchases")} />
-        </section>
-      ) : null}
-
-      {phase !== "start" && phase !== "wrapup" ? (
+      {phase !== "canceled" ? (
         <>
           <Rule label={phase === "draft" ? t("manage.checkBefore") : t("manage.settings")} />
-          <Settings
-            event={event}
-            info={info}
-            canAdmin={canAdmin}
-            phase={phase}
-            onOpen={setOverlay}
-          />
-          {canAdmin && phase === "draft" ? (
-            <Button variant="danger" block className="mt-[22px]" loading={action.pending} onClick={() => void removeDraft()}>
-              {t("manage.deleteDraft")}
-            </Button>
-          ) : null}
-          {canAdmin && phase === "signup" ? (
-            <Button variant="danger" block className="mt-[22px]" onClick={() => setOverlay("cancel")}>
-              {t("admin.cancelEvent")}
-            </Button>
-          ) : null}
+          <Settings event={event} info={info} canAdmin={canAdmin} phase={phase} onOpen={setOverlay} />
+        </>
+      ) : null}
+
+      {/* What the old admin screen offered at any hour stays reachable in every
+          phase; the phase only decides what is up front. */}
+      {canAdmin ? (
+        <>
+          <Rule label={t("manage.adminActions")} />
+          <section className="card">
+            {ticketed ? <LinkRow label={t("manage.purchases")} onPress={() => setOverlay("purchases")} /> : null}
+            {phase === "start" ? (
+              <>
+                <LinkRow label={t("manage.link")} onPress={copyLink} />
+                <LinkRow
+                  label={t(info.signupClosed ? "manage.reopenSignup" : ticketed ? "manage.closeSales" : "manage.closeSignup")}
+                  onPress={() => adminPatch({ status: info.signupClosed ? "published" : "closed" })}
+                />
+              </>
+            ) : null}
+            {phase === "draft" || phase === "canceled" || phase === "wrapup" ? (
+              <DangerRow label={t(phase === "draft" ? "manage.deleteDraft" : "admin.deleteEvent")} onPress={() => void removeEvent()} />
+            ) : null}
+            {phase === "signup" || phase === "start" ? <DangerRow label={t("admin.cancelEvent")} onPress={() => setOverlay("cancel")} /> : null}
+          </section>
         </>
       ) : null}
 
@@ -572,6 +569,13 @@ const LinkRow = ({ label, onPress }: { label: string; onPress: () => void }) => 
   </button>
 );
 
+const DangerRow = ({ label, onPress }: { label: string; onPress: () => void }) => (
+  <button type="button" className="row" onClick={onPress} style={{ color: "var(--danger)" }}>
+    <span className="flex-1 text-[13px] font-semibold">{label}</span>
+    <span className="chev" style={{ color: "inherit" }}>›</span>
+  </button>
+);
+
 const SalesRow = ({ name, hint, sold, quota }: { name: string; hint: string; sold: number; quota: number | null }) => (
   <div className="row block">
     <div className="flex items-baseline gap-3">
@@ -671,6 +675,7 @@ const StartDoor = ({
   onShowQr,
   onToggle,
   onHandover,
+  onRoster,
   onEnd,
 }: {
   info: EventSummaryData;
@@ -683,17 +688,21 @@ const StartDoor = ({
   onShowQr: () => void;
   onToggle: (person: AttendanceRow) => void;
   onHandover: (itemId: number) => void;
+  onRoster: () => void;
   onEnd: () => void;
 }) => {
   const { t } = useI18n();
   const [tab, setTab] = useState<DoorTab>("waiting");
   const [query, setQuery] = useState("");
-  const people = roster.filter((person) => person.status === "registered" || person.status === "checked_in");
+  // Runners only: staff are on the full roster, and the headline counts leave them out too.
+  const people = roster.filter((person) => !person.isStaff && (person.status === "registered" || person.status === "checked_in"));
   const waiting = people.filter((person) => person.status === "registered");
   const checkedIn = people.filter((person) => person.status === "checked_in");
   const owed = people.filter((person) => owedItems(person).length > 0);
+  // Everyone who bought something stays on the hand-out tab, so a wrong tick can be undone.
+  const buyers = people.filter((person) => person.purchaseItems.length > 0);
   const needle = query.trim().toLowerCase();
-  const source = needle ? people : tab === "waiting" ? waiting : tab === "in" ? checkedIn : owed;
+  const source = needle ? people : tab === "waiting" ? waiting : tab === "in" ? checkedIn : buyers;
   const shown = source.filter((person) => !needle || [fullName(person), person.username ?? "", person.phone ?? ""].join(" ").toLowerCase().includes(needle));
   const tabs: ReadonlyArray<{ id: DoorTab; label: string }> = [
     { id: "waiting", label: t("manage.waiting", { n: waiting.length }) },
@@ -773,7 +782,7 @@ const StartDoor = ({
               extra={
                 tab === "handout" && !needle ? (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {owedItems(person).map((item) => (
+                    {person.purchaseItems.map((item) => (
                       <HandoverChip key={item.id} item={item} pending={busyItem === item.id} onToggle={() => onHandover(item.id)} />
                     ))}
                   </div>
@@ -782,6 +791,9 @@ const StartDoor = ({
             />
           ))
         )}
+      </section>
+      <section className="card mt-2.5">
+        <LinkRow label={t("manage.allRunners")} onPress={onRoster} />
       </section>
       <Button variant="ghost" block className="mt-4" loading={pending} onClick={onEnd}>
         {t("organizer.endEvent")}

@@ -628,6 +628,7 @@ export const ru = {
   "manage.waiting": "Ждём · {n}",
   "manage.waitlist": "Очередь",
   "manage.waitlistHint": "Когда места кончатся, можно встать в очередь",
+  "manage.adminActions": "Управление",
 } as const;
 
 export type Dict = { [K in keyof typeof ru]: string };

@@ -630,4 +630,5 @@ export const en: Dict = {
   "manage.waiting": "Waiting · {n}",
   "manage.waitlist": "Waitlist",
   "manage.waitlistHint": "When spots run out, people can join a waitlist",
+  "manage.adminActions": "Admin actions",
 };
