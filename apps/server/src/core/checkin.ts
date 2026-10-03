@@ -24,7 +24,7 @@ export const checkIn = (db: Db, eventId: number, userId: number, now: Date): { o
   const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
   if (registration.status === "checked_in") return { error: "already_checked_in" };
-  db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
+  db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, checkin_method = 'qr', updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
   return { ok: true };
 })();
 /** Stays open after the event ends: fixing the roster afterwards is part of the job. */
@@ -32,7 +32,7 @@ export const manualToggleCheckin = (db: Db, eventId: number, userId: number, now
   const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
   if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) return { error: "not_registered" };
   const status = registration.status === "checked_in" ? "registered" : "checked_in";
-  db.$client.query("UPDATE registrations SET status = ?, checked_in_at = ?, updated_at = ? WHERE id = ?").run(status, status === "checked_in" ? seconds(now) : null, seconds(now), registration.id);
+  db.$client.query("UPDATE registrations SET status = ?, checked_in_at = ?, checkin_method = ?, updated_at = ? WHERE id = ?").run(status, status === "checked_in" ? seconds(now) : null, status === "checked_in" ? "manual" : null, seconds(now), registration.id);
   return { status };
 })();
 
@@ -86,7 +86,7 @@ export const scanTicket = (db: Db, eventId: number, userId: number, now: Date): 
       return { ok: true, alreadyCheckedIn: true, checkedInAt: new Date((registration.checked_in_at ?? seconds(now)) * 1000) };
     }
     db.$client
-      .query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, updated_at = ? WHERE id = ?")
+      .query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, checkin_method = 'ticket', updated_at = ? WHERE id = ?")
       .run(seconds(now), seconds(now), registration.id);
     return { ok: true, alreadyCheckedIn: false, checkedInAt: now };
   })();

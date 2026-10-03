@@ -79,6 +79,7 @@ import {
 import { syncAllStaff, syncCityStaff, syncEventStaff } from "../core/staff";
 import { eventStats, globalStats } from "../core/stats";
 import { attachEvent, detachEvent, seriesStats, skipNext, spawnOccurrence } from "../core/series";
+import { checkinMethodOf, eventPhase, eventSummary, hqOverview, rosterFlags, seriesSummary } from "../core/hq";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
 import { loadEnv } from "../env";
@@ -701,7 +702,8 @@ export const app = new Elysia()
     }, { params: idParams })
 
     .get("/organizer/series", ({ user, isAdmin, actor }) => {
-      if (isAdmin) return db.select().from(eventSeries).orderBy(desc(eventSeries.nextStartsAt), desc(eventSeries.id)).all().map(seriesView);
+      const listView = (series: typeof eventSeries.$inferSelect) => ({ ...seriesView(series), ...seriesSummary(db, series.id, now()) });
+      if (isAdmin) return db.select().from(eventSeries).orderBy(desc(eventSeries.nextStartsAt), desc(eventSeries.id)).all().map(listView);
       const runs = adminCities(actor);
       const byCity = runs.length
         ? db.select().from(eventSeries).where(inArray(eventSeries.city, runs)).all()
@@ -712,7 +714,7 @@ export const app = new Elysia()
       const merged = new Map([...byCity, ...byName].map((series) => [series.id, series]));
       return [...merged.values()]
         .sort((a, b) => (b.nextStartsAt?.getTime() ?? 0) - (a.nextStartsAt?.getTime() ?? 0) || b.id - a.id)
-        .map(seriesView);
+        .map(listView);
     })
     .post("/organizer/series", ({ body, user, actor, status }) => {
       if (!canAdminCity(actor, body.city)) return error(status, 403, "forbidden");
@@ -900,7 +902,8 @@ export const app = new Elysia()
     }, { params: idParams, body: t.Object({ products: t.Array(seriesProductBody, { maxItems: 40 }) }) })
 
     .get("/organizer/events", ({ user, isAdmin, actor }) => {
-      if (isAdmin) return db.select().from(events).orderBy(desc(events.startsAt)).all().map(eventView);
+      const listView = (event: typeof events.$inferSelect) => ({ ...eventView(event), phase: eventPhase(event, now()) });
+      if (isAdmin) return db.select().from(events).orderBy(desc(events.startsAt)).all().map(listView);
       // Everything in the branches they run, plus every event they are named on
       // elsewhere — the two overlap, so they are merged rather than concatenated.
       const runs = adminCities(actor);
@@ -911,7 +914,7 @@ export const app = new Elysia()
         .innerJoin(events, eq(eventOrganizers.eventId, events.id))
         .where(eq(eventOrganizers.userId, user.id)).orderBy(desc(events.startsAt)).all().map((row) => row.event);
       const merged = new Map([...byCity, ...byName].map((event) => [event.id, event]));
-      return [...merged.values()].sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime()).map(eventView);
+      return [...merged.values()].sort((a, b) => b.startsAt.getTime() - a.startsAt.getTime()).map(listView);
     })
     /**
      * Raising an event is an organizer's job, not an admin's — a branch organizer
@@ -1135,6 +1138,7 @@ export const app = new Elysia()
       // The roster is the one screen that must never be stale about who is on it,
       // and it is cheap to reconcile: a no-op once the rows are there.
       syncEventStaff(db, params.id, now());
+      const flags = rosterFlags(db, params.id);
       const attendance = db.select({
         userId: users.id,
         firstName: users.firstName,
@@ -1144,6 +1148,7 @@ export const app = new Elysia()
         status: registrations.status,
         isStaff: registrations.isStaff,
         checkedInAt: registrations.checkedInAt,
+        checkinMethod: registrations.checkinMethod,
         ticketName: sql<string | null>`(
           SELECT o.ticket_name FROM ticket_orders o
           WHERE o.event_id = ${params.id} AND o.user_id = ${users.id} AND o.ticket_tier_id IS NOT NULL
@@ -1160,6 +1165,8 @@ export const app = new Elysia()
         .map((row) => ({
           ...row,
           checkedInAt: iso(row.checkedInAt),
+          checkinMethod: checkinMethodOf(row.status, row.checkinMethod),
+          ...flags(row.userId),
           purchaseItems: purchaseLines(params.id, row.userId),
         }));
       return { registrations: attendance, counts: eventStats(db, params.id), ticketed: isPaidEvent(params.id) };
@@ -1231,6 +1238,16 @@ export const app = new Elysia()
       const result = manualToggleCheckin(db, params.id, params.userId, now());
       return "error" in result ? error(status, 400, result.error) : result;
     }, { params: t.Object({ id: t.Numeric(), userId: t.Numeric() }) })
+    /** HQ: live runs, what needs a person, and what is next — over the same events as /organizer/events. */
+    .get("/organizer/hq", ({ actor }) => hqOverview(db, actor, now()))
+    /** The phase and the numbers of one event's screen, beyond what eventView and the roster carry. */
+    .get("/organizer/events/:id/summary", ({ params, actor, status }) => {
+      const found = manageable(actor, params.id);
+      if (found.denied) return error(status, found.code, found.denied);
+      const summary = eventSummary(db, params.id, now());
+      // Cancelling is a branch admin's call; the screen needs to know whether to offer it.
+      return summary ? { ...summary, canCancel: canAdminCity(actor, found.event.city) } : error(status, 404, "event_not_found");
+    }, { params: idParams })
 
     .patch("/admin/events/:id", ({ params, body, actor, status }) => {
       const found = administrable(actor, params.id);

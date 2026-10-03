@@ -1,0 +1,1 @@
+ALTER TABLE `registrations` ADD `checkin_method` text;
