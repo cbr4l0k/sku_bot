@@ -8,7 +8,7 @@ import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource } from "../lib/useResource";
 import { haptic, openLink } from "../telegram";
 import { useDockAction } from "../ui/dock";
-import { PriceChip } from "../ui/event";
+import { PriceChip, tierOnSale } from "../ui/event";
 import { useToast } from "../ui/overlays";
 import { ErrorState, Loader, Screen, SectionRule } from "../ui/primitives";
 
@@ -66,13 +66,7 @@ const Basket = ({ detail, reload }: { detail: EventDetail; reload: () => Promise
   const now = Date.now();
   const tiers = holds
     ? []
-    : detail.ticketTiers.filter(
-        (tier) =>
-          tier.active &&
-          (tier.salesStartAt === null || new Date(tier.salesStartAt).getTime() <= now) &&
-          (tier.salesEndAt === null || new Date(tier.salesEndAt).getTime() > now) &&
-          (tier.quota === null || tier.claimed < tier.quota),
-      );
+    : detail.ticketTiers.filter((tier) => tierOnSale(tier, now));
   const products = detail.products.filter(onSale);
   // Merch can be bought without a seat, but only offered that way when there is merch.
   const canSkipTicket = products.length > 0;

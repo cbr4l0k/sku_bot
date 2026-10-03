@@ -55,17 +55,38 @@ export const DateBlock = ({ iso }: { iso: string }) => {
   );
 };
 
-/** Cheapest ticket on sale, or null on a free run. */
-export const fromPrice = (event: Pick<EventCardData, "ticketTiers">): number | null => {
-  const prices = event.ticketTiers.filter((tier) => tier.active).map((tier) => tier.priceMinor);
-  return prices.length ? Math.min(...prices) : null;
+type Tier = EventCardData["ticketTiers"][number];
+
+/** On sale right now: active, inside its sales window, and not sold out. */
+export const tierOnSale = (tier: Tier, now = Date.now()) =>
+  tier.active &&
+  (tier.salesStartAt === null || new Date(tier.salesStartAt).getTime() <= now) &&
+  (tier.salesEndAt === null || new Date(tier.salesEndAt).getTime() > now) &&
+  (tier.quota === null || tier.claimed < tier.quota);
+
+/**
+ * What it costs to get in. Any tier at all makes the event paid — the server
+ * refuses a free join then, even when no tier is on sale at the moment.
+ */
+export const admission = (event: Pick<EventCardData, "ticketTiers">): { kind: "free" } | { kind: "paid"; from: number } | { kind: "unavailable" } => {
+  if (event.ticketTiers.length === 0) return { kind: "free" };
+  const prices = event.ticketTiers.filter((tier) => tierOnSale(tier)).map((tier) => tier.priceMinor);
+  return prices.length ? { kind: "paid", from: Math.min(...prices) } : { kind: "unavailable" };
 };
 
-/** "Бесплатно" or "от 500 ₽" — what it costs to get in. */
+/** Spots nobody holds or is paying for right now. */
+export const spotsLeft = (event: Pick<EventCardData, "capacity" | "pendingTicketCount">, confirmed: number): number | null =>
+  event.capacity === null ? null : Math.max(0, event.capacity - confirmed - event.pendingTicketCount);
+
+/** "Бесплатно", "от 500 ₽" or "Билетов нет". */
 export const PriceChip = ({ event, tone = "plain" }: { event: Pick<EventCardData, "ticketTiers">; tone?: "plain" | "soft" }) => {
   const { t, locale } = useI18n();
-  const price = fromPrice(event);
-  return <Chip tone={tone}>{price === null ? t("events.free") : t("events.fromPrice", { price: money(price, locale) })}</Chip>;
+  const price = admission(event);
+  return (
+    <Chip tone={tone}>
+      {price.kind === "free" ? t("events.free") : price.kind === "paid" ? t("events.fromPrice", { price: money(price.from, locale) }) : t("detail.noTicketsAvailable")}
+    </Chip>
+  );
 };
 
 /** Spots left, or Full, or the head count on an uncapped run. */
@@ -80,7 +101,7 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
   // A run only names its branch when it is not the one you are browsing — which
   // happens when you followed a link from elsewhere, or kept a spot after moving.
   const elsewhere = me?.city && event.city !== me.city ? CITIES[event.city] : null;
-  const left = event.capacity === null ? null : Math.max(0, event.capacity - event.confirmedCount);
+  const left = spotsLeft(event, event.confirmedCount);
 
   return (
     <Link

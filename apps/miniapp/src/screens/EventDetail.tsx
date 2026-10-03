@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { CITIES } from "@sku/cities";
 
@@ -10,7 +10,7 @@ import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic, openLink } from "../telegram";
 import { useDockAction, type DockAction } from "../ui/dock";
-import { CountdownRing, fromPrice, PriceChip, spotsLabel, StatusBadge } from "../ui/event";
+import { admission, CountdownRing, PriceChip, spotsLabel, spotsLeft, StatusBadge } from "../ui/event";
 import { GroupChips } from "../ui/groups";
 import { useConfirm, useToast } from "../ui/overlays";
 import { Button, ErrorState, Loader, Screen, SectionRule, Track } from "../ui/primitives";
@@ -58,6 +58,7 @@ const PendingDock = () => {
 const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> }) => {
   const { t, locale } = useI18n();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const toast = useToast();
   const confirm = useConfirm();
   const action = useAction();
@@ -67,7 +68,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
   const now = useTicker(1000, offer !== null);
 
   const confirmed = card?.confirmedCount ?? 0;
-  const left = detail.capacity === null ? null : Math.max(0, detail.capacity - confirmed - detail.pendingTicketCount);
+  const left = spotsLeft(detail, confirmed);
   const status = detail.myRegistrationStatus;
   const holds = status === "registered" || status === "checked_in";
   // On the list by right of the job: they hold no spot, so there is no spot for
@@ -80,7 +81,10 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
   const joinable = detail.status === "published" && !over;
   const paidEvent = detail.ticketTiers.length > 0;
   const ticketed = isTicketed(detail);
-  const price = fromPrice(detail);
+  const price = admission(detail);
+  // The bot's ticket buttons link here with the tier they named; checkout keeps it.
+  const ticketParam = searchParams.get("ticket");
+  const checkoutPath = `/events/${id}/checkout${ticketParam ? `?ticket=${encodeURIComponent(ticketParam)}` : ""}`;
   const merchOnSale = joinable && detail.products.some((product) => product.active);
   const remaining = offer ? new Date(offer.expiresAt).getTime() - now : 0;
 
@@ -136,10 +140,13 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
           : status === "registered"
             ? { label: t("action.scan"), onPress: () => navigate("/checkin") }
             : quiet("status.checked_in")
-        : status === "waitlisted"
-          ? quiet("detail.queued", { place: ordinal(detail.myWaitlistPosition ?? 1, locale) })
-          : paidEvent
-            ? { label: price === null ? t("detail.chooseTicket") : t("detail.chooseTicketFrom", { price: money(price, locale) }), onPress: () => navigate(`/events/${id}/checkout`) }
+        : paidEvent
+          // A queue kept from before the event went paid still buys its way in.
+          ? price.kind === "unavailable"
+            ? quiet("detail.noTicketsAvailable")
+            : { label: price.kind === "paid" ? t("detail.chooseTicketFrom", { price: money(price.from, locale) }) : t("detail.chooseTicket"), onPress: () => navigate(checkoutPath) }
+          : status === "waitlisted"
+            ? quiet("detail.queued", { place: ordinal(detail.myWaitlistPosition ?? 1, locale) })
             : left === 0 && !detail.waitlistEnabled
               ? quiet("detail.fullNoQueue")
               : { label: t(left === 0 ? "action.joinWaitlist" : "action.join"), onPress: join, loading: action.pending };
@@ -249,7 +256,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
       ) : null}
 
       {merchOnSale && (holds || !paidEvent) ? (
-        <Link to={`/events/${id}/checkout`} className="card row rise mt-3" style={{ "--i": 3 } as React.CSSProperties}>
+        <Link to={checkoutPath} className="card row rise mt-3" style={{ "--i": 3 } as React.CSSProperties}>
           <span className="min-w-0 flex-1">
             <span className="block text-[14px] font-semibold">{t("detail.extras")}</span>
             <span className="block text-[12px] text-hint">{t("detail.extrasHint")}</span>

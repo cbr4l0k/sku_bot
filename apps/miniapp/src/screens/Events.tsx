@@ -6,7 +6,7 @@ import { useI18n, type MessageKey } from "../i18n";
 import { errorText, relativeDayKey, shortDate, timeOf, untilStart, weekStart } from "../lib/format";
 import { useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
-import { EventCard, fromPrice } from "../ui/event";
+import { admission, EventCard, spotsLeft } from "../ui/event";
 import { Button, EmptyState, ErrorState, Loader, PageTitle, Screen, SectionRule } from "../ui/primitives";
 
 type Filter = "all" | "open" | "free";
@@ -24,7 +24,7 @@ const holdsSpot = (event: EventCardData) =>
 export const isTicketed = (event: Pick<EventCardData, "ticketTiers" | "products">) =>
   event.ticketTiers.length > 0 || event.products.length > 0;
 
-const spotsOpen = (event: EventCardData) => event.capacity === null || event.confirmedCount < event.capacity;
+const spotsOpen = (event: EventCardData) => spotsLeft(event, event.confirmedCount) !== 0;
 
 const WEEK = 7 * 86_400_000;
 
@@ -37,7 +37,7 @@ export const EventsScreen = () => {
   const next = list.find(holdsSpot) ?? null;
   const rest = list
     .filter((event) => event.id !== next?.id)
-    .filter((event) => (filter === "open" ? spotsOpen(event) : filter === "free" ? fromPrice(event) === null : true));
+    .filter((event) => (filter === "open" ? spotsOpen(event) : filter === "free" ? admission(event).kind === "free" : true));
 
   // Runs group by calendar week, Monday first, the way a club plans them.
   const thisWeek = weekStart(new Date());
