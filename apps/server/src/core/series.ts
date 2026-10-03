@@ -99,8 +99,8 @@ export const spawnOccurrence = (db: Db, seriesId: number, now: Date): { eventId:
     `).run(event.id, series.id);
     db.$client.query(`
       INSERT INTO ticket_tiers (
-        event_id, name, price_minor, quota, active, sort_order, created_at, updated_at
-      ) SELECT ?, name, price_minor, quota, active, sort_order, ?, ?
+        event_id, name, description, price_minor, quota, active, sort_order, created_at, updated_at
+      ) SELECT ?, name, description, price_minor, quota, active, sort_order, ?, ?
         FROM series_ticket_tiers WHERE series_id = ? ORDER BY sort_order, id
     `).run(event.id, timestamp, timestamp, series.id);
 

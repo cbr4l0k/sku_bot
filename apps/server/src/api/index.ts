@@ -275,6 +275,36 @@ const manageableSeries = (actor: Actor, seriesId: number, namedOrganizer = false
   return { series };
 };
 
+/** 1-based place in the queue, or null when they are not queueing. */
+const waitlistPositionOf = (eventId: number, userId: number) => {
+  const index = db.select({ userId: registrations.userId }).from(registrations)
+    .where(and(eq(registrations.eventId, eventId), eq(registrations.status, "waitlisted")))
+    .orderBy(asc(registrations.createdAt), asc(registrations.id)).all()
+    .findIndex((row) => row.userId === userId);
+  return index === -1 ? null : index + 1;
+};
+
+/** Who runs it, for the "led by" line runners see. */
+const organizersOf = (eventId: number) => db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName })
+  .from(eventOrganizers).innerJoin(users, eq(eventOrganizers.userId, users.id))
+  .where(eq(eventOrganizers.eventId, eventId)).orderBy(asc(users.firstName)).all();
+
+/**
+ * A runner's record: "runs" are check-ins, and turnout is check-ins over every
+ * finished event they held a spot on. Staff rows are the job, not a run.
+ */
+const runnerStats = (userId: number) => {
+  const row = db.$client.query<{ runs: number | null; held: number | null }, [number]>(`
+    SELECT sum(r.status = 'checked_in') AS runs, count(*) AS held
+    FROM registrations r JOIN events e ON e.id = r.event_id
+    WHERE r.user_id = ? AND r.is_staff = 0 AND e.ended_at IS NOT NULL
+      AND r.status IN ('registered', 'checked_in')
+  `).get(userId);
+  const runs = row?.runs ?? 0;
+  const held = row?.held ?? 0;
+  return { runs, turnout: held > 0 ? runs / held : null };
+};
+
 const participantEvent = (eventId: number) => db.select().from(events)
   .where(and(eq(events.id, eventId), eq(events.status, "published"))).get();
 
@@ -302,7 +332,7 @@ const ticketNameFor = (eventId: number, userId: number) => db.select({ ticketNam
  */
 const purchaseLines = (eventId: number, userId: number) => db.$client
   .query<{ id: number; name: string; quantity: number; kind: "merchandise" | "addon"; handed_over_at: number | null }, [number, number]>(`
-    SELECT i.id, i.name || CASE WHEN i.variant_name IS NULL THEN '' ELSE ' — ' || i.variant_name END AS name,
+    SELECT i.id, i.name || CASE WHEN i.variant_name IS NULL THEN '' ELSE ' · ' || i.variant_name END AS name,
       i.quantity, i.kind, i.handed_over_at FROM order_items i
     JOIN ticket_orders o ON o.id = i.order_id
     WHERE o.event_id = ? AND o.user_id = ? AND i.kind != 'ticket'
@@ -363,6 +393,7 @@ const idParams = t.Object({ id: t.Numeric() });
 const ticketTierBody = t.Object({
   id: t.Optional(t.Integer({ minimum: 1 })),
   name: t.String({ minLength: 1, maxLength: 80 }),
+  description: t.Optional(t.Nullable(t.String({ maxLength: 160 }))),
   priceMinor: t.Integer({ minimum: 100 }),
   quota: t.Nullable(t.Integer({ minimum: 1 })),
   salesStartAt: t.Optional(t.Nullable(t.String())),
@@ -406,6 +437,7 @@ const seriesCreateBody = seriesFields;
 const seriesPatchBody = t.Partial(seriesFields);
 const seriesTicketTierBody = t.Object({
   name: t.String({ minLength: 1, maxLength: 80 }),
+  description: t.Optional(t.Nullable(t.String({ maxLength: 160 }))),
   priceMinor: t.Integer({ minimum: 100 }),
   quota: t.Nullable(t.Integer({ minimum: 1 })),
   active: t.Optional(t.Boolean()),
@@ -471,8 +503,27 @@ export const app = new Elysia()
         roles: [...actor.roles].map(([city, role]) => ({ city, role })),
         adminCities: adminCities(actor),
         organizerCities: organizerCities(actor),
+        stats: runnerStats(user.id),
       };
     })
+    /** Finished events they held a spot on, newest first — the "done" half of Mine. */
+    .get("/me/history", ({ user }) => db.select({ event: events, status: registrations.status, checkedInAt: registrations.checkedInAt })
+      .from(registrations).innerJoin(events, eq(registrations.eventId, events.id))
+      .where(and(
+        eq(registrations.userId, user.id),
+        eq(registrations.isStaff, false),
+        inArray(registrations.status, ["registered", "checked_in"]),
+        sql`${events.endedAt} IS NOT NULL`,
+      ))
+      .orderBy(desc(events.startsAt)).all()
+      .map((row) => ({
+        id: row.event.id,
+        title: row.event.title,
+        city: row.event.city,
+        startsAt: row.event.startsAt.toISOString(),
+        status: row.status,
+        checkedInAt: iso(row.checkedInAt),
+      })))
     .patch("/me", ({ user, body }) => {
       db.update(users).set({
         ...(body.locale === undefined ? {} : { locale: body.locale }),
@@ -502,7 +553,8 @@ export const app = new Elysia()
             .where(and(eq(registrations.eventId, event.id), inArray(registrations.status, ["registered", "checked_in"]), eq(registrations.isStaff, false))).get()?.value ?? 0;
           const waitlistSize = db.select({ value: sql<number>`count(*)` }).from(registrations)
             .where(and(eq(registrations.eventId, event.id), eq(registrations.status, "waitlisted"))).get()?.value ?? 0;
-          return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myPendingOffer: offer ? { id: offer.id, expiresAt: offer.expiresAt.toISOString() } : null, confirmedCount, waitlistSize };
+          const myWaitlistPosition = registration?.status === "waitlisted" ? waitlistPositionOf(event.id, user.id) : null;
+          return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myPendingOffer: offer ? { id: offer.id, expiresAt: offer.expiresAt.toISOString() } : null, myWaitlistPosition, confirmedCount, waitlistSize };
         });
     })
     .get("/events/:id", async ({ params, user, status }) => {
@@ -513,11 +565,8 @@ export const app = new Elysia()
       if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
       const registration = db.select({ status: registrations.status, isStaff: registrations.isStaff }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
-      const waitlisted = registration?.status === "waitlisted";
-      const waitlistPosition = waitlisted ? db.select({ userId: registrations.userId }).from(registrations)
-        .where(and(eq(registrations.eventId, event.id), eq(registrations.status, "waitlisted"))).orderBy(asc(registrations.createdAt), asc(registrations.id)).all()
-        .findIndex((row) => row.userId === user.id) + 1 : null;
-      return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myWaitlistPosition: waitlistPosition };
+      const waitlistPosition = registration?.status === "waitlisted" ? waitlistPositionOf(event.id, user.id) : null;
+      return { ...eventView(event), myRegistrationStatus: registration?.status ?? null, myStaffEntry: registration?.isStaff ?? false, myWaitlistPosition: waitlistPosition, organizers: organizersOf(event.id) };
     }, { params: idParams })
     .post("/events/:id/join", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
@@ -637,13 +686,14 @@ export const app = new Elysia()
       await syncMemberships(user.id, chatsOfEvent(db, event.id));
       if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
       if (!isPaidEvent(event.id)) return error(status, 409, "not_ticketed");
-      const registration = db.select({ status: registrations.status }).from(registrations)
+      const registration = db.select({ id: registrations.id, status: registrations.status }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
       if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) {
         return error(status, 403, "not_registered");
       }
       return {
         token: mintTicketToken(env.CHECKIN_SECRET, event.id, user.id),
+        number: registration.id,
         status: registration.status,
         ticketName: ticketNameFor(event.id, user.id),
         items: purchaseLines(event.id, user.id),
@@ -796,6 +846,7 @@ export const app = new Elysia()
         parsed.forEach((tier, sortOrder) => db.insert(seriesTicketTiers).values({
           seriesId: params.id,
           name: tier.name,
+          description: tier.description?.trim() || null,
           priceMinor: tier.priceMinor,
           quota: tier.quota,
           active: tier.active ?? true,
@@ -956,6 +1007,7 @@ export const app = new Elysia()
         parsed.forEach((tier, sortOrder) => {
           const values = {
             name: tier.name,
+            description: tier.description?.trim() || null,
             priceMinor: tier.priceMinor,
             quota: tier.quota,
             salesStartAt: tier.salesStartAt,

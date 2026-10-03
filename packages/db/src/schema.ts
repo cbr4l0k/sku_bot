@@ -157,6 +157,7 @@ export const seriesTicketTiers = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     seriesId: integer("series_id").notNull().references(() => eventSeries.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    description: text("description"),
     priceMinor: integer("price_minor").notNull(),
     quota: integer("quota"),
     active: integer("active", { mode: "boolean" }).notNull().default(true),
@@ -279,6 +280,8 @@ export const ticketTiers = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     eventId: integer("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /** One line under the name at checkout: what the tier gets you. */
+    description: text("description"),
     /** Money is always stored as integer minor units: kopecks for RUB. */
     priceMinor: integer("price_minor").notNull(),
     quota: integer("quota"),
