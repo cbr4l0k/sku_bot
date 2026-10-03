@@ -1500,6 +1500,8 @@ export const app = new Elysia()
      * be sent back as they are; only the ones that differ are held to `canGrantRole`.
      */
     .put("/admin/users/:id/city-roles", ({ params, body, actor, status }) => {
+      // A save with nothing to change still returns the card, so it needs the card's own gate.
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       const result = setCityRoles(db, actor, params.id, body.roles);
       if ("error" in result) return error(status, result.error === "forbidden" ? 403 : 400, result.error);

@@ -54,6 +54,8 @@ test("stats carry this month's numbers alongside the all-time ones", async () =>
 
 test("the person card opens for branch admins and saves several branches at once", async () => {
   expect((await call("GET", `/api/admin/users/${RUNNER}`, RUNNER)).status).toBe(403);
+  // An empty save changes nothing but would still hand back the card — phone included.
+  expect((await call("PUT", `/api/admin/users/${SPB_ADMIN}/city-roles`, RUNNER, { roles: [] })).status).toBe(403);
   expect((await call("GET", "/api/admin/users/999", SPB_ADMIN)).status).toBe(404);
   const card = await call<{ id: number; canBlock: boolean; roles: { city: string; role: string | null }[] }>("GET", `/api/admin/users/${RUNNER}`, SPB_ADMIN);
   expect(card.json).toMatchObject({ id: RUNNER, canBlock: false, stats: { signUps: 0, turnout: null, led: 0 } });
