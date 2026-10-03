@@ -77,7 +77,9 @@ import {
   requestUserRefund,
 } from "../core/tickets";
 import { syncAllStaff, syncCityStaff, syncEventStaff } from "../core/staff";
-import { eventStats, globalStats } from "../core/stats";
+import { eventStats, globalStats, monthStats } from "../core/stats";
+import { needsAttention } from "../core/attention";
+import { personCard, setCityRoles } from "../core/people";
 import { attachEvent, detachEvent, seriesStats, skipNext, spawnOccurrence } from "../core/series";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { db } from "../db";
@@ -1004,6 +1006,14 @@ export const app = new Elysia()
       }
       db.$client.transaction(() => {
         db.update(ticketTiers).set({ active: false, updatedAt: now() }).where(eq(ticketTiers.eventId, params.id)).run();
+        // A dropped tier nobody ever bought leaves no trace, so a draft switched back
+        // to free really is free again ("no rows means the event is free").
+        db.delete(ticketTiers).where(and(
+          eq(ticketTiers.eventId, params.id),
+          ids.length ? sql`${ticketTiers.id} NOT IN ${ids}` : undefined,
+          sql`NOT EXISTS (SELECT 1 FROM ticket_orders o WHERE o.ticket_tier_id = ${ticketTiers.id})`,
+          sql`NOT EXISTS (SELECT 1 FROM order_items i WHERE i.ticket_tier_id = ${ticketTiers.id})`,
+        )).run();
         parsed.forEach((tier, sortOrder) => {
           const values = {
             name: tier.name,
@@ -1093,6 +1103,12 @@ export const app = new Elysia()
       }
       db.$client.transaction(() => {
         db.update(eventProducts).set({ active: false, updatedAt: now() }).where(eq(eventProducts.eventId, params.id)).run();
+        // Same for merch: an unsold item that was taken off leaves the event free.
+        db.delete(eventProducts).where(and(
+          eq(eventProducts.eventId, params.id),
+          ids.length ? sql`${eventProducts.id} NOT IN ${ids}` : undefined,
+          sql`NOT EXISTS (SELECT 1 FROM order_items i WHERE i.event_product_id = ${eventProducts.id})`,
+        )).run();
         parsed.forEach((product, sortOrder) => {
           const values = {
             kind: product.kind,
@@ -1447,6 +1463,32 @@ export const app = new Elysia()
       syncAllStaff(db, now());
       return { ok: true };
     }, { params: idParams })
+    /**
+     * HQ's "Needs attention": what is stuck until an admin acts, across the branches
+     * they run (or the one they ask for). Branchless chats only reach general admins,
+     * the only people who may file them.
+     */
+    .get("/admin/attention", ({ query, actor, status }) => {
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
+      if (query.city !== undefined && !canAdminCity(actor, query.city)) return error(status, 403, "forbidden");
+      return needsAttention(db, query.city === undefined ? adminCities(actor) : [query.city], actor.isGlobalAdmin, now());
+    }, { query: t.Object({ city: t.Optional(citySchema) }) })
+    /** The person card. Any branch admin may open it; what they may change is in `roles[].grantable`. */
+    .get("/admin/users/:id", ({ params, actor, status }) => {
+      if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
+      return personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found");
+    }, { params: idParams })
+    /**
+     * The card's Save: several branches in one go, all or nothing. Unchanged rows may
+     * be sent back as they are; only the ones that differ are held to `canGrantRole`.
+     */
+    .put("/admin/users/:id/city-roles", ({ params, body, actor, status }) => {
+      if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
+      const result = setCityRoles(db, actor, params.id, body.roles);
+      if ("error" in result) return error(status, result.error === "forbidden" ? 403 : 400, result.error);
+      for (const city of result.changed) syncCityStaff(db, city, now());
+      return personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found");
+    }, { params: idParams, body: t.Object({ roles: t.Array(t.Object({ city: citySchema, role: t.Nullable(cityRoleSchema) }), { maxItems: cities.length }) }) })
     .get("/admin/stats", ({ query, actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       // A general admin sees the whole club unless they ask for one branch; a branch
@@ -1454,7 +1496,7 @@ export const app = new Elysia()
       const runs = adminCities(actor);
       const city = query.city ?? (actor.isGlobalAdmin ? null : runs[0] ?? null);
       if (city !== null && !canAdminCity(actor, city)) return error(status, 403, "forbidden");
-      return globalStats(db, city);
+      return { ...globalStats(db, city), month: monthStats(db, city, now()) };
     }, { query: t.Object({ city: t.Optional(citySchema) }) }))
   .get("/*", ({ request }) => staticFile(new URL(request.url).pathname));
 
