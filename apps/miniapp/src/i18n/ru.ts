@@ -678,6 +678,7 @@ export const ru = {
   "newEvent.withQueue": "очередь",
   "newEvent.visibleTo": "Видят",
   "newEvent.publishNote": "После публикации бот пришлёт карточку события в чат филиала с кнопками записи.",
+  "newEvent.needTier": "Для входа по билетам добавь хотя бы один тариф",
 } as const;
 
 export type Dict = { [K in keyof typeof ru]: string };

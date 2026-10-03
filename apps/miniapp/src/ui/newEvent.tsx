@@ -95,8 +95,15 @@ export const NewEventSheet = ({ cities, onClose }: { cities: readonly CitySlug[]
     }, { onError: fail });
   };
 
+  // "Ticketed" is only a choice on this screen until a tier exists on the server.
+  const missingTier = () => ticketed && !(draft?.ticketTiers ?? []).some((tier) => tier.active);
+
   const saveSignup = () => {
     if (eventId === null) return;
+    if (missingTier()) {
+      toast(t("newEvent.needTier"), "err");
+      return;
+    }
     void action.run(async () => {
       await sku.updateEvent(eventId, { capacity: spots === "" ? null : Number(spots), waitlistEnabled: queue });
       // Switching back to free clears the tiers, or the server would still ask for payment.
@@ -117,6 +124,11 @@ export const NewEventSheet = ({ cities, onClose }: { cities: readonly CitySlug[]
 
   const finish = (publish: boolean) => {
     if (eventId === null) return;
+    if (publish && missingTier()) {
+      toast(t("newEvent.needTier"), "err");
+      go(1);
+      return;
+    }
     void action.run(async () => {
       if (publish) {
         await sku.adminUpdateEvent(eventId, { status: "published" });

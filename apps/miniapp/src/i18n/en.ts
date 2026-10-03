@@ -680,4 +680,5 @@ export const en: Dict = {
   "newEvent.withQueue": "waitlist",
   "newEvent.visibleTo": "Visible to",
   "newEvent.publishNote": "Once published, the bot posts the event card to the branch chat with sign-up buttons.",
+  "newEvent.needTier": "Add at least one ticket tier for ticketed entry",
 };

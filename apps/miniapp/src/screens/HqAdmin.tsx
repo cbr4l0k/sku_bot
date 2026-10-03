@@ -5,7 +5,7 @@ import { CITIES, cityList, type CitySlug } from "@sku/cities";
 
 import { sku, type Attention } from "../api";
 import { useI18n } from "../i18n";
-import { errorText, fullName, initials, money, monthSince, percent, shortDate } from "../lib/format";
+import { errorText, fullName, initials, money, percent, shortDate } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { useToast } from "../ui/overlays";
 import { PersonSheet } from "../ui/person";
@@ -90,7 +90,8 @@ export const MonthNumbers = () => {
   const stats = useResource(useCallback(() => sku.globalStats(), []));
   const month = stats.data?.month;
   if (!month) return null;
-  const label = monthSince(`${month.month}-15T12:00:00Z`, locale);
+  // A standalone heading wants the nominative ("Октябрь"), unlike "с октября".
+  const label = new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", { month: "long" }).format(new Date(`${month.month}-15T12:00:00Z`));
   return (
     <>
       <Rule label={t("numbers.month", { month: label.charAt(0).toUpperCase() + label.slice(1) })} />
