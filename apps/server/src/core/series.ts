@@ -193,12 +193,12 @@ export const detachEvent = (db: Db, eventId: number): { ok: true } | { error: "e
   return result.changes ? { ok: true } : { error: "event_not_found" };
 };
 
-type OccurrenceRow = { id: number; title: string; starts_at: number; capacity: number | null };
+type OccurrenceRow = { id: number; title: string; starts_at: number; capacity: number | null; status: string; ended_at: number | null };
 type ParticipantRow = { user_id: number; status: string; is_staff: number };
 
 export const seriesStats = (db: Db, seriesId: number) => {
   const rows = db.$client.query<OccurrenceRow, [number]>(`
-    SELECT id, title, starts_at, capacity FROM events
+    SELECT id, title, starts_at, capacity, status, ended_at FROM events
     WHERE series_id = ? ORDER BY starts_at, id
   `).all(seriesId);
   const confirmedByUser = new Map<number, number>();
@@ -246,6 +246,10 @@ export const seriesStats = (db: Db, seriesId: number) => {
       eventId: event.id,
       title: event.title,
       startsAt: new Date(event.starts_at * 1000),
+      status: event.status,
+      // Held: someone ran it and declared it over. Drafts, upcoming and canceled
+      // runs stay in the list but are kept out of the held-only averages below.
+      held: event.ended_at !== null && event.status !== "canceled",
       capacity: event.capacity,
       registered: counts.registered,
       waitlisted: counts.waitlisted,
@@ -271,6 +275,21 @@ export const seriesStats = (db: Db, seriesId: number) => {
     .slice(0, 10);
   const participationCounts = [...confirmedByUser.values()];
   const capacityOccurrences = occurrences.filter((occurrence) => occurrence.capacity !== null && occurrence.capacity > 0);
+  const held = occurrences.filter((occurrence) => occurrence.held);
+  const heldWithCapacity = held.filter((occurrence) => occurrence.capacity !== null && occurrence.capacity > 0);
+  // First time: the series is where they first turned up at the club at all — no
+  // check-in anywhere before their first date here. Everyone else was returning.
+  const firstTime = db.$client.query<{ value: number }, [number]>(`
+    SELECT count(*) AS value FROM (
+      SELECT r.user_id, min(e.starts_at) AS starts_at
+      FROM registrations r JOIN events e ON e.id = r.event_id
+      WHERE e.series_id = ? AND r.is_staff = 0 AND r.status IN ('registered', 'checked_in')
+      GROUP BY r.user_id
+    ) f WHERE NOT EXISTS (
+      SELECT 1 FROM registrations p JOIN events pe ON pe.id = p.event_id
+      WHERE p.user_id = f.user_id AND p.status = 'checked_in' AND pe.starts_at < f.starts_at
+    )
+  `).get(seriesId)?.value ?? 0;
 
   return {
     occurrences,
@@ -284,7 +303,15 @@ export const seriesStats = (db: Db, seriesId: number) => {
         ? capacityOccurrences.reduce((sum, occurrence) => sum + occurrence.fillRate, 0) / capacityOccurrences.length
         : 0,
       revenueMinor,
+      held: held.length,
+      turnout: held.length ? held.reduce((sum, occurrence) => sum + occurrence.attendanceRate, 0) / held.length : 0,
+      fillRate: heldWithCapacity.length
+        ? heldWithCapacity.reduce((sum, occurrence) => sum + occurrence.fillRate, 0) / heldWithCapacity.length
+        : 0,
+      firstTime,
+      returning: confirmedByUser.size - firstTime,
     },
+    // "N of M" reads attended of totals.held.
     regulars,
     retention: {
       onceOnly: participationCounts.filter((count) => count === 1).length,

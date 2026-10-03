@@ -36,6 +36,10 @@ export type EventProductKind = (typeof eventProductKinds)[number];
 export const orderItemKinds = ["ticket", ...eventProductKinds] as const;
 export type OrderItemKind = (typeof orderItemKinds)[number];
 
+/** How someone got through the door: the projected QR, a scan of their ticket, or an organizer's tap. */
+export const checkinMethods = ["qr", "ticket", "manual"] as const;
+export type CheckinMethod = (typeof checkinMethods)[number];
+
 export const waitlistOfferStatuses = ["pending", "accepted", "superseded"] as const;
 export type WaitlistOfferStatus = (typeof waitlistOfferStatuses)[number];
 
@@ -265,6 +269,8 @@ export const registrations = sqliteTable(
     createdAt: createdAt(),
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().default(sql`(unixepoch())`),
     checkedInAt: integer("checked_in_at", { mode: "timestamp" }),
+    /** Null for anyone not checked in, and for check-ins that predate the column. */
+    checkinMethod: text("checkin_method").$type<CheckinMethod>(),
   },
   (table) => [
     unique("registrations_event_id_user_id_unique").on(table.eventId, table.userId),
