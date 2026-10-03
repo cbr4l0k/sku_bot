@@ -2,7 +2,7 @@ import { Link } from "react-router";
 
 import { CITIES } from "@sku/cities";
 
-import type { EventCard as EventCardData, EventStatus, RegistrationStatus } from "../api";
+import type { EventCard as EventCardData, EventPhase, EventStatus, RegistrationStatus } from "../api";
 import { useI18n, type Translate } from "../i18n";
 import { dayNumber, money, monthNumber, ordinal, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
 import { useSession } from "../session";
@@ -178,5 +178,15 @@ export const CountdownRing = ({
       </svg>
       {children ? <div className="absolute inset-0 grid place-items-center">{children}</div> : null}
     </div>
+  );
+};
+
+/** Where an event is in its life, as the organizer screens name it. */
+export const PhaseChip = ({ phase, closed = false }: { phase: EventPhase; closed?: boolean }) => {
+  const { t } = useI18n();
+  return (
+    <Chip tone={phase === "signup" || phase === "start" ? "soft" : "plain"} className={phase === "canceled" ? "opacity-70" : ""}>
+      {phase === "signup" && closed ? t("phase.closed") : t(`phase.${phase}`)}
+    </Chip>
   );
 };

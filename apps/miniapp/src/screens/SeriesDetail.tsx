@@ -1,63 +1,27 @@
 import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { sku, type SeriesDraft } from "../api";
-import { useI18n } from "../i18n";
-import { bib, errorText, percent } from "../lib/format";
+import { sku, type SeriesDetail, type SeriesDraft, type SeriesStats } from "../api";
+import { useI18n, type MessageKey } from "../i18n";
+import { dayMonth, errorText, fullName, initials, percent, timeOf, weekdayShort } from "../lib/format";
+import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource } from "../lib/useResource";
-import { DateBlock, EventStatusChip } from "../ui/event";
+import { haptic } from "../telegram";
+import { PhaseChip } from "../ui/event";
 import { Sheet, useConfirm, useToast } from "../ui/overlays";
-import {
-  Button,
-  Chip,
-  ErrorState,
-  Loader,
-  MiniBar,
-  PageTitle,
-  Screen,
-  SectionRule,
-  StatTile,
-} from "../ui/primitives";
+import { Button, Chip, ErrorState, Loader, Screen, SectionRule } from "../ui/primitives";
 import { SeriesForm } from "../ui/seriesForm";
-import { NextRunPanel } from "../ui/seriesNext";
-import { MixTrend, TurnoutTrend } from "../ui/seriesTrend";
+import { NextUpCard } from "../ui/seriesNext";
+import { ShowUpChart } from "../ui/seriesTrend";
+import { manageHref } from "./Hq";
 
-/** One raised run, as a row. Links into the organizer screen it already has. */
-const OccurrenceRow = ({
-  event,
-  index,
-}: {
-  event: { id: number; title: string; startsAt: string; status: "draft" | "published" | "closed" | "canceled"; endedAt: string | null; capacity: number | null };
-  index: number;
-}) => {
-  const { t } = useI18n();
-  return (
-    <Link
-      to={`/organizer/events/${event.id}`}
-      style={{ "--i": index } as React.CSSProperties}
-      className={`card rise flex gap-3.5 px-4 py-3.5 active:scale-[0.985] ${event.endedAt ? "opacity-65" : ""}`}
-    >
-      <DateBlock iso={event.startsAt} />
-      <div className="min-w-0 flex-1 self-center">
-        <div className="mb-1.5 flex items-start justify-between gap-2">
-          <h3 className="display min-w-0 text-[15px] leading-tight break-words">{event.title}</h3>
-          <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(event.id)}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {event.endedAt ? <Chip>{t("organizer.ended")}</Chip> : <EventStatusChip status={event.status} />}
-          <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
-            {event.capacity === null ? t("events.freeEntry") : `${t("detail.spots")} ${event.capacity}`}
-          </span>
-        </div>
-      </div>
-    </Link>
-  );
-};
+const SESSIONS_SHOWN = 4;
 
 export const SeriesDetailScreen = () => {
   const { t } = useI18n();
   const { id } = useParams();
   const seriesId = Number(id);
+  useBackButton("/hq?tab=series");
   const toast = useToast();
   const confirm = useConfirm();
   const action = useAction();
@@ -66,10 +30,7 @@ export const SeriesDetailScreen = () => {
   const detail = useResource(useCallback(() => sku.seriesDetail(seriesId), [seriesId]));
   const stats = useResource(useCallback(() => sku.seriesStats(seriesId), [seriesId]));
   const catalog = useResource(
-    useCallback(
-      () => (detail.data ? sku.groupCatalog(detail.data.city) : Promise.resolve({ groups: [] })),
-      [detail.data],
-    ),
+    useCallback(() => (detail.data ? sku.groupCatalog(detail.data.city) : Promise.resolve({ groups: [] })), [detail.data]),
   );
 
   const refresh = async () => {
@@ -86,24 +47,19 @@ export const SeriesDetailScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
-  if (detail.loading && !detail.data) return <Screen><Loader label={t("common.loading")} /></Screen>;
   if (!detail.data) {
     return (
       <Screen>
-        <ErrorState
-          message={errorText(t, detail.error)}
-          retryLabel={t("common.retry")}
-          onRetry={() => void detail.reload()}
-        />
+        {detail.loading ? (
+          <Loader label={t("common.loading")} />
+        ) : (
+          <ErrorState message={errorText(t, detail.error)} retryLabel={t("common.retry")} onRetry={() => void detail.reload()} />
+        )}
       </Screen>
     );
   }
 
   const series = detail.data;
-  const numbers = stats.data;
-  const tiers = series.ticketTiers.length;
-  const products = series.products.length;
-
   const save = (draft: SeriesDraft) =>
     void action.run(
       async () => {
@@ -115,131 +71,83 @@ export const SeriesDetailScreen = () => {
       { onError: (error) => toast(errorText(t, error), "err") },
     );
 
+  const cadence = series.cadenceDays === null ? t("series.byHand") : t("series.everyNDays", { n: series.cadenceDays });
+
   return (
     <Screen>
-      <PageTitle
-        title={series.title}
-        aside={
-          <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-            {t("common.edit")}
-          </Button>
-        }
-      />
-      <p className="-mt-3 mb-5 truncate text-[13px] text-hint">{series.location}</p>
+      <div className="eyebrow mb-2.5">
+        {[t("series.eyebrow"), cadence, t("series.leadShort", { n: series.leadDays })].join(" · ")}
+      </div>
+      <h1 className="hero rise mb-5 break-words">{series.title}</h1>
 
-      <NextRunPanel
+      <NextUpCard
+        occurrence={series.upcomingOccurrences[0] ?? null}
         nextStartsAt={series.nextStartsAt}
-        cadenceDays={series.cadenceDays}
         leadDays={series.leadDays}
+        cadenceDays={series.cadenceDays}
+        manageHref={manageHref}
         busy={action.pending}
         onMove={(iso) => run(() => sku.updateSeries(seriesId, { nextStartsAt: iso }), t("toast.seriesSaved"))}
         onSpawn={() => run(() => sku.spawnOccurrence(seriesId), t("toast.occurrenceCreated"))}
         onSkip={() => {
           void (async () => {
-            const ok = await confirm({
-              text: t("series.confirmSkip", { n: series.cadenceDays ?? 0 }),
-              confirmLabel: t("series.skip"),
-            });
+            const ok = await confirm({ text: t("series.confirmSkip", { n: series.cadenceDays ?? 0 }), confirmLabel: t("series.skip") });
             if (ok) run(() => sku.skipOccurrence(seriesId), t("toast.skipped"));
           })();
         }}
       />
 
-      {/* ---------------------------------------------------------- analytics */}
-      {numbers && numbers.totals.occurrences > 0 ? (
-        <>
-          <SectionRule label={t("series.stats")} />
-          <div className="grid grid-cols-2 gap-2.5">
-            <StatTile label={t("series.statRuns")} value={String(numbers.totals.occurrences)} />
-            <StatTile label={t("series.statPeople")} value={String(numbers.totals.uniqueParticipants)} />
-          </div>
-          <section className="card mt-2.5 px-4 py-4">
-            <MiniBar
-              label={t("series.statAttendance")}
-              value={percent(numbers.totals.avgAttendanceRate)}
-              ratio={numbers.totals.avgAttendanceRate}
-            />
-            <MiniBar
-              label={t("series.statFill")}
-              value={percent(numbers.totals.avgFillRate)}
-              ratio={numbers.totals.avgFillRate}
-            />
-          </section>
+      {stats.data && stats.data.totals.held > 0 ? <Analytics stats={stats.data} /> : null}
 
-          <SectionRule label={t("series.trend")} />
-          <section className="card px-4 py-4">
-            <TurnoutTrend occurrences={numbers.occurrences} />
-          </section>
+      <Sessions series={series} />
 
-          <SectionRule label={t("series.retention")} />
-          <section className="card px-4 py-4">
-            <MixTrend occurrences={numbers.occurrences} />
-            <div className="mt-4 flex flex-wrap gap-1.5 border-t border-hair pt-3.5">
-              <Chip>{t("series.retentionOnce")} {numbers.retention.onceOnly}</Chip>
-              <Chip>{t("series.retentionFew")} {numbers.retention.twoToThree}</Chip>
-              <Chip tone="soft">{t("series.retentionMany")} {numbers.retention.fourPlus}</Chip>
-            </div>
-          </section>
-
-          {numbers.regulars.length > 0 ? (
-            <>
-              <SectionRule label={t("series.regulars")} />
-              <section className="card divide-y divide-hair px-4">
-                {numbers.regulars.map((person) => (
-                  <div key={person.userId} className="flex items-center justify-between gap-3 py-2.5">
-                    <span className="min-w-0 truncate text-[14px]">{person.firstName}</span>
-                    <span className="num shrink-0 text-[12px] text-hint">
-                      {t("series.attended", { n: person.attended, total: numbers.totals.occurrences })}
-                    </span>
-                  </div>
-                ))}
-              </section>
-            </>
-          ) : null}
-        </>
-      ) : null}
-
-      {/* -------------------------------------------------------- occurrences */}
-      {series.upcomingOccurrences.length > 0 ? (
-        <>
-          <SectionRule label={t("series.upcoming")} />
-          <div className="flex flex-col gap-2.5">
-            {series.upcomingOccurrences.map((event, index) => (
-              <OccurrenceRow key={event.id} event={event} index={index} />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {series.pastOccurrences.length > 0 ? (
-        <>
-          <SectionRule label={t("series.past")} />
-          <div className="flex flex-col gap-2.5">
-            {[...series.pastOccurrences].reverse().map((event, index) => (
-              <OccurrenceRow key={event.id} event={event} index={index} />
-            ))}
-          </div>
-        </>
-      ) : null}
-
-      {/* ------------------------------------------------------------ template */}
       <SectionRule label={t("series.template")} />
-      <section className="card px-4 py-4">
-        <p className="mb-3 text-[12px] leading-snug text-hint">{t("series.templateHint")}</p>
-        <div className="flex flex-wrap gap-1.5">
-          {tiers === 0 && products === 0 ? (
-            <Chip>{t("series.templateNothing")}</Chip>
-          ) : (
-            <>
-              {tiers > 0 ? <Chip tone="soft">{t("series.templateTiers", { n: tiers })}</Chip> : null}
-              {products > 0 ? <Chip tone="soft">{t("series.templateProducts", { n: products })}</Chip> : null}
-            </>
-          )}
+      <Template series={series} onEdit={() => setEditing(true)} />
+      <p className="mx-1 mt-2.5 text-[12px]" style={{ color: "var(--ink-deep)" }}>
+        {t("series.templateHint")}
+      </p>
+
+      <SectionRule label={t("series.rhythm")} />
+      <section className="card">
+        <button type="button" className="row" onClick={() => setEditing(true)}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("series.cadence")}</span>
+            <span className="block text-[12px] text-hint">
+              {series.cadenceDays === null ? t("series.byHand") : t("series.cadenceLine", { n: series.cadenceDays })}
+            </span>
+          </span>
+          <span className="chev">›</span>
+        </button>
+        <button type="button" className="row" onClick={() => setEditing(true)}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("series.lead")}</span>
+            <span className="block text-[12px] text-hint">{t("series.leadLine", { n: series.leadDays })}</span>
+          </span>
+          <span className="chev">›</span>
+        </button>
+        <div className="row">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("series.pause")}</span>
+            <span className="block text-[12px] text-hint">{t("series.pauseHint")}</span>
+          </span>
+          <button
+            type="button"
+            className="switch"
+            aria-pressed={!series.active}
+            aria-label={t("series.pause")}
+            disabled={action.pending}
+            onClick={() => {
+              haptic.select();
+              run(() => sku.updateSeries(seriesId, { active: !series.active }), t("toast.seriesSaved"));
+            }}
+          >
+            <span />
+          </button>
         </div>
       </section>
 
       {editing ? (
-        <Sheet title={t("common.edit")} onClose={() => setEditing(false)}>
+        <Sheet title={t("series.editTemplate")} onClose={() => setEditing(false)}>
           <SeriesForm
             initial={{
               city: series.city,
@@ -263,5 +171,168 @@ export const SeriesDetailScreen = () => {
         </Sheet>
       ) : null}
     </Screen>
+  );
+};
+
+const Analytics = ({ stats }: { stats: SeriesStats }) => {
+  const { t } = useI18n();
+  const { totals, retention, regulars } = stats;
+  const people = retention.onceOnly + retention.twoToThree + retention.fourPlus;
+  const buckets: ReadonlyArray<{ key: MessageKey; count: number }> = [
+    { key: "series.retentionOnce", count: retention.onceOnly },
+    { key: "series.retentionFew", count: retention.twoToThree },
+    { key: "series.retentionMany", count: retention.fourPlus },
+  ];
+  return (
+    <>
+      <SectionRule label={t("series.stats")} />
+      <div className="grid grid-cols-2 gap-2">
+        <Tile label={t("series.statRuns")} value={String(totals.held)} />
+        <Tile label={t("series.statPeople")} value={String(totals.uniqueParticipants)} />
+        <Tile label={t("series.statAttendance")} value={percent(totals.turnout)} />
+        <Tile label={t("series.statFill")} value={percent(totals.fillRate)} />
+      </div>
+
+      <section className="card mt-2.5 p-4">
+        <div className="mb-3.5 flex items-baseline justify-between">
+          <span className="eyebrow">{t("series.trend")}</span>
+          <span className="num text-[11px] text-hint">{t("series.lastN", { n: Math.min(8, totals.held) })}</span>
+        </div>
+        <ShowUpChart occurrences={stats.occurrences} />
+        <div className="hairline my-3.5" />
+        <div className="flex justify-between text-[13px]">
+          <span>
+            {t("series.newcomers")} <span className="num">{totals.firstTime}</span>
+          </span>
+          <span>
+            {t("series.returning")} <span className="num">{totals.returning}</span>
+          </span>
+        </div>
+      </section>
+
+      {people > 0 ? (
+        <section className="card mt-2.5 px-4 py-3">
+          <div className="eyebrow mt-1 mb-1.5">{t("series.retention")}</div>
+          {buckets.map((bucket) => (
+            <div key={bucket.key} className="py-1.5">
+              <div className="mb-1.5 flex justify-between text-[13px]">
+                <span>{t(bucket.key)}</span>
+                <span className="num">{percent(bucket.count / people)}</span>
+              </div>
+              <div className="track h-1.5">
+                <div className="track-fill" style={{ width: `${(bucket.count / people) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
+      {regulars.length > 0 ? (
+        <section className="card mt-2.5">
+          <div className="eyebrow px-4 pt-3.5 pb-1">{t("series.regulars")}</div>
+          {regulars.slice(0, 5).map((person) => (
+            <div key={person.userId} className="row">
+              <span className="av">{initials(person)}</span>
+              <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{person.firstName}</span>
+              <span className="num shrink-0 text-[12px] text-hint">{t("series.attended", { n: person.attended, total: totals.held })}</span>
+            </div>
+          ))}
+        </section>
+      ) : null}
+    </>
+  );
+};
+
+const Tile = ({ label, value }: { label: string; value: string }) => (
+  <div className="stattile px-3.5 py-3">
+    <div className="eyebrow mb-1">{label}</div>
+    <div className="display text-[26px]">{value}</div>
+  </div>
+);
+
+/** Every run raised from this series, newest first; past ones are just a record. */
+const Sessions = ({ series }: { series: SeriesDetail }) => {
+  const { t, locale } = useI18n();
+  const [all, setAll] = useState(false);
+  const rows = [...[...series.upcomingOccurrences].reverse(), ...[...series.pastOccurrences].reverse()];
+  if (rows.length === 0) return null;
+  const shown = all ? rows : rows.slice(0, SESSIONS_SHOWN);
+  const held = series.pastOccurrences.filter((event) => event.endedAt !== null && event.status !== "canceled").length;
+
+  return (
+    <>
+      <div className="mt-[26px] mb-3 flex items-center gap-3">
+        <span className="eyebrow shrink-0">{t("series.occurrences")}</span>
+        <span className="hairline flex-1" />
+        <span className="num shrink-0 text-[11px] text-hint">
+          {series.upcomingOccurrences.length ? `${held} + ${series.upcomingOccurrences.length}` : held}
+        </span>
+      </div>
+      <div className="card">
+        {shown.map((event) => (
+          <Link key={event.id} to={manageHref(event.id)} className="row">
+            <span className="num w-11 shrink-0 text-[12px] text-hint">{dayMonth(event.startsAt, locale)}</span>
+            <span className="min-w-0 flex-1 truncate text-[14px]">{event.title}</span>
+            {event.status === "canceled" ? (
+              <PhaseChip phase="canceled" />
+            ) : event.endedAt ? (
+              <Chip>{t("series.held")}</Chip>
+            ) : (
+              <PhaseChip phase={event.status === "draft" ? "draft" : "signup"} closed={event.status === "closed"} />
+            )}
+          </Link>
+        ))}
+        {rows.length > SESSIONS_SHOWN && !all ? (
+          <button type="button" className="row" onClick={() => setAll(true)}>
+            <span className="flex-1 text-[13px]">{t("series.allSessions")}</span>
+            <span className="chev">›</span>
+          </button>
+        ) : null}
+      </div>
+    </>
+  );
+};
+
+const Template = ({ series, onEdit }: { series: SeriesDetail; onEdit: () => void }) => {
+  const { t, locale } = useI18n();
+  const tiers = series.ticketTiers.filter((tier) => tier.active).length;
+  const products = series.products.filter((product) => product.active).length;
+  const rows: ReadonlyArray<{ key: MessageKey; value: string }> = [
+    {
+      key: "detail.when",
+      value: series.nextStartsAt ? `${weekdayShort(series.nextStartsAt, locale)}, ${timeOf(series.nextStartsAt, locale)}` : "—",
+    },
+    { key: "detail.where", value: series.location },
+    {
+      key: "detail.spots",
+      value: [
+        series.capacity === null ? t("events.freeEntry") : String(series.capacity),
+        t(series.waitlistEnabled ? "series.waitlistOn" : "series.waitlistOff"),
+      ].join(" · "),
+    },
+    {
+      key: "detail.tickets",
+      value:
+        tiers === 0 && products === 0
+          ? t("series.templateNothing")
+          : [tiers ? t("series.templateTiers", { n: tiers }) : null, products ? t("series.templateProducts", { n: products }) : null].filter(Boolean).join(" · "),
+    },
+    { key: "series.chat", value: series.chats.map((chat) => chat.title).join(", ") || "—" },
+    { key: "detail.ledBy", value: series.organizers.map(fullName).join(", ") || "—" },
+  ];
+  return (
+    <section className="card">
+      {rows.map((row) => (
+        <div key={row.key} className="row">
+          <span className="eyebrow w-[86px] shrink-0 text-[9px]">{t(row.key)}</span>
+          <span className="min-w-0 flex-1 text-[13px] break-words">{row.value}</span>
+        </div>
+      ))}
+      <div className="px-4 pt-3 pb-4">
+        <Button variant="ghost" block onClick={onEdit}>
+          {t("series.editTemplate")}
+        </Button>
+      </div>
+    </section>
   );
 };

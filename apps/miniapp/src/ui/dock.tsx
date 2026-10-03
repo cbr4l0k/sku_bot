@@ -56,8 +56,7 @@ export const useDockAction = (action: DockAction | null): void => {
 const TABS: ReadonlyArray<{ to: string; key: MessageKey; glyph: string }> = [
   { to: "/", key: "nav.events", glyph: "◎" },
   { to: "/mine", key: "nav.mine", glyph: "▤" },
-  { to: "/organizer", key: "nav.organizer", glyph: "⌁" },
-  { to: "/admin", key: "nav.admin", glyph: "⌘" },
+  { to: "/hq", key: "nav.hq", glyph: "⌁" },
   { to: "/profile", key: "nav.profile", glyph: "◍" },
 ];
 
@@ -74,11 +73,13 @@ export const Dock = () => {
   const [tabsSize, setTabsSize] = useState<{ width: number; height: number } | null>(null);
 
   const visible = TABS.filter((tab) => {
-    if (tab.to === "/organizer") return Boolean(me?.isOrganizerOfAny || me?.isAdmin || me?.organizerCities.length);
-    if (tab.to === "/admin") return Boolean(me?.isAdmin || me?.adminCities.length);
+    if (tab.to === "/hq") return Boolean(me?.isOrganizerOfAny || me?.isAdmin || me?.organizerCities.length || me?.adminCities.length);
     return true;
   });
-  const active = (to: string) => (to === "/" ? location.pathname === "/" : location.pathname.startsWith(to));
+  // HQ owns everything staff reach from it, so the tab stays lit on the way down.
+  const staffPaths = ["/hq", "/organizer", "/series", "/admin"];
+  const active = (to: string) =>
+    to === "/" ? location.pathname === "/" : to === "/hq" ? staffPaths.some((path) => location.pathname.startsWith(path)) : location.pathname.startsWith(to);
 
   // The tab row is absolutely positioned inside the pill, so its natural size is
   // measured and handed to the pill — that is what lets the width transition run.

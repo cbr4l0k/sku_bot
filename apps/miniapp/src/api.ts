@@ -84,6 +84,9 @@ export type EventCard = Ok<typeof api.events.get>[number];
 export type EventDetail = Ok<typeof eventById.get>;
 export type EventSummary = Ok<typeof api.organizer.events.get>[number];
 export type Attendance = Ok<typeof organizerEvent.attendance.get>;
+export type Hq = Ok<typeof api.organizer.hq.get>;
+export type EventSummaryData = Ok<typeof organizerEvent.summary.get>;
+export type EventPhase = EventSummaryData["phase"];
 export type AttendanceRow = Attendance["registrations"][number];
 export type MyTicket = Ok<typeof eventById.ticket.get>;
 export type TicketLine = MyTicket["items"][number];
@@ -176,6 +179,8 @@ export const sku = {
   myTicket: (id: number) => call(api.events({ id }).ticket.get(auth())),
 
   organizerEvents: () => call(api.organizer.events.get(auth())),
+  hq: () => call(api.organizer.hq.get(auth())),
+  eventSummary: (id: number) => call(api.organizer.events({ id }).summary.get(auth())),
   updateEvent: (id: number, body: Partial<EventDraft>) => call(api.organizer.events({ id }).patch(body, auth())),
   setTicketTiers: (id: number, tiers: TicketTierDraft[]) =>
     call(api.organizer.events({ id })["ticket-tiers"].put({ tiers }, auth())),

@@ -368,6 +368,10 @@
     border-radius: var(--radius-card);
     background: var(--brand-deep);
     color: #ffffff;
+    --flare: #ffffff;
+    --flare-ink: var(--brand-ink);
+    --veil: rgb(255 255 255 / 0.18);
+    --hair: rgb(255 255 255 / 0.3);
     --ink-dim: rgb(255 255 255 / 0.88);
     --color-hint: rgb(255 255 255 / 0.88);
   }
@@ -822,6 +826,36 @@
     justify-content: center;
     padding: 9px 8px;
     font-size: 10px;
+  }
+
+  .switch {
+    position: relative;
+    width: 44px;
+    height: 26px;
+    flex: none;
+    border-radius: 999px;
+    background: var(--veil);
+    transition: background 0.2s;
+  }
+
+  .switch span {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgb(1 32 36 / 0.3);
+    transition: left 0.22s var(--ease-out-back);
+  }
+
+  .switch[aria-pressed="true"] {
+    background: var(--brand-deep);
+  }
+
+  .switch[aria-pressed="true"] span {
+    left: 21px;
   }
 
   .av {

@@ -3,9 +3,9 @@ import { Link } from "react-router";
 
 import { CITIES, type CitySlug } from "@sku/cities";
 
-import { sku, type SeriesDraft } from "../api";
-import { useI18n } from "../i18n";
-import { bib, errorText, timeOf, weekdayShort } from "../lib/format";
+import { sku, type SeriesDraft, type SeriesSummary } from "../api";
+import { useI18n, type MessageKey } from "../i18n";
+import { dayMonth, errorText, percent, shortDate, timeOf, weekdayShort } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { useSession } from "../session";
 import { Sheet, useToast } from "../ui/overlays";
@@ -40,10 +40,8 @@ export const SeriesList = () => {
 
   return (
     <>
-      <p className="mb-4 text-[13px] leading-snug text-hint">{t("series.subtitle")}</p>
-
       {myCities.length > 0 ? (
-        <Button block className="mb-4" onClick={() => setCreating(true)}>
+        <Button variant="ghost" block className="mb-4" onClick={() => setCreating(true)}>
           + {t("series.create")}
         </Button>
       ) : null}
@@ -60,44 +58,7 @@ export const SeriesList = () => {
 
       <div className="flex flex-col gap-3">
         {(series.data ?? []).map((row, index) => (
-          <Link
-            key={row.id}
-            to={`/series/${row.id}`}
-            style={{ "--i": index } as React.CSSProperties}
-            className={`card rise block px-4 py-4 active:scale-[0.985] ${row.active ? "" : "opacity-65"}`}
-          >
-            <div className="mb-1 flex items-start justify-between gap-2">
-              <h3 className="display min-w-0 text-[16px] leading-tight break-words">{row.title}</h3>
-              <span className="num shrink-0 text-[10px] tracking-[0.2em] text-hint opacity-60">{bib(row.id)}</span>
-            </div>
-            <p className="mb-2.5 truncate text-[13px] text-hint">{row.location}</p>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* The next date is what a person came to this list to check, so it
-                  is the one thing promoted to a filled chip. */}
-              {row.nextStartsAt ? (
-                <Chip tone="flare">
-                  {new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", { day: "2-digit", month: "2-digit" })
-                    .format(new Date(row.nextStartsAt))}
-                  {" · "}
-                  {weekdayShort(row.nextStartsAt, locale)} {timeOf(row.nextStartsAt, locale)}
-                </Chip>
-              ) : (
-                <Chip tone="soft">{t("series.nextNone")}</Chip>
-              )}
-              {row.active ? null : <Chip>{t("series.paused")}</Chip>}
-              <span className="num text-[10px] tracking-[0.12em] text-hint uppercase">
-                {row.cadenceDays === null ? t("series.byHand") : t("series.everyNDays", { n: row.cadenceDays })}
-              </span>
-              {myCities.length > 1 ? (
-                <span
-                  aria-hidden
-                  className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: CITIES[row.city].brandLift, boxShadow: `0 0 0 2px ${CITIES[row.city].brand}` }}
-                />
-              ) : null}
-            </div>
-          </Link>
+          <SeriesCard key={row.id} row={row} index={index} showCity={myCities.length > 1} />
         ))}
       </div>
 
@@ -114,5 +75,58 @@ export const SeriesList = () => {
         </Sheet>
       ) : null}
     </>
+  );
+};
+
+const STATUS: Record<SeriesSummary["status"], MessageKey | null> = {
+  draft_ready: "series.statusDraft",
+  no_date: "series.statusNoDate",
+  paused: "series.paused",
+  scheduled: null,
+};
+
+const SeriesCard = ({ row, index, showCity }: { row: SeriesSummary; index: number; showCity: boolean }) => {
+  const { t, locale } = useI18n();
+  const status = STATUS[row.status];
+  const rhythm = [
+    row.cadenceDays === null ? t("series.byHand") : t("series.everyNDays", { n: row.cadenceDays }),
+    row.nextUp ? `${weekdayShort(row.nextUp, locale)} ${timeOf(row.nextUp, locale)}` : null,
+    row.location,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const record = [
+    t("series.heldCount", { n: row.held }),
+    row.avgTurnout === null ? null : t("series.turnoutShort", { value: percent(row.avgTurnout) }),
+    row.status === "paused" && row.pausedSince
+      ? t("series.pausedSince", { date: dayMonth(row.pausedSince, locale) })
+      : row.leaders.length
+        ? t("series.ledBy", { names: row.leaders.join(", ") })
+        : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <Link to={`/series/${row.id}`} style={{ "--i": index } as React.CSSProperties} className="card rise block p-4 active:scale-[0.985]">
+      <div className="mb-1 flex items-start justify-between gap-2.5">
+        <h3 className="display min-w-0 text-[16px] leading-[1.15] break-words">{row.title}</h3>
+        <span className="flex shrink-0 items-center gap-1.5">
+          {showCity ? (
+            <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={{ background: CITIES[row.city].brand }} />
+          ) : null}
+          {status ? <Chip tone={row.status === "draft_ready" ? "soft" : "plain"}>{t(status)}</Chip> : null}
+        </span>
+      </div>
+      <p className="num mb-3 truncate text-[11px] tracking-[0.06em] text-hint">{rhythm}</p>
+      <div className="flex items-center gap-2.5 rounded-xl px-3 py-2.5" style={{ background: "var(--flare-soft)" }}>
+        <span className="eyebrow text-[9px]">{t("series.next")}</span>
+        <span className="flex-1 text-[13px] font-semibold">
+          {row.status === "paused" ? "—" : row.nextUp ? `${shortDate(row.nextUp, locale)}, ${timeOf(row.nextUp, locale)}` : t("series.nextNone")}
+        </span>
+        <span className="chev">›</span>
+      </div>
+      <div className="num mt-2.5 text-[11px] text-hint">{record}</div>
+    </Link>
   );
 };

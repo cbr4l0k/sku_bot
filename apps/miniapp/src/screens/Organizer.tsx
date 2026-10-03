@@ -1,16 +1,12 @@
-import { useState } from "react";
 import { Link } from "react-router";
 
 import { sku } from "../api";
 import { useI18n } from "../i18n";
 import { bib, errorText, isPast } from "../lib/format";
 import { useResource } from "../lib/useResource";
-import { useSession } from "../session";
+import { useBackButton } from "../lib/useBackButton";
 import { DateBlock, EventStatusChip } from "../ui/event";
 import { Chip, EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
-import { SeriesList } from "./Series";
-
-type Tab = "events" | "series";
 
 const EventsTab = () => {
   const { t } = useI18n();
@@ -63,40 +59,14 @@ const EventsTab = () => {
   );
 };
 
-export const OrganizerScreen = () => {
+/** Every event you run, past ones included — HQ itself only shows what is ahead. */
+export const AllEventsScreen = () => {
   const { t } = useI18n();
-  const { me } = useSession();
-  const [tab, setTab] = useState<Tab>("events");
-  // Anyone who reaches this screen may look. The list itself is the authority —
-  // it returns a branch admin's own branches and, for everyone else, only the
-  // series they are actually named on — so gating the tab on a role as well
-  // would hide a template from the very organizer who runs it every week.
-  // Raising a new series stays a branch-admin power, enforced inside the list.
-  const canSeeSeries = Boolean(me);
-
+  useBackButton("/hq");
   return (
     <Screen>
-      <PageTitle title={t("organizer.title")} />
-
-      {canSeeSeries ? (
-        <div className="mb-5 flex gap-1.5 rounded-full border border-hair p-1">
-          {(["events", "series"] as const).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setTab(item)}
-              data-active={tab === item}
-              className="tab min-w-0 flex-1 flex-row justify-center py-2"
-            >
-              <span className="max-w-full truncate">
-                {t(item === "events" ? "admin.tabEvents" : "series.title")}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {tab === "events" || !canSeeSeries ? <EventsTab /> : <SeriesList />}
+      <PageTitle title={t("hq.allEvents")} />
+      <EventsTab />
     </Screen>
   );
 };

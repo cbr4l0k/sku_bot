@@ -1,32 +1,37 @@
 import { useState } from "react";
+import { Link } from "react-router";
 
+import type { SeriesDetail } from "../api";
 import { useI18n } from "../i18n";
-import { fromLocalInput, toLocalInput, weekdayShort } from "../lib/format";
+import { fromLocalInput, shortDate, timeOf, toLocalInput } from "../lib/format";
+import { DateBlock } from "./event";
 import { Sheet, SheetFooter } from "./overlays";
 import { Button, Field, TextInput } from "./primitives";
 
+type Occurrence = SeriesDetail["upcomingOccurrences"][number];
+
 /**
- * When the next run is, and the one control that moves it.
- *
- * The date is a value a person sets, never a rule the app derives — a series
- * here alternates Sunday morning and Wednesday evening, so anything that
- * computed the date from a cadence would spend its life being corrected. The
- * cadence is therefore demoted to a caption: it proposes the following date
- * after a run is raised, and nothing more. A series with no cadence at all is
- * not a broken series, so it is shown as a plain fact rather than a warning.
+ * What comes next in a series, and the one action it wants. A run already
+ * raised from the template is opened; otherwise the date a person approved is
+ * shown with the controls that move it. The date is never derived — the
+ * cadence only proposes the following one after a run is raised.
  */
-export const NextRunPanel = ({
+export const NextUpCard = ({
+  occurrence,
   nextStartsAt,
-  cadenceDays,
   leadDays,
+  cadenceDays,
+  manageHref,
   busy = false,
   onMove,
   onSpawn,
   onSkip,
 }: {
+  occurrence: Occurrence | null;
   nextStartsAt: string | null;
-  cadenceDays: number | null;
   leadDays: number;
+  cadenceDays: number | null;
+  manageHref: (id: number) => string;
   busy?: boolean;
   onMove: (iso: string | null) => void;
   onSpawn: () => void;
@@ -35,85 +40,85 @@ export const NextRunPanel = ({
   const { t, locale } = useI18n();
   const [moving, setMoving] = useState(false);
   const [draft, setDraft] = useState("");
-
   const open = () => {
     setDraft(nextStartsAt ? toLocalInput(nextStartsAt) : "");
     setMoving(true);
   };
+  const isDraft = occurrence?.status === "draft";
 
-  const date = nextStartsAt ? new Date(nextStartsAt) : null;
-  const cadence = cadenceDays === null ? t("series.byHand") : t("series.everyNDays", { n: cadenceDays });
+  // The template's own controls; under a raised run they act on the date after it.
+  const templateControls = nextStartsAt ? (
+    <>
+      <Button size="sm" variant="ghost" onClick={open} disabled={busy}>
+        {t("series.move")}
+      </Button>
+      {cadenceDays === null ? null : (
+        <Button size="sm" variant="ghost" onClick={onSkip} disabled={busy}>
+          {t("series.skip")}
+        </Button>
+      )}
+    </>
+  ) : (
+    <Button size="sm" variant="ghost" onClick={open} disabled={busy}>
+      {t("series.setDate")}
+    </Button>
+  );
 
   return (
     <>
-      {/* The poster move, at panel size: untouched brand teal carrying the date
-          in white display type. A card would have made the next run look like
-          one more row; it is the whole point of the screen. */}
-      <section className="card overflow-hidden">
-        <div className="px-4 py-4" style={{ background: "var(--brand)" }}>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="eyebrow" style={{ color: "var(--ink-deep)" }}>
-              {t("series.next")}
-            </span>
-            <span className="num text-[10px] tracking-[0.14em] uppercase" style={{ color: "var(--ink-deep)" }}>
-              {cadence}
-            </span>
-          </div>
-
-          {date ? (
-            <>
-              <div className="display text-[30px] leading-[0.95] text-white">
-                {new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", {
-                  day: "2-digit",
-                  month: "long",
-                }).format(date)}
+      <section className="card rise p-4">
+        <div className="eyebrow mb-3">{t("series.next")}</div>
+        {occurrence ? (
+          <>
+            <div className="flex items-center gap-3.5">
+              <DateBlock iso={occurrence.startsAt} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[15px] font-semibold break-words">{occurrence.title}</div>
+                <p className="mt-1 text-[12px] text-hint">{isDraft ? t("series.draftReady") : t("series.published")}</p>
               </div>
-              <div className="num mt-1.5 text-[12px]" style={{ color: "var(--ink-deep)" }}>
-                {weekdayShort(nextStartsAt as string, locale)} ·{" "}
-                {new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                }).format(date)}
-              </div>
-            </>
-          ) : (
-            <div className="display text-[24px] leading-tight text-white">{t("series.nextNone")}</div>
-          )}
-
-          <p className="mt-2.5 text-[11px] leading-snug" style={{ color: "var(--ink-deep)" }}>
-            {date ? t("series.nextHint", { n: leadDays }) : t("series.nextNoneHint", { n: leadDays })}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2 px-4 py-3.5">
-          <Button size="sm" variant="primary" onClick={open} disabled={busy}>
-            {t("series.move")}
-          </Button>
-          {date ? (
-            <>
-              <Button size="sm" variant="ghost" loading={busy} onClick={onSpawn}>
+            </div>
+            <Link to={manageHref(occurrence.id)} className="btn btn-primary btn-sm mt-3.5 w-full">
+              {isDraft ? t("series.openDraft") : t("hq.open")}
+            </Link>
+            <div className="hairline my-3.5" />
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 text-[12px] text-hint">
+                {nextStartsAt
+                  ? t("series.afterThat", { date: `${shortDate(nextStartsAt, locale)}, ${timeOf(nextStartsAt, locale)}`, n: leadDays })
+                  : t("series.nextNone")}
+              </p>
+              {templateControls}
+            </div>
+          </>
+        ) : nextStartsAt ? (
+          <>
+            <div className="flex items-center gap-3.5">
+              <DateBlock iso={nextStartsAt} />
+              <p className="min-w-0 flex-1 text-[12px] text-hint">{t("series.nextHint", { n: leadDays })}</p>
+            </div>
+            <div className="mt-3.5 grid grid-cols-[2fr_1fr_1fr] gap-2">
+              <Button size="sm" loading={busy} onClick={onSpawn}>
                 {t("series.createNow")}
               </Button>
-              {cadenceDays === null ? null : (
-                <Button size="sm" variant="ghost" onClick={onSkip} disabled={busy}>
-                  {t("series.skip")}
-                </Button>
-              )}
-            </>
-          ) : null}
-        </div>
+              {templateControls}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="display text-[20px]">{t("series.nextNone")}</div>
+            <p className="mt-1 mb-3.5 text-[12px] text-hint">{t("series.nextNoneHint", { n: leadDays })}</p>
+            <Button size="sm" block onClick={open} disabled={busy}>
+              {t("series.setDate")}
+            </Button>
+          </>
+        )}
       </section>
 
       {moving ? (
         <Sheet title={t("series.moveTitle")} onClose={() => setMoving(false)}>
           <div className="flex flex-col gap-4">
             <Field label={t("series.next")} hint={t("series.moveHint")}>
-              <TextInput
-                type="datetime-local"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-              />
+              <TextInput type="datetime-local" value={draft} onChange={(event) => setDraft(event.target.value)} />
             </Field>
             {nextStartsAt ? (
               <button

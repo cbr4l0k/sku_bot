@@ -15,7 +15,8 @@ import { EventDetailScreen } from "./screens/EventDetail";
 import { EventsScreen } from "./screens/Events";
 import { HistoryScreen } from "./screens/History";
 import { MineScreen } from "./screens/Mine";
-import { OrganizerScreen } from "./screens/Organizer";
+import { HqScreen } from "./screens/Hq";
+import { AllEventsScreen } from "./screens/Organizer";
 import { OrganizerEventScreen } from "./screens/OrganizerEvent";
 import { ProfileScreen } from "./screens/Profile";
 import { SeriesDetailScreen } from "./screens/SeriesDetail";
@@ -112,7 +113,9 @@ const Shell = () => (
       <Route path="/history" element={<HistoryScreen />} />
       <Route path="/checkin" element={<CheckinScreen />} />
       <Route path="/profile" element={<ProfileScreen />} />
-      <Route path="/organizer" element={<OrganizerScreen />} />
+      <Route path="/hq" element={<HqScreen />} />
+      <Route path="/hq/all" element={<AllEventsScreen />} />
+      <Route path="/organizer" element={<Navigate to="/hq" replace />} />
       <Route path="/organizer/events/:id" element={<OrganizerEventScreen />} />
       <Route path="/series/:id" element={<SeriesDetailScreen />} />
       <Route path="/admin" element={<AdminScreen />} />
