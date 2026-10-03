@@ -95,6 +95,8 @@ export type EventStats = Ok<typeof adminEvent.stats.get>;
 export type EventPurchases = Ok<typeof adminEvent.orders.get>;
 export type AdminPurchaseOrder = EventPurchases["orders"][number];
 export type GlobalStats = Ok<typeof api.admin.stats.get>;
+export type Attention = Ok<typeof api.admin.attention.get>;
+export type PersonCard = Ok<ReturnType<typeof api.admin.users>["get"]>;
 export type AdminUser = Ok<typeof api.admin.users.get>[number];
 export type EventLink = Ok<typeof adminEvent.link.get>;
 export type Locale = Me["locale"];
@@ -216,6 +218,10 @@ export const sku = {
   demote: (id: number) => call(api.admin.users({ id }).demote.post(undefined, auth())),
   setCityRole: (id: number, city: CitySlug, role: CityRole | null) =>
     call(api.admin.users({ id }).roles.put({ city, role }, auth())),
+  attention: () => call(api.admin.attention.get({ ...auth(), query: {} })),
+  person: (id: number) => call(api.admin.users({ id }).get(auth())),
+  setCityRoles: (id: number, roles: Array<{ city: CitySlug; role: CityRole | null }>) =>
+    call(api.admin.users({ id })["city-roles"].put({ roles }, auth())),
   globalStats: (city?: CitySlug) => call(api.admin.stats.get({ ...auth(), query: city ? { city } : {} })),
 
   series: () => call(api.organizer.series.get(auth())),

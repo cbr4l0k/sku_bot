@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { sku, type Hq } from "../api";
@@ -7,15 +8,20 @@ import { useAction, useResource } from "../lib/useResource";
 import { useSession } from "../session";
 import { haptic } from "../telegram";
 import { PhaseChip } from "../ui/event";
+import { NewEventSheet } from "../ui/newEvent";
 import { useConfirm, useToast } from "../ui/overlays";
 import { Button, EmptyState, ErrorState, Loader, PageTitle, Screen } from "../ui/primitives";
+import { ChatsTab, MonthNumbers, NeedsAttention, NumbersTab, PeopleTab } from "./HqAdmin";
 import { SeriesList } from "./Series";
 
-type Tab = "events" | "series";
+type Tab = "events" | "series" | "people" | "chats" | "numbers";
 
-const TABS: ReadonlyArray<{ id: Tab; key: MessageKey }> = [
+const TABS: ReadonlyArray<{ id: Tab; key: MessageKey; admin?: boolean }> = [
   { id: "events", key: "hq.tabEvents" },
   { id: "series", key: "series.title" },
+  { id: "people", key: "people.title", admin: true },
+  { id: "chats", key: "chats.title", admin: true },
+  { id: "numbers", key: "numbers.title", admin: true },
 ];
 
 /**
@@ -24,31 +30,64 @@ const TABS: ReadonlyArray<{ id: Tab; key: MessageKey }> = [
  */
 export const HqScreen = () => {
   const { t } = useI18n();
+  const { me } = useSession();
   const [params, setParams] = useSearchParams();
-  const tab: Tab = params.get("tab") === "series" ? "series" : "events";
+  const [creating, setCreating] = useState(false);
+  // What is inside is the role's call: a branch admin gets the whole club desk.
+  const isAdmin = Boolean(me?.isAdmin || me?.adminCities.length);
+  const tabs = TABS.filter((item) => isAdmin || !item.admin);
+  const tab: Tab = tabs.find((item) => item.id === params.get("tab"))?.id ?? "events";
+  const select = (next: Tab) => {
+    haptic.select();
+    setParams(next === "events" ? {} : { tab: next }, { replace: true });
+  };
 
   return (
     <Screen>
       <PageTitle title={t("hq.title")} />
-      <div className="seg mb-[18px]" role="tablist">
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === item.id}
-            className="tab"
-            data-active={tab === item.id}
-            onClick={() => {
-              haptic.select();
-              setParams(item.id === "events" ? {} : { tab: item.id }, { replace: true });
-            }}
-          >
-            {t(item.key)}
-          </button>
-        ))}
-      </div>
-      {tab === "events" ? <HqEvents /> : <SeriesList />}
+      {isAdmin ? (
+        <div className="-mx-4 mb-[18px] flex gap-1.5 overflow-x-auto px-4" role="tablist">
+          {tabs.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={`chip shrink-0 px-3 py-[7px] ${tab === item.id ? "chip-flare" : ""}`}
+              onClick={() => select(item.id)}
+            >
+              {t(item.key === "hq.tabEvents" ? "hq.tabEventsAdmin" : item.key)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="seg mb-[18px]" role="tablist">
+          {tabs.map((item) => (
+            <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className="tab" data-active={tab === item.id} onClick={() => select(item.id)}>
+              {t(item.key)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === "events" ? (
+        <>
+          {isAdmin && me?.adminCities.length ? (
+            <Button block onClick={() => setCreating(true)}>
+              + {t("admin.newEvent")}
+            </Button>
+          ) : null}
+          {isAdmin ? <NeedsAttention onAssignChats={() => select("chats")} /> : null}
+          <HqEvents admin={isAdmin} />
+          {isAdmin ? <MonthNumbers /> : null}
+        </>
+      ) : null}
+      {tab === "series" ? <SeriesList /> : null}
+      {tab === "people" ? <PeopleTab /> : null}
+      {tab === "chats" ? <ChatsTab /> : null}
+      {tab === "numbers" ? <NumbersTab /> : null}
+
+      {creating && me ? <NewEventSheet cities={me.adminCities} onClose={() => setCreating(false)} /> : null}
     </Screen>
   );
 };
@@ -56,11 +95,10 @@ export const HqScreen = () => {
 /** The event screen an organizer runs a run from. */
 export const manageHref = (id: number) => `/hq/events/${id}`;
 
-const HqEvents = () => {
+const HqEvents = ({ admin }: { admin: boolean }) => {
   const { t } = useI18n();
   const { me } = useSession();
   const hq = useResource(sku.hq, { pollMs: 30_000 });
-  const isAdmin = Boolean(me?.isAdmin || me?.adminCities.length);
   // Publishing is the branch's call, so it is checked per draft, not per person.
   const canPublish = (city: string) => Boolean(me?.isAdmin || me?.adminCities.some((own) => own === city));
 
@@ -72,12 +110,14 @@ const HqEvents = () => {
     );
   }
 
-  const { live, todo, next } = hq.data;
+  const { live, next } = hq.data;
+  // An admin already sees series drafts under "Needs attention"; listing them twice is noise.
+  const todo = admin ? hq.data.todo.filter((item) => item.kind === "end_event") : hq.data.todo;
   const reload = () => hq.reload(true);
 
   return (
     <>
-      {live.length + todo.length + next.length === 0 ? <EmptyState text={t("hq.empty")} /> : null}
+      {live.length + todo.length + next.length === 0 && !admin ? <EmptyState text={t("hq.empty")} /> : null}
 
       <div className="flex flex-col gap-2.5">
         {live.map((event) => (
@@ -112,12 +152,6 @@ const HqEvents = () => {
           <span className="flex-1 text-[14px]">{t("hq.allEvents")}</span>
           <span className="chev">›</span>
         </Link>
-        {isAdmin ? (
-          <Link to="/admin" className="row">
-            <span className="flex-1 text-[14px]">{t("hq.admin")}</span>
-            <span className="chev">›</span>
-          </Link>
-        ) : null}
       </div>
     </>
   );

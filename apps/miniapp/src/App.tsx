@@ -7,7 +7,6 @@ import { onBlocked, sku, type Locale } from "./api";
 import { CityProvider } from "./city";
 import { I18nProvider, useI18n } from "./i18n";
 import { useResource } from "./lib/useResource";
-import { AdminScreen } from "./screens/Admin";
 import { CheckinScreen } from "./screens/Checkin";
 import { CheckoutScreen } from "./screens/Checkout";
 import { EventDetailScreen } from "./screens/EventDetail";
@@ -118,7 +117,7 @@ const Shell = () => (
       <Route path="/hq/events/:id" element={<EventManageScreen />} />
       <Route path="/organizer/events/:id" element={<ManageRedirect />} />
       <Route path="/series/:id" element={<SeriesDetailScreen />} />
-      <Route path="/admin" element={<AdminScreen />} />
+      <Route path="/admin" element={<Navigate to="/hq" replace />} />
       <Route path="/admin/events/:id" element={<ManageRedirect />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
