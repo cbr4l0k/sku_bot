@@ -137,6 +137,36 @@ docker compose exec -T app bun run scripts/add-event-person.ts EVENT_ID @usernam
 The bot does not message the person, so tell them yourself. If the event has a
 chat, their invite follows within a minute from the usual sweeper.
 
+## `late-checkin.ts`
+
+Checks someone in to an event that has already been ended: they ran, but never
+made it onto the roster. To keep the headcount unchanged, one random no-show — a
+non-staff person still `registered` who never checked in — is canceled in their
+place. Someone already `registered` is just checked in, with nobody swapped out.
+
+Preview (lists the no-shows one would be picked from, and the person's chat
+membership as Telegram reports it now):
+
+```sh
+docker compose exec -T app bun run scripts/late-checkin.ts EVENT_ID @username
+```
+
+Apply:
+
+```sh
+docker compose exec -T app bun run scripts/late-checkin.ts EVENT_ID @username --apply
+```
+
+No-shows holding a paid ticket are never picked, and a ticketed event needs
+`--comp`, as with `add-event-person.ts`. The check-in is dated to the event's
+start time.
+
+After the check-in, the person is DMed a single-use invite to every chat tied to
+the event (its home chat and any chats gating it) that Telegram says they are not
+in. These invites are recorded as already kept, so the guest sweep never removes
+them. A no-show who was on trial in the home chat is removed by the normal sweep.
+This step needs `BOT_TOKEN`, which the `app` service already has.
+
 ## `remove-event-person.ts`
 
 Removes one person's registration and waitlist offers from one event. It does not

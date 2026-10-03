@@ -15,6 +15,7 @@
     "event:people": "bun run scripts/event-people.ts",
     "event:add-person": "bun run scripts/add-event-person.ts",
     "event:remove-person": "bun run scripts/remove-event-person.ts",
+    "event:late-checkin": "bun run scripts/late-checkin.ts",
     "event:move-queue-user": "bun run scripts/move-queue-user.ts",
     "event:clear-queue": "bun run scripts/clear-queue.ts",
     "event:reset": "bun run scripts/reset-event.ts",
