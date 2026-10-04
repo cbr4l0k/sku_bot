@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, migrate, type Db } from "@sku/db";
 import { syncConfiguredAdmins } from "../../src/core/admins";
 import { loadEnv } from "../../src/env";
+import { run } from "../support/effect";
 
 const base = { BOT_TOKEN: "12345:token", DOMAIN: "club.example.com", WEBHOOK_SECRET: "webhook", CHECKIN_SECRET: "checkin", NODE_ENV: "test" };
 const parse = (ADMIN_IDS: string) => loadEnv({ ...base, ADMIN_IDS }).ADMIN_IDS;
@@ -22,7 +23,7 @@ describe("configured admin reconciliation", () => {
   beforeEach(() => { db = createDb(":memory:"); migrate(db); for (const id of [1001, 2002, 3003]) db.$client.query("INSERT INTO users (id, first_name) VALUES (?, ?)").run(id, `U${id}`); });
 
   test("lifts every configured id that already has a row and leaves the rest alone", () => {
-    syncConfiguredAdmins(db, [1001, 2002, 9009]);
+    run(db, syncConfiguredAdmins([1001, 2002, 9009]));
     expect(isAdmin(1001)).toBe(true);
     expect(isAdmin(2002)).toBe(true);
     expect(isAdmin(3003)).toBe(false);
@@ -30,8 +31,8 @@ describe("configured admin reconciliation", () => {
 
   test("is idempotent and never demotes a db-promoted admin", () => {
     db.$client.query("UPDATE users SET is_admin = 1 WHERE id = 3003").run();
-    syncConfiguredAdmins(db, [1001]);
-    syncConfiguredAdmins(db, [1001]);
+    run(db, syncConfiguredAdmins([1001]));
+    run(db, syncConfiguredAdmins([1001]));
     expect(isAdmin(1001)).toBe(true);
     expect(isAdmin(3003)).toBe(true);
   });

@@ -1,7 +1,10 @@
+import { Effect } from "effect";
 import { cities, type CityRole, type CitySlug } from "@sku/cities";
 import { and, eq, userCityRoles, users, type Db } from "@sku/db";
 
+import { Database } from "../services";
 import { canGrantRole, type Actor } from "./cities";
+import { RolesRejected } from "./errors";
 
 /**
  * The person card an admin opens from People: who they are, what they have done
@@ -74,17 +77,17 @@ export const personCard = (db: Db, actor: Actor, userId: number, configuredAdmin
  *
  * Returns the branches whose role actually changed, for re-syncing their rosters.
  */
-export const setCityRoles = (
-  db: Db,
+export const setCityRoles = Effect.fn("people.setCityRoles")(function* (
   actor: Actor,
   userId: number,
   changes: readonly { city: CitySlug; role: CityRole | null }[],
-): { changed: CitySlug[] } | { error: "forbidden" | "duplicate_city" } => {
-  if (new Set(changes.map((change) => change.city)).size !== changes.length) return { error: "duplicate_city" };
+) {
+  const db = yield* Database;
+  if (new Set(changes.map((change) => change.city)).size !== changes.length) return yield* new RolesRejected({ code: "duplicate_city" });
   const held = rolesOf(db, userId);
   const effective = changes.filter((change) => (held.get(change.city) ?? null) !== change.role);
   if (effective.some((change) => !canGrantRole(actor, change.city, change.role, held.get(change.city) ?? null))) {
-    return { error: "forbidden" };
+    return yield* new RolesRejected({ code: "forbidden" });
   }
   db.$client.transaction(() => {
     for (const { city, role } of effective) {
@@ -97,4 +100,4 @@ export const setCityRoles = (
     }
   })();
   return { changed: effective.map((change) => change.city) };
-};
+});

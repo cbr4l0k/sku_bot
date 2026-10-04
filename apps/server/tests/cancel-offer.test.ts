@@ -10,6 +10,7 @@ process.env.NODE_ENV = "test";
 
 import { beforeEach, expect, spyOn, test } from "bun:test";
 import { getBotTokenSecretKey, signInitData } from "@gramio/init-data";
+import { run } from "./support/effect";
 
 const { db } = await import("../src/db");
 const { app } = await import("../src/api");
@@ -73,7 +74,7 @@ test("a runner who lets an offer lapse is not re-notified when a spot frees up",
   await post("/api/events/1/cancel", 1001, "Holder");
   await Bun.sleep(10);
   const lapsed = db.$client.query<{ expires_at: number }, []>("SELECT expires_at FROM waitlist_offers").get();
-  sweepOffers(db, new Date((lapsed!.expires_at + 1) * 1000));
+  run(db, sweepOffers(new Date((lapsed!.expires_at + 1) * 1000)));
 
   // A second spot frees up. The waitlister is still waitlisted, so must be re-offered.
   await post("/api/events/1/cancel", 3003, "Second");

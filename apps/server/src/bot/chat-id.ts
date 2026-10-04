@@ -1,10 +1,11 @@
 import type { Locale } from "@sku/db";
 import { eq, users } from "@sku/db";
 
+import { rememberChat } from "../core/chats";
 import { db } from "../db";
 import { loadEnv } from "../env";
+import { runtime } from "../runtime";
 import { i18n } from "./i18n";
-import { discoverChat } from "./membership";
 
 const env = loadEnv();
 
@@ -54,5 +55,5 @@ export const chatMembershipHandler = (context: ChatMemberContext): void => {
   const { chat, new_chat_member: member } = context.payload;
   if (chat.type === "private") return;
   console.info(`[chat] bot is now "${member.status}" in ${chat.title ?? chat.type} — id ${chat.id}`);
-  discoverChat(chat.id, chat.title ?? null);
+  runtime.runSync(rememberChat(chat.id, chat.title ?? null, new Date()));
 };

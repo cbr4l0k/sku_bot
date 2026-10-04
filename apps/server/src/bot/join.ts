@@ -1,8 +1,10 @@
+import { Effect } from "effect";
 import { eq, ticketTiers, users } from "@sku/db";
 
 import { chatsOfEvent, refreshMemberships } from "../core/membership";
 import { joinEvent } from "../core/registration";
 import { db } from "../db";
+import { runtime } from "../runtime";
 import { joinCallback } from "./callbacks";
 import { renderEventCard } from "./event-card";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -19,8 +21,8 @@ type JoinContext = {
 };
 
 /** Signing up straight from the card the deep link produced, without opening the app. */
-export const joinHandler = async (context: JoinContext): Promise<void> => {
-  await context.answer();
+export const joinHandler = (context: JoinContext): Promise<void> => runtime.runPromise(Effect.gen(function* () {
+  yield* Effect.promise(() => context.answer());
 
   const unpacked = context.data ? joinCallback.safeUnpack(context.data) : { success: false as const };
   const telegramUser = context.from;
@@ -35,32 +37,27 @@ export const joinHandler = async (context: JoinContext): Promise<void> => {
   const paid = db.select({ id: ticketTiers.id }).from(ticketTiers)
     .where(eq(ticketTiers.eventId, eventId)).get();
   if (paid) {
-    await context.send(i18n.t(locale, "paymentRequiredNotice"));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "paymentRequiredNotice")));
     const card = renderEventCard(eventId, telegramUser.id, locale);
-    if (card) await context.editText(card.text, { reply_markup: card.keyboard });
+    if (card) yield* Effect.promise(() => context.editText(card.text, { reply_markup: card.keyboard }));
     return;
   }
 
-  await refreshMemberships(db, telegramMembership, telegramUser.id, chatsOfEvent(db, eventId), new Date());
-  const result = joinEvent(db, eventId, telegramUser.id, new Date());
-
-  if ("error" in result) {
-    const notice = {
+  yield* refreshMemberships(telegramMembership, telegramUser.id, chatsOfEvent(db, eventId), new Date());
+  const notice = yield* joinEvent(eventId, telegramUser.id, new Date()).pipe(
+    Effect.map((result) => result.status === "registered" ? "joinedNotice" as const : "queuedNotice" as const),
+    Effect.catchTag("JoinRejected", (rejection) => Effect.succeed(({
       banned: "bannedNotice",
       not_published: "eventUnavailable",
       event_over: "eventUnavailable",
       already_joined: "alreadyJoinedNotice",
       not_eligible: "notEligibleNotice",
       event_full: "noSpotsLeft",
-    } as const;
-    await context.send(i18n.t(locale, notice[result.error]));
-  } else {
-    await context.send(result.status === "registered"
-      ? i18n.t(locale, "joinedNotice")
-      : i18n.t(locale, "queuedNotice"));
-  }
+    } as const)[rejection.code])),
+  );
+  yield* Effect.promise(() => context.send(i18n.t(locale, notice)));
 
   // Repaint the card so its buttons match the new state.
   const card = renderEventCard(eventId, telegramUser.id, locale);
-  if (card) await context.editText(card.text, { reply_markup: card.keyboard });
-};
+  if (card) yield* Effect.promise(() => context.editText(card.text, { reply_markup: card.keyboard }));
+}));

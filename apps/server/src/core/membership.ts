@@ -1,4 +1,6 @@
+import { Effect } from "effect";
 import { and, asc, chatMembers, eq, eventChats, events, inArray, isNull, sql, type Db } from "@sku/db";
+import { Database } from "../services";
 
 /**
  * Membership lives in Telegram, so every answer is a getChatMember call. The
@@ -56,14 +58,15 @@ export const chatsGatingLiveEvents = (db: Db): number[] => db
   .all()
   .map((row) => row.chatId);
 
-export const setEventChats = (db: Db, eventId: number, chatIds: readonly number[]): number[] => {
+export const setEventChats = Effect.fn("membership.setEventChats")(function* (eventId: number, chatIds: readonly number[]) {
+  const db = yield* Database;
   const unique = [...new Set(chatIds)].sort((a, b) => a - b);
   db.$client.transaction(() => {
     db.delete(eventChats).where(eq(eventChats.eventId, eventId)).run();
     for (const chatId of unique) db.insert(eventChats).values({ eventId, chatId }).run();
   })();
   return unique;
-};
+});
 
 /**
  * Telegram silently upgrades a basic group to a supergroup, which changes its id —
@@ -73,7 +76,8 @@ export const setEventChats = (db: Db, eventId: number, chatIds: readonly number[
  * The catalog row moves with it, keeping the chat's branch, so the upgrade needs no
  * admin action at all. It used to need an env var edited by hand and a redeploy.
  */
-export const migrateChat = (db: Db, from: number, to: number): void => {
+export const migrateChat = Effect.fn("membership.migrateChat")(function* (from: number, to: number) {
+  const db = yield* Database;
   db.$client.transaction(() => {
     // The new id may already be catalogued if the bot met the upgraded chat first;
     // keep whichever row is there and let the old one go.
@@ -90,17 +94,17 @@ export const migrateChat = (db: Db, from: number, to: number): void => {
     db.$client.query("UPDATE OR IGNORE chat_guests SET chat_id = ? WHERE chat_id = ?").run(to, from);
     db.$client.query("DELETE FROM chat_guests WHERE chat_id = ?").run(from);
   })();
-};
+});
 
 /** Brings the user's cached answers for `chatIds` up to date, asking Telegram only where stale. */
-export const refreshMemberships = async (
-  db: Db,
+export const refreshMemberships = Effect.fn("membership.refreshMemberships")(function* (
   probe: MembershipProbe,
   userId: number,
   chatIds: readonly number[],
   now: Date,
   followMigrations = true,
-): Promise<void> => {
+): Effect.fn.Return<void, never, Database> {
+  const db = yield* Database;
   const unique = [...new Set(chatIds)];
   if (unique.length === 0) return;
 
@@ -116,11 +120,15 @@ export const refreshMemberships = async (
   });
   if (stale.length === 0) return;
 
-  const answers = await Promise.all(stale.map(async (chatId) => [chatId, await probe(chatId, userId)] as const));
+  const answers = yield* Effect.forEach(
+    stale,
+    (chatId) => Effect.promise(() => probe(chatId, userId)).pipe(Effect.map((answer) => [chatId, answer] as const)),
+    { concurrency: "unbounded" },
+  );
   const moved: number[] = [];
   for (const [chatId, answer] of answers) {
     if (answer !== null && "movedTo" in answer) {
-      migrateChat(db, chatId, answer.movedTo);
+      yield* migrateChat(chatId, answer.movedTo);
       moved.push(answer.movedTo);
       continue;
     }
@@ -137,5 +145,5 @@ export const refreshMemberships = async (
 
   // One extra pass so the upgraded chat is answered in the same request. Never recurse
   // further, in case Telegram ever points a migration back at a chat we just left.
-  if (moved.length > 0 && followMigrations) await refreshMemberships(db, probe, userId, moved, now, false);
-};
+  if (moved.length > 0 && followMigrations) yield* refreshMemberships(probe, userId, moved, now, false);
+});

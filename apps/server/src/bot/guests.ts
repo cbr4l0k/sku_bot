@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { InlineKeyboard, TelegramError } from "gramio";
 import { and, chatMembers, eq, users, type Db } from "@sku/db";
 
@@ -9,6 +10,7 @@ import {
   startTrial,
   type InviteCandidate,
 } from "../core/guests";
+import { Database } from "../services";
 import { eventSummary } from "./event-card";
 import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
@@ -41,12 +43,13 @@ const localeFor = (db: Db, userId: number) =>
  * everything else: someone who leaves the chat must become invitable again, and
  * trusting a "member" answer forever would lock them out of every future run.
  */
-const confirmedOutsider = async (db: Db, chatId: number, userId: number, now: Date): Promise<boolean> => {
+const confirmedOutsider = Effect.fnUntraced(function* (chatId: number, userId: number, now: Date) {
+  const db = yield* Database;
   const cached = db.select({ isMember: chatMembers.isMember, checkedAt: chatMembers.checkedAt }).from(chatMembers)
     .where(and(eq(chatMembers.chatId, chatId), eq(chatMembers.userId, userId))).get();
   if (cached?.isMember && now.getTime() - cached.checkedAt.getTime() < MEMBERSHIP_TTL_MS) return false;
 
-  const answer = await telegramMembership(chatId, userId);
+  const answer = yield* Effect.promise(() => telegramMembership(chatId, userId));
   if (answer === null || !("isMember" in answer)) return false;
 
   const isMember = answer.isMember;
@@ -55,58 +58,58 @@ const confirmedOutsider = async (db: Db, chatId: number, userId: number, now: Da
     .onConflictDoUpdate({ target: [chatMembers.chatId, chatMembers.userId], set: { isMember, checkedAt: now } })
     .run();
   return !isMember;
-};
+});
 
 /**
  * The Bot API has no way to put someone into a group — only invite links do that.
  * So each guest gets their own single-use link and taps it themselves.
  */
-const issueInvite = async (db: Db, candidate: InviteCandidate, now: Date): Promise<void> => {
-  const locale = localeFor(db, candidate.userId);
+const issueInvite = Effect.fnUntraced(function* (candidate: InviteCandidate, now: Date) {
+  const locale = localeFor(yield* Database, candidate.userId);
   const event = eventSummary(candidate.eventId, locale);
   if (!event) return;
 
   const expiry = Math.max(event.startsAt.getTime() + LINK_GRACE_MS, now.getTime() + MIN_LINK_LIFE_MS);
-  const link = await bot.api.createChatInviteLink({
+  const link = yield* Effect.promise(() => bot.api.createChatInviteLink({
     chat_id: candidate.chatId,
     name: `sku evt ${candidate.eventId} u${candidate.userId}`.slice(0, 32),
     expire_date: seconds(new Date(expiry)),
     member_limit: 1,
     suppress: true,
-  });
+  }));
   if (link instanceof TelegramError) {
     warn(`invite link for chat ${candidate.chatId}`, link);
     return;
   }
 
-  const sent = await bot.api.sendMessage({
+  const sent = yield* Effect.promise(() => bot.api.sendMessage({
     chat_id: candidate.userId,
     text: i18n.t(locale, "chatInvite", event.title),
     reply_markup: new InlineKeyboard().url(i18n.t(locale, "chatInviteButton"), link.invite_link),
     suppress: true,
-  });
+  }));
   if (sent instanceof TelegramError) {
     // Nobody can use a link they were never handed, and an unclaimed one should not
     // outlive the attempt. The candidate stays a candidate and is retried next sweep.
     warn(`invite message to ${candidate.userId}`, sent);
-    const revoked = await bot.api.revokeChatInviteLink({ chat_id: candidate.chatId, invite_link: link.invite_link, suppress: true });
+    const revoked = yield* Effect.promise(() => bot.api.revokeChatInviteLink({ chat_id: candidate.chatId, invite_link: link.invite_link, suppress: true }));
     if (revoked instanceof TelegramError) warn("invite link revocation", revoked);
     return;
   }
 
-  startTrial(db, candidate, link.invite_link, now);
-};
+  yield* startTrial(candidate, link.invite_link, now);
+});
 
 /** Kicks without banning: a ban is what removes them, the immediate unban lets them return later. */
-const removeFromChat = async (chatId: number, userId: number): Promise<void> => {
-  const banned = await bot.api.banChatMember({ chat_id: chatId, user_id: userId, suppress: true });
+const removeFromChat = Effect.fnUntraced(function* (chatId: number, userId: number) {
+  const banned = yield* Effect.promise(() => bot.api.banChatMember({ chat_id: chatId, user_id: userId, suppress: true }));
   if (banned instanceof TelegramError) {
     warn(`removal of ${userId} from chat ${chatId}`, banned);
     return;
   }
-  const unbanned = await bot.api.unbanChatMember({ chat_id: chatId, user_id: userId, only_if_banned: true, suppress: true });
+  const unbanned = yield* Effect.promise(() => bot.api.unbanChatMember({ chat_id: chatId, user_id: userId, only_if_banned: true, suppress: true }));
   if (unbanned instanceof TelegramError) warn(`unban of ${userId} in chat ${chatId}`, unbanned);
-};
+});
 
 /**
  * The verdicts are recorded before the kicks are carried out, so a crash halfway
@@ -114,21 +117,21 @@ const removeFromChat = async (chatId: number, userId: number): Promise<void> => 
  * twice on the next pass. A permission the bot is missing shows up the same way:
  * logged per call, with the guest keeping access rather than the sweep looping.
  */
-const settleEvent = async (db: Db, eventId: number, now: Date): Promise<void> => {
-  for (const verdict of settleTrials(db, eventId, now)) {
+const settleEvent = Effect.fnUntraced(function* (eventId: number, now: Date) {
+  for (const verdict of yield* settleTrials(eventId, now)) {
     if (verdict.carriedTo !== null || verdict.keep) continue;
 
-    const revoked = await bot.api.revokeChatInviteLink({ chat_id: verdict.chatId, invite_link: verdict.inviteLink, suppress: true });
+    const revoked = yield* Effect.promise(() => bot.api.revokeChatInviteLink({ chat_id: verdict.chatId, invite_link: verdict.inviteLink, suppress: true }));
     if (revoked instanceof TelegramError) warn("invite link revocation", revoked);
 
     // Only ever remove someone Telegram still places in the chat, and only ever a
     // guest: a member who predates the trial has no row here and is never seen.
-    const answer = await telegramMembership(verdict.chatId, verdict.userId);
+    const answer = yield* Effect.promise(() => telegramMembership(verdict.chatId, verdict.userId));
     if (answer !== null && "isMember" in answer && answer.isMember) {
-      await removeFromChat(verdict.chatId, verdict.userId);
+      yield* removeFromChat(verdict.chatId, verdict.userId);
     }
   }
-};
+});
 
 /**
  * One reconciliation pass: settle the trials of every event that is over, then
@@ -137,12 +140,13 @@ const settleEvent = async (db: Db, eventId: number, now: Date): Promise<void> =>
  * a run that was down, a spot handed out by the waitlist, and a home chat set on an
  * event that already has people signed up all converge on the same result.
  */
-export const syncChatGuests = async (db: Db, now: Date = new Date()): Promise<void> => {
-  for (const eventId of eventsAwaitingSettlement(db, now)) await settleEvent(db, eventId, now);
+export const syncChatGuests = Effect.fn("guests.syncChatGuests")(function* (now: Date = new Date()) {
+  const db = yield* Database;
+  for (const eventId of eventsAwaitingSettlement(db, now)) yield* settleEvent(eventId, now);
 
   for (const candidate of inviteCandidates(db)) {
     // Someone who has blocked the bot fails at the DM every time and stays a candidate.
     // That is the intended cost of not giving up on a merely transient failure.
-    if (await confirmedOutsider(db, candidate.chatId, candidate.userId, now)) await issueInvite(db, candidate, now);
+    if (yield* confirmedOutsider(candidate.chatId, candidate.userId, now)) yield* issueInvite(candidate, now);
   }
-};
+});

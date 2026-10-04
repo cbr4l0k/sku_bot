@@ -4,6 +4,7 @@ import { joinEvent } from "../../src/core/registration";
 import { staffUserIds, syncAllStaff, syncCityStaff, syncEventStaff } from "../../src/core/staff";
 import { eventStats } from "../../src/core/stats";
 import { endEvent } from "../../src/core/waitlist";
+import { run } from "../support/effect";
 
 let db: Db;
 const now = new Date("2030-01-01T12:00:00Z");
@@ -64,28 +65,28 @@ describe("putting staff on the roster", () => {
     event(10);
     globalAdmin(2);
     cityRole(3, "msk", "admin");
-    expect(syncEventStaff(db, 1, now)).toEqual({ added: 2, removed: 0 });
+    expect(run(db, syncEventStaff(1, now))).toEqual({ added: 2, removed: 0 });
     expect(rows(1)).toEqual([
       { user_id: 2, status: "registered", is_staff: 1 },
       { user_id: 3, status: "registered", is_staff: 1 },
     ]);
-    expect(syncEventStaff(db, 1, now)).toEqual({ added: 0, removed: 0 });
+    expect(run(db, syncEventStaff(1, now))).toEqual({ added: 0, removed: 0 });
   });
 
   test("someone who signed up as a participant keeps the spot they took", () => {
     event(10);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     globalAdmin(2);
-    syncEventStaff(db, 1, now);
+    run(db, syncEventStaff(1, now));
     expect(rows(1)).toEqual([{ user_id: 2, status: "registered", is_staff: 0 }]);
   });
 
   test("an admin who took themselves off an event is not put back on it", () => {
     event(10);
     globalAdmin(2);
-    syncEventStaff(db, 1, now);
+    run(db, syncEventStaff(1, now));
     db.$client.query("UPDATE registrations SET status = 'canceled' WHERE event_id = 1 AND user_id = 2").run();
-    expect(syncEventStaff(db, 1, now)).toEqual({ added: 0, removed: 0 });
+    expect(run(db, syncEventStaff(1, now))).toEqual({ added: 0, removed: 0 });
     expect(rows(1)).toEqual([{ user_id: 2, status: "canceled", is_staff: 1 }]);
   });
 
@@ -93,12 +94,12 @@ describe("putting staff on the roster", () => {
     event(10);
     globalAdmin(2);
     nameOnEvent(1, 5);
-    syncEventStaff(db, 1, now);
+    run(db, syncEventStaff(1, now));
     db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ? WHERE event_id = 1 AND user_id = 5").run(unix(now));
 
     db.$client.query("UPDATE users SET is_admin = 0 WHERE id = 2").run();
     db.$client.query("DELETE FROM event_organizers WHERE event_id = 1 AND user_id = 5").run();
-    expect(syncEventStaff(db, 1, now)).toEqual({ added: 0, removed: 1 });
+    expect(run(db, syncEventStaff(1, now))).toEqual({ added: 0, removed: 1 });
     // The night still records who was actually there.
     expect(rows(1)).toEqual([{ user_id: 5, status: "checked_in", is_staff: 1 }]);
   });
@@ -107,9 +108,9 @@ describe("putting staff on the roster", () => {
     event(10);
     event(10, 2);
     globalAdmin(2);
-    endEvent(db, 1, now);
+    run(db, endEvent(1, now));
     db.$client.query("UPDATE events SET status = 'canceled' WHERE id = 2").run();
-    syncAllStaff(db, now);
+    run(db, syncAllStaff(now));
     expect(rows(1)).toEqual([]);
     expect(rows(2)).toEqual([]);
   });
@@ -118,7 +119,7 @@ describe("putting staff on the roster", () => {
     event(10, 1, "msk");
     event(10, 2, "spb");
     cityRole(3, "msk", "admin");
-    syncCityStaff(db, "msk", now);
+    run(db, syncCityStaff("msk", now));
     expect(staffRows(1)).toEqual([3]);
     expect(staffRows(2)).toEqual([]);
   });
@@ -129,17 +130,17 @@ describe("staff hold no spot", () => {
     event(1);
     globalAdmin(2);
     cityRole(3, "msk", "admin");
-    syncEventStaff(db, 1, now);
+    run(db, syncEventStaff(1, now));
     // Three rows on a capacity-of-one event, and the spot is still free.
-    expect(joinEvent(db, 1, 6, now)).toEqual({ status: "registered" });
-    expect(joinEvent(db, 1, 7, now)).toEqual({ status: "waitlisted", position: 1 });
+    expect(run(db, joinEvent(1, 6, now))).toEqual({ status: "registered" });
+    expect(run(db, joinEvent(1, 7, now))).toEqual({ status: "waitlisted", position: 1 });
   });
 
   test("the numbers count the club's guests, and the staff apart from them", () => {
     event(10);
     globalAdmin(2);
-    syncEventStaff(db, 1, now);
-    joinEvent(db, 1, 6, now);
+    run(db, syncEventStaff(1, now));
+    run(db, joinEvent(1, 6, now));
     db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ? WHERE event_id = 1 AND user_id = 2").run(unix(now));
 
     const stats = eventStats(db, 1);

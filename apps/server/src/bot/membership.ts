@@ -1,6 +1,8 @@
-import { chatById, recordChatState, rememberChat } from "../core/chats";
+import { Effect } from "effect";
+import { chatById, recordChatState } from "../core/chats";
 import type { MembershipProbe } from "../core/membership";
 import { db } from "../db";
+import { Database } from "../services";
 import { bot } from "./index";
 
 /** Statuses that mean the user is in the chat right now. */
@@ -63,32 +65,29 @@ const selfId = async (): Promise<number> => bot.info?.id ?? (await bot.api.getMe
  * that has been upgraded, so a dead chat looks fine. Probing the bot's own
  * membership uses the same call the real checks use, and so fails the same way.
  */
-export const refreshChatStates = async (chatIds: readonly number[], now: Date = new Date()): Promise<void> => {
+export const refreshChatStates = Effect.fn("chats.refreshChatStates")(function* (chatIds: readonly number[], now: Date = new Date()) {
+  const db = yield* Database;
   const stale = [...new Set(chatIds)].filter((chatId) => {
     const row = chatById(db, chatId);
     return !row?.checkedAt || now.getTime() - row.checkedAt.getTime() >= TITLE_TTL_MS;
   });
   if (stale.length === 0) return;
 
-  const botId = await selfId().catch(() => null);
-  await Promise.all(stale.map(async (chatId) => {
-    let title: string | null = null;
-    let problem: string | null = null;
-    try {
-      if (botId !== null) await bot.api.getChatMember({ chat_id: chatId, user_id: botId });
-      const chat = await bot.api.getChat({ chat_id: chatId });
-      if ("title" in chat && chat.title) title = chat.title;
-      migrations.delete(chatId);
-    } catch (error) {
-      problem = describe(error);
-      const movedTo = migrateTarget(error);
-      if (movedTo === null) migrations.delete(chatId);
-      else migrations.set(chatId, movedTo);
-    }
-    recordChatState(db, chatId, { title, problem }, now);
-  }));
-};
-
-/** The bot has just met a chat; file it so an admin can say which branch it is. */
-export const discoverChat = (chatId: number, title: string | null, now: Date = new Date()): void =>
-  rememberChat(db, chatId, title, now);
+  const botId = yield* Effect.promise(() => selfId().catch(() => null));
+  yield* Effect.forEach(stale, (chatId) => Effect.gen(function* () {
+    const state = yield* Effect.promise(async () => {
+      try {
+        if (botId !== null) await bot.api.getChatMember({ chat_id: chatId, user_id: botId });
+        const chat = await bot.api.getChat({ chat_id: chatId });
+        migrations.delete(chatId);
+        return { title: "title" in chat && chat.title ? chat.title : null, problem: null };
+      } catch (error) {
+        const movedTo = migrateTarget(error);
+        if (movedTo === null) migrations.delete(chatId);
+        else migrations.set(chatId, movedTo);
+        return { title: null, problem: describe(error) };
+      }
+    });
+    yield* recordChatState(chatId, state, now);
+  }), { concurrency: "unbounded", discard: true });
+});

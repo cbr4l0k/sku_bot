@@ -9,6 +9,7 @@
 import { createDb } from "../packages/db/src/client";
 
 import { reconcileRefund } from "../apps/server/src/core/tickets";
+import { runStandalone } from "../apps/server/src/services";
 import { PaymentProviderError, type ProviderRefund } from "../apps/server/src/payments/provider";
 import { YooKassaProvider } from "../apps/server/src/payments/yookassa";
 
@@ -107,7 +108,7 @@ try {
     console.log("Preview only: YooKassa was read, but the local database was not changed.");
     console.log("Run the same command with --apply to reconcile this refund.");
   } else {
-    const effects = await reconcileRefund(db, provider, remote.id, new Date());
+    const effects = await runStandalone(reconcileRefund(remote.id, new Date()), db, provider);
     const status = db.$client.query<{ status: string }, [string]>(
       "SELECT status FROM ticket_orders WHERE id = ?",
     ).get(match.order_id)?.status;

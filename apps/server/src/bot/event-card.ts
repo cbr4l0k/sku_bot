@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { InlineKeyboard, bold, format } from "gramio";
 import { CITIES, type CitySlug } from "@sku/cities";
 import { and, count, eq, eventProducts, events, inArray, isNull, registrations, sql, ticketOrders, ticketTiers } from "@sku/db";
@@ -147,13 +148,13 @@ export const eventSummary = (eventId: number, locale: Locale): EventSummary | nu
   return event ? { ...event, date: formatDate(event.startsAt, locale, event.city) } : null;
 };
 
-export const sendEventCard = async (context: EventCardContext, eventId: number, userId: number, locale: Locale): Promise<void> => {
+export const sendEventCard = Effect.fn("bot.sendEventCard")(function* (context: EventCardContext, eventId: number, userId: number, locale: Locale) {
   // A deep link must not reveal an event the recipient's chats exclude them from.
-  await refreshMemberships(db, telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
+  yield* refreshMemberships(telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
   const card = renderEventCard(eventId, userId, locale);
   if (!card) {
-    await context.send(i18n.t(locale, "eventUnavailable"));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "eventUnavailable")));
     return;
   }
-  await context.send(card.text, { reply_markup: card.keyboard });
-};
+  yield* Effect.promise(() => context.send(card.text, { reply_markup: card.keyboard }));
+});

@@ -1,19 +1,21 @@
-import type { Db } from "@sku/db";
+import { Effect } from "effect";
 import { syncChatGuests } from "./bot/guests";
 import { dispatchEffects } from "./notify";
 import { sweepOffers } from "./core/waitlist";
 import { sweepTicketPayments } from "./core/tickets";
 import { dueSeries, spawnOccurrence } from "./core/series";
 import { paymentProvider } from "./payments";
+import { runtime } from "./runtime";
+import { Database, Payments } from "./services";
 
 /** Each pass stands alone: one failing must not hold back the others. */
-const guarded = (name: string, work: () => Promise<void>) => {
+const guarded = <E>(name: string, work: () => Effect.Effect<void, E, Database>) => {
   let running = false;
   return async () => {
     if (running) return;
     running = true;
     try {
-      await work();
+      await runtime.runPromise(work());
     } catch (error) {
       console.error(`${name} sweeper failed`, error);
     } finally {
@@ -28,6 +30,13 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
   return () => clearInterval(timer);
 };
 
+/** Templates that are due open their next draft; one that cannot is left for a person to look at. */
+const spawnDueSeries = Effect.fn("sweeper.spawnDueSeries")(function* (sweepAt: Date) {
+  for (const seriesId of dueSeries(yield* Database, sweepAt)) {
+    yield* spawnOccurrence(seriesId, sweepAt).pipe(Effect.catchTag("SeriesRejected", () => Effect.void));
+  }
+});
+
 /**
  * Offers turn on a 20-minute expiry, so they are swept often. Chat guests are not
  * racing a deadline — a minute between someone taking a spot and the invite landing
@@ -36,16 +45,16 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
  * slower again: their lead is measured in days, and an hourly pass still leaves a
  * human the whole review window promised by the template.
  */
-export const startSweeper = (db: Db, intervalMs = 30_000, guestIntervalMs = 60_000, seriesIntervalMs = 60 * 60 * 1000) => {
-  const stopOffers = every(intervalMs, guarded("Offer", () => dispatchEffects(sweepOffers(db, new Date()))));
-  const stopGuests = every(guestIntervalMs, guarded("Chat guest", () => syncChatGuests(db, new Date())));
-  const stopSeries = every(seriesIntervalMs, guarded("Series", async () => {
-    const sweepAt = new Date();
-    for (const seriesId of dueSeries(db, sweepAt)) spawnOccurrence(db, seriesId, sweepAt);
-  }));
+export const startSweeper = (intervalMs = 30_000, guestIntervalMs = 60_000, seriesIntervalMs = 60 * 60 * 1000) => {
+  const stopOffers = every(intervalMs, guarded("Offer", () => sweepOffers(new Date()).pipe(Effect.flatMap(dispatchEffects))));
+  const stopGuests = every(guestIntervalMs, guarded("Chat guest", () => syncChatGuests(new Date())));
+  const stopSeries = every(seriesIntervalMs, guarded("Series", () => spawnDueSeries(new Date())));
   const configuredProvider = paymentProvider;
   const stopPayments = configuredProvider
-    ? every(intervalMs, guarded("Payment", () => sweepTicketPayments(db, configuredProvider, new Date()).then(dispatchEffects)))
+    ? every(intervalMs, guarded("Payment", () => sweepTicketPayments(new Date()).pipe(
+      Effect.flatMap(dispatchEffects),
+      Effect.provideService(Payments, configuredProvider),
+    )))
     : () => {};
 
   return () => {

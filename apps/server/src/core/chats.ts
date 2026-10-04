@@ -1,5 +1,7 @@
+import { Effect } from "effect";
 import type { CitySlug } from "@sku/cities";
 import { asc, chats, eq, type Db } from "@sku/db";
+import { Database } from "../services";
 
 /**
  * The catalog of Telegram chats the club can point events at.
@@ -10,7 +12,8 @@ import { asc, chats, eq, type Db } from "@sku/db";
  */
 
 /** Files a chat the bot has just met. Never overwrites an assignment. */
-export const rememberChat = (db: Db, chatId: number, title: string | null, now: Date): void => {
+export const rememberChat = Effect.fn("chats.rememberChat")(function* (chatId: number, title: string | null, now: Date) {
+  const db = yield* Database;
   db.insert(chats)
     .values({ id: chatId, city: null, title, checkedAt: now })
     .onConflictDoUpdate({
@@ -19,20 +22,20 @@ export const rememberChat = (db: Db, chatId: number, title: string | null, now: 
       set: { ...(title === null ? {} : { title }), problem: null, checkedAt: now },
     })
     .run();
-};
+});
 
 /** Records what Telegram last said about a chat, for the admin UI's warning state. */
-export const recordChatState = (
-  db: Db,
+export const recordChatState = Effect.fn("chats.recordChatState")(function* (
   chatId: number,
   state: { title: string | null; problem: string | null },
   now: Date,
-): void => {
+) {
+  const db = yield* Database;
   db.update(chats)
     .set({ ...(state.title === null ? {} : { title: state.title }), problem: state.problem, checkedAt: now })
     .where(eq(chats.id, chatId))
     .run();
-};
+});
 
 export const chatById = (db: Db, chatId: number) =>
   db.select().from(chats).where(eq(chats.id, chatId)).get();
@@ -57,9 +60,10 @@ export const assignableChats = (db: Db, city: CitySlug): number[] =>
   db.select({ id: chats.id }).from(chats).where(eq(chats.city, city)).orderBy(asc(chats.id)).all()
     .map((row) => row.id);
 
-export const setChatCity = (db: Db, chatId: number, city: CitySlug | null): void => {
+export const setChatCity = Effect.fn("chats.setChatCity")(function* (chatId: number, city: CitySlug | null) {
+  const db = yield* Database;
   db.update(chats).set({ city }).where(eq(chats.id, chatId)).run();
-};
+});
 
 /**
  * Lifts whatever is still listed in EVENT_GROUPS into the table, filed under the
@@ -67,7 +71,8 @@ export const setChatCity = (db: Db, chatId: number, city: CitySlug | null): void
  * the env var stops being the source of truth but keeps working until it is
  * deleted, so no deploy has to be sequenced against this change.
  */
-export const seedChatsFromEnv = (db: Db, chatIds: readonly number[], city: CitySlug, now: Date): number => {
+export const seedChatsFromEnv = Effect.fn("chats.seedChatsFromEnv")(function* (chatIds: readonly number[], city: CitySlug, now: Date) {
+  const db = yield* Database;
   let seeded = 0;
   for (const id of chatIds) {
     const existing = db.select({ id: chats.id }).from(chats).where(eq(chats.id, id)).get();
@@ -76,4 +81,4 @@ export const seedChatsFromEnv = (db: Db, chatIds: readonly number[], city: CityS
     seeded += 1;
   }
   return seeded;
-};
+});

@@ -1,4 +1,7 @@
+import { Effect } from "effect";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
+import { OfferRejected } from "./errors";
 import type { NotificationEffect, OfferEffect, SupersededEffect } from "./types";
 
 const OFFER_WINDOW_SECONDS = 20 * 60; // 20 minutes
@@ -75,64 +78,82 @@ const issue = (db: Db, eventId: number, now: number): OfferEffect[] => {
   return effects;
 };
 
-export const issueOffers = (db: Db, eventId: number, now: Date) => transaction(db, () => issue(db, eventId, seconds(now)));
+/** For actions that hand a freed spot on from inside a transaction of their own. */
+export const issueOffersSync = (db: Db, eventId: number, now: Date) => transaction(db, () => issue(db, eventId, seconds(now)));
 
-export const sweepOffers = (db: Db, now: Date) => transaction(db, () => {
-  const timestamp = seconds(now);
-  const expired = db.$client.query<OfferRow, [number]>("SELECT id, event_id, user_id, expires_at, message_id FROM waitlist_offers WHERE status = 'pending' AND expires_at <= ? AND cascaded = false").all(timestamp);
-  const effects: OfferEffect[] = [];
-  for (const offer of expired) {
-    db.$client.query("UPDATE waitlist_offers SET cascaded = true WHERE id = ?").run(offer.id);
-    effects.push(...issue(db, offer.event_id, timestamp));
-  }
-  // Catch an open spot whose ordered offer was sent before the event crossed the
-  // 2-hours boundary. Existing recipients keep their offer; everyone else is
-  // notified exactly once.
-  const urgentEvents = db.$client.query<{ event_id: number }, [number]>(`
-    SELECT DISTINCT e.id AS event_id
-    FROM events e
-    JOIN registrations r ON r.event_id = e.id AND r.status = 'waitlisted'
-    WHERE e.status = 'published'
-      AND e.ended_at IS NULL
-      AND e.waitlist_enabled = 1
-      AND e.starts_at <= ?
-      AND (e.capacity IS NULL OR (
-        SELECT count(*) FROM registrations confirmed
-        WHERE confirmed.event_id = e.id AND confirmed.status IN ('registered', 'checked_in')
-          AND confirmed.is_staff = 0
-      ) < e.capacity)
-  `).all(timestamp + QUEUE_BROADCAST_LEAD_SECONDS);
-  for (const row of urgentEvents) effects.push(...issue(db, row.event_id, timestamp));
-  return effects;
+export const issueOffers = Effect.fn("waitlist.issueOffers")(function* (eventId: number, now: Date) {
+  return issueOffersSync(yield* Database, eventId, now);
 });
 
-export const acceptOffer = (db: Db, offerId: number, userId: number, now: Date): { ok: true; effects: NotificationEffect[] } | { ok: false; reason: "spot_taken" } => transaction(db, () => {
-  const offer = db.$client.query<OfferRow, [number]>("SELECT id, event_id, user_id, expires_at, message_id FROM waitlist_offers WHERE id = ? AND status = 'pending'").get(offerId);
-  if (!offer || offer.user_id !== userId) return { ok: false, reason: "spot_taken" };
-  const paid = db.$client.query<{ ok: number }, [number]>(
-    "SELECT EXISTS (SELECT 1 FROM ticket_tiers WHERE event_id = ?) AS ok",
-  ).get(offer.event_id)?.ok;
-  if (paid) {
-    db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
-    return { ok: false, reason: "spot_taken" };
-  }
-  const current = event(db, offer.event_id);
-  if (!current || (current.capacity !== null && confirmed(db, current.id) >= current.capacity)) {
-    db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
-    return { ok: false, reason: "spot_taken" };
-  }
-  const timestamp = seconds(now);
-  db.$client.query("UPDATE registrations SET status = 'registered', updated_at = ?, checked_in_at = NULL WHERE event_id = ? AND user_id = ?").run(timestamp, current.id, userId);
-  db.$client.query("UPDATE waitlist_offers SET status = 'accepted' WHERE id = ?").run(offerId);
-  const effects: NotificationEffect[] = current.capacity !== null && confirmed(db, current.id) >= current.capacity ? supersede(db, current.id, offerId) : [];
-  return { ok: true, effects };
+export const sweepOffers = Effect.fn("waitlist.sweepOffers")(function* (now: Date) {
+  const db = yield* Database;
+  return transaction(db, () => {
+    const timestamp = seconds(now);
+    const expired = db.$client.query<OfferRow, [number]>("SELECT id, event_id, user_id, expires_at, message_id FROM waitlist_offers WHERE status = 'pending' AND expires_at <= ? AND cascaded = false").all(timestamp);
+    const effects: OfferEffect[] = [];
+    for (const offer of expired) {
+      db.$client.query("UPDATE waitlist_offers SET cascaded = true WHERE id = ?").run(offer.id);
+      effects.push(...issue(db, offer.event_id, timestamp));
+    }
+    // Catch an open spot whose ordered offer was sent before the event crossed the
+    // 2-hours boundary. Existing recipients keep their offer; everyone else is
+    // notified exactly once.
+    const urgentEvents = db.$client.query<{ event_id: number }, [number]>(`
+      SELECT DISTINCT e.id AS event_id
+      FROM events e
+      JOIN registrations r ON r.event_id = e.id AND r.status = 'waitlisted'
+      WHERE e.status = 'published'
+        AND e.ended_at IS NULL
+        AND e.waitlist_enabled = 1
+        AND e.starts_at <= ?
+        AND (e.capacity IS NULL OR (
+          SELECT count(*) FROM registrations confirmed
+          WHERE confirmed.event_id = e.id AND confirmed.status IN ('registered', 'checked_in')
+            AND confirmed.is_staff = 0
+        ) < e.capacity)
+    `).all(timestamp + QUEUE_BROADCAST_LEAD_SECONDS);
+    for (const row of urgentEvents) effects.push(...issue(db, row.event_id, timestamp));
+    return effects;
+  });
 });
 
-export const setCapacity = (db: Db, eventId: number, capacity: number | null, now: Date) => transaction(db, () => {
-  const before = event(db, eventId)?.capacity;
-  db.$client.query("UPDATE events SET capacity = ?, updated_at = ? WHERE id = ?").run(capacity, seconds(now), eventId);
-  const increased = before !== undefined && ((capacity === null && before !== null) || (capacity !== null && before !== null && capacity > before));
-  return increased ? issue(db, eventId, seconds(now)) : [];
+export const acceptOffer = Effect.fn("waitlist.acceptOffer")(function* (offerId: number, userId: number, now: Date) {
+  const db = yield* Database;
+  // A lost race still supersedes the offer, so the rejection is raised only once
+  // the transaction has committed that write.
+  const result = transaction(db, (): { ok: true; effects: NotificationEffect[] } | { ok: false; reason: "spot_taken" } => {
+    const offer = db.$client.query<OfferRow, [number]>("SELECT id, event_id, user_id, expires_at, message_id FROM waitlist_offers WHERE id = ? AND status = 'pending'").get(offerId);
+    if (!offer || offer.user_id !== userId) return { ok: false, reason: "spot_taken" };
+    const paid = db.$client.query<{ ok: number }, [number]>(
+      "SELECT EXISTS (SELECT 1 FROM ticket_tiers WHERE event_id = ?) AS ok",
+    ).get(offer.event_id)?.ok;
+    if (paid) {
+      db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
+      return { ok: false, reason: "spot_taken" };
+    }
+    const current = event(db, offer.event_id);
+    if (!current || (current.capacity !== null && confirmed(db, current.id) >= current.capacity)) {
+      db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
+      return { ok: false, reason: "spot_taken" };
+    }
+    const timestamp = seconds(now);
+    db.$client.query("UPDATE registrations SET status = 'registered', updated_at = ?, checked_in_at = NULL WHERE event_id = ? AND user_id = ?").run(timestamp, current.id, userId);
+    db.$client.query("UPDATE waitlist_offers SET status = 'accepted' WHERE id = ?").run(offerId);
+    const effects: NotificationEffect[] = current.capacity !== null && confirmed(db, current.id) >= current.capacity ? supersede(db, current.id, offerId) : [];
+    return { ok: true, effects };
+  });
+  if (!result.ok) return yield* new OfferRejected({ code: result.reason });
+  return { effects: result.effects };
+});
+
+export const setCapacity = Effect.fn("waitlist.setCapacity")(function* (eventId: number, capacity: number | null, now: Date) {
+  const db = yield* Database;
+  return transaction(db, () => {
+    const before = event(db, eventId)?.capacity;
+    db.$client.query("UPDATE events SET capacity = ?, updated_at = ? WHERE id = ?").run(capacity, seconds(now), eventId);
+    const increased = before !== undefined && ((capacity === null && before !== null) || (capacity !== null && before !== null && capacity > before));
+    return increased ? issue(db, eventId, seconds(now)) : [];
+  });
 });
 
 /**
@@ -140,22 +161,31 @@ export const setCapacity = (db: Db, eventId: number, capacity: number | null, no
  * which is what keeps check-in open for as long as the class actually runs. Pending
  * offers go with it: a spot in a finished event is not worth answering.
  */
-export const endEvent = (db: Db, eventId: number, now: Date): { alreadyEnded: boolean; effects: SupersededEffect[] } => transaction(db, () => {
-  const current = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
-  if (!current || current.ended_at !== null) return { alreadyEnded: true, effects: [] };
-  db.$client.query("UPDATE events SET ended_at = ?, updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), eventId);
-  return { alreadyEnded: false, effects: supersede(db, eventId) };
+export const endEvent = Effect.fn("waitlist.endEvent")(function* (eventId: number, now: Date) {
+  const db = yield* Database;
+  return transaction(db, (): { alreadyEnded: boolean; effects: SupersededEffect[] } => {
+    const current = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
+    if (!current || current.ended_at !== null) return { alreadyEnded: true, effects: [] };
+    db.$client.query("UPDATE events SET ended_at = ?, updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), eventId);
+    return { alreadyEnded: false, effects: supersede(db, eventId) };
+  });
 });
 
 /** Undo for a premature "end": the event runs again, and the queue picks up where it left off. */
-export const reopenEvent = (db: Db, eventId: number, now: Date): { effects: OfferEffect[] } => transaction(db, () => {
-  db.$client.query("UPDATE events SET ended_at = NULL, updated_at = ? WHERE id = ?").run(seconds(now), eventId);
-  return { effects: issue(db, eventId, seconds(now)) };
+export const reopenEvent = Effect.fn("waitlist.reopenEvent")(function* (eventId: number, now: Date) {
+  const db = yield* Database;
+  return transaction(db, (): { effects: OfferEffect[] } => {
+    db.$client.query("UPDATE events SET ended_at = NULL, updated_at = ? WHERE id = ?").run(seconds(now), eventId);
+    return { effects: issue(db, eventId, seconds(now)) };
+  });
 });
 
-export const cancelEvent = (db: Db, eventId: number): { userIds: number[]; effects: SupersededEffect[] } => transaction(db, () => {
-  // Staff are not told their own event was called off the way an attendee is.
-  const participants = db.$client.query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in', 'waitlisted') AND is_staff = 0").all(eventId);
-  db.$client.query("UPDATE events SET status = 'canceled' WHERE id = ?").run(eventId);
-  return { userIds: [...new Set(participants.map((row) => row.user_id))], effects: supersede(db, eventId) };
+export const cancelEvent = Effect.fn("waitlist.cancelEvent")(function* (eventId: number) {
+  const db = yield* Database;
+  return transaction(db, (): { userIds: number[]; effects: SupersededEffect[] } => {
+    // Staff are not told their own event was called off the way an attendee is.
+    const participants = db.$client.query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in', 'waitlisted') AND is_staff = 0").all(eventId);
+    db.$client.query("UPDATE events SET status = 'canceled' WHERE id = ?").run(eventId);
+    return { userIds: [...new Set(participants.map((row) => row.user_id))], effects: supersede(db, eventId) };
+  });
 });

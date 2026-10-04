@@ -5,6 +5,7 @@ import { cancelRegistration, joinEvent } from "../../src/core/registration";
 import { checkIn, manualToggleCheckin, mintCheckinToken, verifyCheckinToken } from "../../src/core/checkin";
 import { botEventLink, eventStartappPayload, miniAppEventLink, parseStartPayload } from "../../src/core/links";
 import { eventStats, globalStats } from "../../src/core/stats";
+import { run } from "../support/effect";
 
 let db: Db;
 const now = new Date("2030-01-01T12:00:00Z");
@@ -14,36 +15,36 @@ const event = (capacity: number | null, id = 1) => { db.$client.query("INSERT IN
 const offers = () => db.$client.query<{ id: number; user_id: number; status: string; expires_at: number }, []>("SELECT id, user_id, status, expires_at FROM waitlist_offers ORDER BY id").all();
 
 describe("waitlist engine", () => {
-  test("joins until full and derives waitlist positions", () => { event(2); expect(joinEvent(db, 1, 1, now)).toEqual({ status: "registered" }); expect(joinEvent(db, 1, 2, now)).toEqual({ status: "registered" }); expect(joinEvent(db, 1, 3, now)).toEqual({ status: "waitlisted", position: 1 }); expect(joinEvent(db, 1, 4, now)).toEqual({ status: "waitlisted", position: 2 }); });
-  test("cancel issues an offer to the waitlist head", () => { event(1); joinEvent(db, 1, 1, now); joinEvent(db, 1, 2, now); joinEvent(db, 1, 3, now); const result = cancelRegistration(db, 1, 1, now); expect(result.effects).toHaveLength(1); expect(offers()[0]?.user_id).toBe(2); });
-  test("expiry cascades without superseding the original offer", () => { event(1); joinEvent(db, 1, 1, now); joinEvent(db, 1, 2, now); joinEvent(db, 1, 3, now); cancelRegistration(db, 1, 1, now); const first = offers()[0]!; const effects = sweepOffers(db, new Date((first.expires_at + 1) * 1000)); expect(effects[0]?.userId).toBe(3); expect(offers()[0]?.status).toBe("pending"); expect(offers()).toHaveLength(2); });
-  test("expired offers remain FCFS claimable and a filled event supersedes others", () => { event(1); joinEvent(db, 1, 1, now); joinEvent(db, 1, 2, now); joinEvent(db, 1, 3, now); cancelRegistration(db, 1, 1, now); const first = offers()[0]!; sweepOffers(db, new Date((first.expires_at + 1) * 1000)); const second = offers()[1]!; const firstResult = acceptOffer(db, first.id, 2, new Date((first.expires_at + 2) * 1000)); expect(firstResult).toMatchObject({ ok: true, effects: [{ kind: "offer_superseded", offerId: second.id }] }); expect(acceptOffer(db, second.id, 3, now)).toEqual({ ok: false, reason: "spot_taken" }); });
-  test("capacity increase issues offers and rejoin goes to tail", () => { event(1); joinEvent(db, 1, 1, now); joinEvent(db, 1, 2, now); joinEvent(db, 1, 3, now); cancelRegistration(db, 1, 2, now); expect(joinEvent(db, 1, 2, new Date(now.getTime() + 1000))).toEqual({ status: "waitlisted", position: 2 }); expect(setCapacity(db, 1, 2, now)[0]?.userId).toBe(3); });
+  test("joins until full and derives waitlist positions", () => { event(2); expect(run(db, joinEvent(1, 1, now))).toEqual({ status: "registered" }); expect(run(db, joinEvent(1, 2, now))).toEqual({ status: "registered" }); expect(run(db, joinEvent(1, 3, now))).toEqual({ status: "waitlisted", position: 1 }); expect(run(db, joinEvent(1, 4, now))).toEqual({ status: "waitlisted", position: 2 }); });
+  test("cancel issues an offer to the waitlist head", () => { event(1); run(db, joinEvent(1, 1, now)); run(db, joinEvent(1, 2, now)); run(db, joinEvent(1, 3, now)); const result = run(db, cancelRegistration(1, 1, now)); expect(result.effects).toHaveLength(1); expect(offers()[0]?.user_id).toBe(2); });
+  test("expiry cascades without superseding the original offer", () => { event(1); run(db, joinEvent(1, 1, now)); run(db, joinEvent(1, 2, now)); run(db, joinEvent(1, 3, now)); run(db, cancelRegistration(1, 1, now)); const first = offers()[0]!; const effects = run(db, sweepOffers(new Date((first.expires_at + 1) * 1000))); expect(effects[0]?.userId).toBe(3); expect(offers()[0]?.status).toBe("pending"); expect(offers()).toHaveLength(2); });
+  test("expired offers remain FCFS claimable and a filled event supersedes others", () => { event(1); run(db, joinEvent(1, 1, now)); run(db, joinEvent(1, 2, now)); run(db, joinEvent(1, 3, now)); run(db, cancelRegistration(1, 1, now)); const first = offers()[0]!; run(db, sweepOffers(new Date((first.expires_at + 1) * 1000))); const second = offers()[1]!; const firstResult = run(db, acceptOffer(first.id, 2, new Date((first.expires_at + 2) * 1000))); expect(firstResult).toMatchObject({ effects: [{ kind: "offer_superseded", offerId: second.id }] }); expect(run(db, acceptOffer(second.id, 3, now))).toEqual({ ok: false, reason: "spot_taken" }); });
+  test("capacity increase issues offers and rejoin goes to tail", () => { event(1); run(db, joinEvent(1, 1, now)); run(db, joinEvent(1, 2, now)); run(db, joinEvent(1, 3, now)); run(db, cancelRegistration(1, 2, now)); expect(run(db, joinEvent(1, 2, new Date(now.getTime() + 1000)))).toEqual({ status: "waitlisted", position: 2 }); expect(run(db, setCapacity(1, 2, now))[0]?.userId).toBe(3); });
 
   test("a spot is offered to the whole queue inside the final 90 minutes", () => {
     event(1);
     db.$client.query("UPDATE events SET starts_at = ? WHERE id = 1").run(unix(new Date(now.getTime() + 90 * 60 * 1000)));
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    joinEvent(db, 1, 3, now);
-    const effects = cancelRegistration(db, 1, 1, now).effects;
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    run(db, joinEvent(1, 3, now));
+    const effects = run(db, cancelRegistration(1, 1, now)).effects;
     expect(effects.map((effect) => effect.userId)).toEqual([2, 3]);
     expect(effects.every((effect) => effect.kind === "offer_created" && effect.broadcast)).toBe(true);
   });
 
   test("crossing the 2-hours boundary expands an open offer to the rest of the queue", () => {
     event(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    joinEvent(db, 1, 3, now);
-    cancelRegistration(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    run(db, joinEvent(1, 3, now));
+    run(db, cancelRegistration(1, 1, now));
     expect(offers().map((offer) => offer.user_id)).toEqual([2]);
 
     const cutoff = new Date(now.getTime() + 86_400_000 - 120 * 60 * 1000);
-    const effects = sweepOffers(db, cutoff);
+    const effects = run(db, sweepOffers(cutoff));
     expect(effects).toMatchObject([{ kind: "offer_created", userId: 3, broadcast: true }]);
     expect(offers().map((offer) => offer.user_id)).toEqual([2, 3]);
-    expect(sweepOffers(db, new Date(cutoff.getTime() + 30_000))).toEqual([]);
+    expect(run(db, sweepOffers(new Date(cutoff.getTime() + 30_000)))).toEqual([]);
   });
 });
 
@@ -54,42 +55,42 @@ describe("switchable queue", () => {
   test("a full event with the queue off turns people away instead of queueing them", () => {
     event(1);
     disableQueue(1);
-    expect(joinEvent(db, 1, 1, now)).toEqual({ status: "registered" });
-    expect(joinEvent(db, 1, 2, now)).toEqual({ error: "event_full" });
+    expect(run(db, joinEvent(1, 1, now))).toEqual({ status: "registered" });
+    expect(run(db, joinEvent(1, 2, now))).toEqual({ error: "event_full" });
   });
 
   test("an uncapped event still admits everyone with the queue off", () => {
     event(null);
     disableQueue(1);
-    expect(joinEvent(db, 1, 1, now)).toEqual({ status: "registered" });
-    expect(joinEvent(db, 1, 2, now)).toEqual({ status: "registered" });
+    expect(run(db, joinEvent(1, 1, now))).toEqual({ status: "registered" });
+    expect(run(db, joinEvent(1, 2, now))).toEqual({ status: "registered" });
   });
 
   test("a freed spot is not handed on while the queue is off", () => {
     event(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now); // queued while the queue was still on
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now)); // queued while the queue was still on
     disableQueue(1);
-    expect(cancelRegistration(db, 1, 1, now).effects).toEqual([]);
+    expect(run(db, cancelRegistration(1, 1, now)).effects).toEqual([]);
     expect(offers()).toHaveLength(0);
   });
 
   test("switching the queue back on resumes the dormant queue", () => {
     event(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
     disableQueue(1);
-    cancelRegistration(db, 1, 1, now);
+    run(db, cancelRegistration(1, 1, now));
     enableQueue(1);
-    expect(issueOffers(db, 1, now)[0]?.userId).toBe(2);
+    expect(run(db, issueOffers(1, now))[0]?.userId).toBe(2);
   });
 
   test("raising capacity issues nothing while the queue is off", () => {
     event(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
     disableQueue(1);
-    expect(setCapacity(db, 1, 5, now)).toEqual([]);
+    expect(run(db, setCapacity(1, 5, now))).toEqual([]);
   });
 });
 
@@ -104,54 +105,54 @@ describe("the organizer decides when the event is over", () => {
 
   test("check-in still works after the start time has passed", () => {
     startedEvent();
-    joinEvent(db, 1, 1, now);
-    expect(checkIn(db, 1, 1, afterStart)).toEqual({ ok: true });
+    run(db, joinEvent(1, 1, now));
+    expect(run(db, checkIn(1, 1, afterStart))).toEqual({ ok: true });
   });
 
   test("a walk-in can still sign up mid-event", () => {
     startedEvent();
-    expect(joinEvent(db, 1, 1, afterStart)).toEqual({ status: "registered" });
+    expect(run(db, joinEvent(1, 1, afterStart))).toEqual({ status: "registered" });
   });
 
   test("ending the event closes check-in and sign-ups", () => {
     startedEvent();
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    expect(endEvent(db, 1, afterStart).alreadyEnded).toBe(false);
-    expect(checkIn(db, 1, 1, afterStart)).toEqual({ error: "event_over" });
-    expect(joinEvent(db, 1, 3, afterStart)).toEqual({ error: "event_over" });
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    expect(run(db, endEvent(1, afterStart)).alreadyEnded).toBe(false);
+    expect(run(db, checkIn(1, 1, afterStart))).toEqual({ error: "event_over" });
+    expect(run(db, joinEvent(1, 3, afterStart))).toEqual({ error: "event_over" });
     // The roster is still the organizer's to correct after the fact.
-    expect(manualToggleCheckin(db, 1, 2, afterStart)).toEqual({ status: "checked_in" });
+    expect(run(db, manualToggleCheckin(1, 2, afterStart))).toEqual({ status: "checked_in" });
   });
 
   test("ending twice is a no-op, and reopening accepts check-ins again", () => {
     startedEvent();
-    joinEvent(db, 1, 1, now);
-    endEvent(db, 1, afterStart);
-    expect(endEvent(db, 1, afterStart).alreadyEnded).toBe(true);
-    reopenEvent(db, 1, afterStart);
-    expect(checkIn(db, 1, 1, afterStart)).toEqual({ ok: true });
+    run(db, joinEvent(1, 1, now));
+    run(db, endEvent(1, afterStart));
+    expect(run(db, endEvent(1, afterStart)).alreadyEnded).toBe(true);
+    run(db, reopenEvent(1, afterStart));
+    expect(run(db, checkIn(1, 1, afterStart))).toEqual({ ok: true });
   });
 
   test("ending retires the pending offers nobody can answer any more", () => {
     startedEvent(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    cancelRegistration(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    run(db, cancelRegistration(1, 1, now));
     const offer = offers()[0]!;
     expect(offer.status).toBe("pending");
-    expect(endEvent(db, 1, afterStart).effects).toMatchObject([{ kind: "offer_superseded", offerId: offer.id }]);
+    expect(run(db, endEvent(1, afterStart)).effects).toMatchObject([{ kind: "offer_superseded", offerId: offer.id }]);
     expect(offers()[0]?.status).toBe("superseded");
   });
 
   test("reopening hands the freed spot back to the queue", () => {
     startedEvent(1);
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    cancelRegistration(db, 1, 1, now);
-    endEvent(db, 1, afterStart);
-    expect(reopenEvent(db, 1, afterStart).effects).toMatchObject([{ kind: "offer_created", userId: 2 }]);
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    run(db, cancelRegistration(1, 1, now));
+    run(db, endEvent(1, afterStart));
+    expect(run(db, reopenEvent(1, afterStart)).effects).toMatchObject([{ kind: "offer_created", userId: 2 }]);
   });
 });
 
-test("check-in tokens, manual toggle, links, and stats", () => { event(3); joinEvent(db, 1, 1, now); const token = mintCheckinToken("secret", 1, now); expect(verifyCheckinToken("secret", token, new Date(now.getTime() + 50_000))).toEqual({ eventId: 1 }); expect(verifyCheckinToken("secret", `${token}x`, now)).toBeNull(); expect(checkIn(db, 1, 1, now)).toEqual({ ok: true }); expect(manualToggleCheckin(db, 1, 1, now)).toEqual({ status: "registered" }); expect(eventStats(db, 1)).toMatchObject({ registered: 1, waitlisted: 0, checkedIn: 0, offersMade: 0 }); expect(globalStats(db)).toMatchObject({ totalEvents: 1, uniqueParticipants: 1 }); expect(parseStartPayload(eventStartappPayload(12))).toEqual({ type: "event", eventId: 12 }); expect(parseStartPayload("evt_01")).toBeNull(); expect(miniAppEventLink("bot", "app", 1)).toBe("https://t.me/bot/app?startapp=evt_1"); expect(botEventLink("bot", 1)).toBe("tg://resolve?domain=bot&start=evt_1"); });
+test("check-in tokens, manual toggle, links, and stats", () => { event(3); run(db, joinEvent(1, 1, now)); const token = mintCheckinToken("secret", 1, now); expect(verifyCheckinToken("secret", token, new Date(now.getTime() + 50_000))).toEqual({ eventId: 1 }); expect(verifyCheckinToken("secret", `${token}x`, now)).toBeNull(); expect(run(db, checkIn(1, 1, now))).toEqual({ ok: true }); expect(run(db, manualToggleCheckin(1, 1, now))).toEqual({ status: "registered" }); expect(eventStats(db, 1)).toMatchObject({ registered: 1, waitlisted: 0, checkedIn: 0, offersMade: 0 }); expect(globalStats(db)).toMatchObject({ totalEvents: 1, uniqueParticipants: 1 }); expect(parseStartPayload(eventStartappPayload(12))).toEqual({ type: "event", eventId: 12 }); expect(parseStartPayload("evt_01")).toBeNull(); expect(miniAppEventLink("bot", "app", 1)).toBe("https://t.me/bot/app?startapp=evt_1"); expect(botEventLink("bot", 1)).toBe("tg://resolve?domain=bot&start=evt_1"); });

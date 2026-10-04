@@ -4,6 +4,7 @@ import type { Actor } from "../../src/core/cities";
 import { checkIn, manualToggleCheckin, scanTicket } from "../../src/core/checkin";
 import { eventPhase, eventSummary, hqOverview, rosterFlags, seriesSummary } from "../../src/core/hq";
 import { seriesStats } from "../../src/core/series";
+import { run } from "../support/effect";
 
 let db: Db;
 const now = new Date("2030-01-10T12:00:00Z");
@@ -119,14 +120,14 @@ describe("roster", () => {
   test("every door records how someone came through, and undoing clears it", () => {
     const id = event({ startsIn: 0 });
     for (const userId of [2, 3, 4]) register(id, userId);
-    checkIn(db, id, 2, now);
-    scanTicket(db, id, 3, now);
-    manualToggleCheckin(db, id, 4, now);
+    run(db, checkIn(id, 2, now));
+    run(db, scanTicket(id, 3, now));
+    run(db, manualToggleCheckin(id, 4, now));
     const method = (userId: number) => db.$client.query<{ checkin_method: string | null }, [number, number]>(
       "SELECT checkin_method FROM registrations WHERE event_id = ? AND user_id = ?",
     ).get(id, userId)?.checkin_method;
     expect([method(2), method(3), method(4)]).toEqual(["qr", "ticket", "manual"]);
-    manualToggleCheckin(db, id, 4, now);
+    run(db, manualToggleCheckin(id, 4, now));
     expect(method(4)).toBeNull();
   });
 });

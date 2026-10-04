@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { Elysia, t } from "elysia";
 
 import { cities, cityRoles, type CitySlug } from "@sku/cities";
@@ -87,6 +88,9 @@ import { db } from "../db";
 import { loadEnv } from "../env";
 import { paymentProvider, paymentsConfigured } from "../payments";
 import { dispatchEffects, notifyEventCanceled, notifyEventUpdated } from "../notify";
+import type { NotificationEffect } from "../core/types";
+import { runtime } from "../runtime";
+import { Payments, type Database } from "../services";
 import { auth } from "./auth";
 
 const env = loadEnv();
@@ -94,9 +98,18 @@ const adminIds = new Set(env.ADMIN_IDS);
 const miniappDist = new URL("../../../miniapp/dist/", import.meta.url);
 const now = () => new Date();
 const iso = (value: Date | null) => value?.toISOString() ?? null;
-const fireEffects = (effects: Parameters<typeof dispatchEffects>[0]) => {
-  void dispatchEffects(effects).catch(console.error);
+/**
+ * Routes hand their actions to the server runtime with every rejection already
+ * answered, so an unhandled one cannot leak out as a 500. Synchronous actions keep
+ * their route synchronous.
+ */
+const run = <A>(action: Effect.Effect<A, never, Database>) => runtime.runSync(action);
+const runAsync = <A>(action: Effect.Effect<A, never, Database>) => runtime.runPromise(action);
+/** Detached from the request: a slow or failing Telegram never holds up — or fails — the response. */
+const background = (action: Effect.Effect<void, never, Database>) => {
+  void runtime.runPromise(action).catch(console.error);
 };
+const fireEffects = (effects: NotificationEffect[]) => background(dispatchEffects(effects));
 type ErrorStatus = (code: 400 | 403 | 404 | 409 | 503, response: { error: string }) => { error: string };
 const error = (status: unknown, code: 400 | 403 | 404 | 409 | 503, message: string) => (status as ErrorStatus)(code, { error: message });
 
@@ -225,7 +238,7 @@ const unknownHomeChat = (city: CitySlug, chatId: number | null | undefined) =>
 
 /** Telegram owns membership, so refresh what the caller is about to be filtered against. */
 const syncMemberships = (userId: number, chatIds: readonly number[]) =>
-  refreshMemberships(db, telegramMembership, userId, chatIds, now());
+  refreshMemberships(telegramMembership, userId, chatIds, now());
 
 const parseDate = (value: string): Date | undefined => {
   const date = new Date(value);
@@ -488,11 +501,11 @@ export const app = new Elysia()
     if (typeof event !== "string" || !object || typeof object !== "object" || !("id" in object) || typeof object.id !== "string") {
       return error(status, 400, "invalid_webhook");
     }
-    if (event.startsWith("payment.")) {
-      fireEffects((await reconcilePayment(db, paymentProvider, object.id, now())).effects);
-    } else if (event.startsWith("refund.")) {
-      fireEffects(await reconcileRefund(db, paymentProvider, object.id, now()));
-    }
+    const reconcile = event.startsWith("payment.") ? reconcilePayment(object.id, now()).pipe(Effect.map(({ effects }) => effects))
+      : event.startsWith("refund.") ? reconcileRefund(object.id, now())
+        : null;
+    // Failures are not answered here: YooKassa retries a webhook that did not succeed.
+    if (reconcile) fireEffects(await runAsync(reconcile.pipe(Effect.provideService(Payments, paymentProvider))));
     return { ok: true };
   }, { body: t.Any(), query: t.Object({ secret: t.String({ minLength: 20 }) }) })
   .group("/api", (api) => api
@@ -541,7 +554,7 @@ export const app = new Elysia()
       // Nothing to show until they have said which branch is theirs; the mini app
       // puts the picker up in place of the list rather than guessing.
       if (user.city === null) return [];
-      await syncMemberships(user.id, chatsGatingLiveEvents(db));
+      await runAsync(syncMemberships(user.id, chatsGatingLiveEvents(db)));
       // A started event stays listed until an organizer ends it, so people can still
       // find it to sign up late or to check in on their way out.
       return db.select().from(events)
@@ -563,7 +576,7 @@ export const app = new Elysia()
     .get("/events/:id", async ({ params, user, status }) => {
       const event = participantEvent(params.id);
       if (!event) return error(status, 404, "event_not_found");
-      await syncMemberships(user.id, chatsOfEvent(db, event.id));
+      await runAsync(syncMemberships(user.id, chatsOfEvent(db, event.id)));
       // A restricted event stays invisible rather than forbidden — do not leak that it exists.
       if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
       const registration = db.select({ status: registrations.status, isStaff: registrations.isStaff }).from(registrations)
@@ -575,39 +588,36 @@ export const app = new Elysia()
       if (user.isBanned) return error(status, 403, "banned");
       const paid = db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, params.id)).get();
       if (paid) return error(status, 409, "payment_required");
-      await syncMemberships(user.id, chatsOfEvent(db, params.id));
-      const result = joinEvent(db, params.id, user.id, now());
-      if ("error" in result) {
-        const code = result.error === "already_joined" || result.error === "event_full" ? 409 : result.error === "not_eligible" ? 403 : 400;
-        return error(status, code, result.error);
-      }
-      return result;
+      return runAsync(Effect.gen(function* () {
+        yield* syncMemberships(user.id, chatsOfEvent(db, params.id));
+        return yield* joinEvent(params.id, user.id, now());
+      }).pipe(Effect.catchTag("JoinRejected", ({ code }) => Effect.succeed(
+        error(status, code === "already_joined" || code === "event_full" ? 409 : code === "not_eligible" ? 403 : 400, code),
+      ))));
     }, { params: idParams })
     .post("/events/:id/checkout", async ({ params, body, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
       if (!paymentProvider) return error(status, 503, "payments_not_configured");
-      await syncMemberships(user.id, chatsOfEvent(db, params.id));
-      let result: Awaited<ReturnType<typeof createCheckout>>;
-      try {
-        result = await createCheckout(db, paymentProvider, {
+      const provider = paymentProvider;
+      return runAsync(Effect.gen(function* () {
+        yield* syncMemberships(user.id, chatsOfEvent(db, params.id));
+        return yield* createCheckout({
           eventId: params.id,
           tierId: body.ticketTierId ?? null,
           productItems: body.items,
           userId: user.id,
           userPhone: user.phone,
           returnUrl: `https://${env.DOMAIN}/events/${params.id}`,
-        }, now());
-      } catch (cause) {
-        console.error("YooKassa checkout creation failed", cause instanceof Error ? cause.message : "unknown error");
-        return error(status, 503, "payment_temporarily_unavailable");
-      }
-      if ("error" in result) {
-        const code = result.error === "not_eligible" ? 403
-          : ["already_joined", "ticket_sold_out", "product_sold_out", "event_full", "active_order_exists"].includes(result.error) ? 409
-            : result.error === "event_not_found" ? 404 : 400;
-        return error(status, code, result.error);
-      }
-      return result;
+        }, now()).pipe(
+          Effect.provideService(Payments, provider),
+          Effect.catchDefect((cause) => Effect.sync(() => {
+            console.error("YooKassa checkout creation failed", cause instanceof Error ? cause.message : "unknown error");
+            return error(status, 503, "payment_temporarily_unavailable");
+          })),
+        );
+      }).pipe(Effect.catchTag("CheckoutRejected", ({ code }) => Effect.succeed(error(status, code === "not_eligible" ? 403
+        : ["already_joined", "ticket_sold_out", "product_sold_out", "event_full", "active_order_exists"].includes(code) ? 409
+          : code === "event_not_found" ? 404 : 400, code)))));
     }, {
       params: idParams,
       body: t.Object({
@@ -624,16 +634,13 @@ export const app = new Elysia()
       return order ?? error(status, 404, "order_not_found");
     }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
     .get("/orders", ({ user }) => ordersForUser(db, user.id))
-    .post("/orders/:id/cancel", async ({ params, user, status }) => {
-      try {
-        const result = await cancelPendingOrder(db, params.id, user.id, now());
-        if ("error" in result) return error(status, result.error === "order_not_found" ? 404 : 409, result.error);
-        return result;
-      } catch (cause) {
+    .post("/orders/:id/cancel", async ({ params, user, status }) => runAsync(cancelPendingOrder(params.id, user.id, now()).pipe(
+      Effect.catchTag("OrderRejected", ({ code }) => Effect.succeed(error(status, code === "order_not_found" ? 404 : 409, code))),
+      Effect.catchDefect((cause) => Effect.sync(() => {
         console.error(`Payment abandonment failed for order ${params.id}`, cause instanceof Error ? cause.message : "unknown error");
         return error(status, 503, "payment_temporarily_unavailable");
-      }
-    }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
+      })),
+    )), { params: t.Object({ id: t.String({ minLength: 1 }) }) })
     .post("/events/:id/cancel", async ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
       if (!participantEvent(params.id)) return error(status, 404, "event_not_found");
@@ -646,36 +653,42 @@ export const app = new Elysia()
         )).get();
       if (paidOrder) {
         if (!paymentProvider) return error(status, 503, "payments_not_configured");
-        try {
-          fireEffects(await requestUserRefund(db, paymentProvider, params.id, user.id, now()) ?? []);
-          return { ok: true, refundPending: true };
-        } catch (cause) {
-          console.error(`YooKassa refund creation failed for order ${paidOrder.id}`, cause instanceof Error ? cause.message : "unknown error");
-          const pending = db.select({ status: ticketOrders.status }).from(ticketOrders).where(eq(ticketOrders.id, paidOrder.id)).get();
-          return pending?.status === "refund_pending"
-            ? { ok: true, refundPending: true }
-            : error(status, 503, "payment_temporarily_unavailable");
-        }
+        return runAsync(requestUserRefund(params.id, user.id, now()).pipe(
+          Effect.provideService(Payments, paymentProvider),
+          Effect.map((effects) => {
+            fireEffects(effects ?? []);
+            return { ok: true, refundPending: true };
+          }),
+          Effect.catchDefect((cause) => Effect.sync(() => {
+            console.error(`YooKassa refund creation failed for order ${paidOrder.id}`, cause instanceof Error ? cause.message : "unknown error");
+            const pending = db.select({ status: ticketOrders.status }).from(ticketOrders).where(eq(ticketOrders.id, paidOrder.id)).get();
+            return pending?.status === "refund_pending"
+              ? { ok: true, refundPending: true }
+              : error(status, 503, "payment_temporarily_unavailable");
+          })),
+        ));
       }
-      const result = cancelRegistration(db, params.id, user.id, now());
-      fireEffects(result.effects);
+      fireEffects(run(cancelRegistration(params.id, user.id, now())).effects);
       return { ok: true, refundPending: false };
     }, { params: idParams })
     .post("/offers/:id/accept", ({ params, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
-      const result = acceptOffer(db, params.id, user.id, now());
-      if (!result.ok) return error(status, 409, result.reason);
-      fireEffects(result.effects);
-      return { ok: true };
+      return run(acceptOffer(params.id, user.id, now()).pipe(
+        Effect.map(({ effects }) => {
+          fireEffects(effects);
+          return { ok: true };
+        }),
+        Effect.catchTag("OfferRejected", ({ code }) => Effect.succeed(error(status, 409, code))),
+      ));
     }, { params: idParams })
     .post("/checkin", ({ body, user, status }) => {
       if (user.isBanned) return error(status, 403, "banned");
       const token = verifyCheckinToken(env.CHECKIN_SECRET, body.code, now());
       if (!token) return error(status, 400, "invalid_or_stale_code");
       if (isPaidEvent(token.eventId)) return error(status, 409, "ticketed_event");
-      const result = checkIn(db, token.eventId, user.id, now());
-      if ("error" in result) return error(status, 400, result.error);
-      return result;
+      return run(checkIn(token.eventId, user.id, now()).pipe(
+        Effect.catchTag("CheckinRejected", ({ code }) => Effect.succeed(error(status, 400, code))),
+      ));
     }, { body: t.Object({ code: t.String({ minLength: 1 }) }) })
     /**
      * The ticket a runner shows at the door. Deliberately not a
@@ -686,7 +699,7 @@ export const app = new Elysia()
     .get("/events/:id/ticket", async ({ params, user, status }) => {
       const event = participantEvent(params.id);
       if (!event) return error(status, 404, "event_not_found");
-      await syncMemberships(user.id, chatsOfEvent(db, event.id));
+      await runAsync(syncMemberships(user.id, chatsOfEvent(db, event.id)));
       if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
       if (!isPaidEvent(event.id)) return error(status, 409, "not_ticketed");
       const registration = db.select({ id: registrations.id, status: registrations.status }).from(registrations)
@@ -821,18 +834,24 @@ export const app = new Elysia()
     .post("/organizer/series/:id/spawn", ({ params, actor, status }) => {
       const found = manageableSeries(actor, params.id, true);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = spawnOccurrence(db, params.id, now());
-      if ("error" in result) return error(status, result.error === "series_not_found" ? 404 : 409, result.error);
-      const event = db.select().from(events).where(eq(events.id, result.eventId)).get();
-      return event ? eventView(event) : error(status, 404, "event_not_found");
+      return run(spawnOccurrence(params.id, now()).pipe(
+        Effect.map(({ eventId }) => {
+          const event = db.select().from(events).where(eq(events.id, eventId)).get();
+          return event ? eventView(event) : error(status, 404, "event_not_found");
+        }),
+        Effect.catchTag("SeriesRejected", ({ code }) => Effect.succeed(error(status, code === "series_not_found" ? 404 : 409, code))),
+      ));
     }, { params: idParams })
     .post("/organizer/series/:id/skip", ({ params, actor, status }) => {
       const found = manageableSeries(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = skipNext(db, params.id, now());
-      if ("error" in result) return error(status, result.error === "series_not_found" ? 404 : 409, result.error);
-      const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
-      return updated ? seriesView(updated) : error(status, 404, "series_not_found");
+      return run(skipNext(params.id, now()).pipe(
+        Effect.map(() => {
+          const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
+          return updated ? seriesView(updated) : error(status, 404, "series_not_found");
+        }),
+        Effect.catchTag("SeriesRejected", ({ code }) => Effect.succeed(error(status, code === "series_not_found" ? 404 : 409, code))),
+      ));
     }, { params: idParams })
     .get("/organizer/series/:id/stats", ({ params, actor, status }) => {
       const found = manageableSeries(actor, params.id);
@@ -948,8 +967,10 @@ export const app = new Elysia()
         db.insert(eventOrganizers).values({ eventId: row.id, userId: user.id }).onConflictDoNothing().run();
         return row;
       })();
-      if (groups) setEventChats(db, created.id, groups);
-      syncEventStaff(db, created.id, now());
+      run(Effect.gen(function* () {
+        if (groups) yield* setEventChats(created.id, groups);
+        yield* syncEventStaff(created.id, now());
+      }));
       return eventView(created);
     }, { body: eventCreateBody })
     .patch("/organizer/events/:id", ({ params, body, actor, status }) => {
@@ -978,10 +999,10 @@ export const app = new Elysia()
           updatedAt: now(),
         }).where(eq(events.id, params.id)).run();
       }
-      if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
+      if (body.capacity !== undefined) fireEffects(run(setCapacity(params.id, body.capacity, now())));
       // Switching the queue back on hands out the spots the dormant queue missed.
-      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(issueOffers(db, params.id, now()));
-      if (event.status !== "draft" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
+      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(run(issueOffers(params.id, now())));
+      if (event.status !== "draft" && changes.length) background(notifyEventUpdated(activeParticipantIds(params.id), params.id, changes));
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams, body: eventPatchFields })
@@ -1159,7 +1180,7 @@ export const app = new Elysia()
       if (found.denied) return error(status, found.code, found.denied);
       // The roster is the one screen that must never be stale about who is on it,
       // and it is cheap to reconcile: a no-op once the rows are there.
-      syncEventStaff(db, params.id, now());
+      run(syncEventStaff(params.id, now()));
       const flags = rosterFlags(db, params.id);
       const attendance = db.select({
         userId: users.id,
@@ -1216,52 +1237,58 @@ export const app = new Elysia()
       if (!ticket) return error(status, 400, "invalid_ticket");
       // Someone else's event, or last week's — say so plainly rather than "invalid".
       if (ticket.eventId !== params.id) return error(status, 409, "wrong_event");
-      const result = scanTicket(db, params.id, ticket.userId, now());
-      if ("error" in result) return error(status, result.error === "event_over" ? 409 : 400, result.error);
-      const person = db.select().from(users).where(eq(users.id, ticket.userId)).get();
-      if (!person) return error(status, 404, "event_not_found");
-      return {
-        userId: person.id,
-        firstName: person.firstName,
-        lastName: person.lastName,
-        username: person.username,
-        phone: person.phone,
-        ticketName: ticketNameFor(params.id, person.id),
-        // The same number the runner sees on their ticket.
-        number: db.select({ id: registrations.id }).from(registrations)
-          .where(and(eq(registrations.eventId, params.id), eq(registrations.userId, person.id))).get()?.id ?? null,
-        alreadyCheckedIn: result.alreadyCheckedIn,
-        checkedInAt: result.checkedInAt.toISOString(),
-        items: purchaseLines(params.id, person.id),
-      };
+      return run(scanTicket(params.id, ticket.userId, now()).pipe(
+        Effect.map((result) => {
+          const person = db.select().from(users).where(eq(users.id, ticket.userId)).get();
+          if (!person) return error(status, 404, "event_not_found");
+          return {
+            userId: person.id,
+            firstName: person.firstName,
+            lastName: person.lastName,
+            username: person.username,
+            phone: person.phone,
+            ticketName: ticketNameFor(params.id, person.id),
+            // The same number the runner sees on their ticket.
+            number: db.select({ id: registrations.id }).from(registrations)
+              .where(and(eq(registrations.eventId, params.id), eq(registrations.userId, person.id))).get()?.id ?? null,
+            alreadyCheckedIn: result.alreadyCheckedIn,
+            checkedInAt: result.checkedInAt.toISOString(),
+            items: purchaseLines(params.id, person.id),
+          };
+        }),
+        Effect.catchTag("CheckinRejected", ({ code }) => Effect.succeed(error(status, code === "event_over" ? 409 : 400, code))),
+      ));
     }, { params: idParams, body: t.Object({ code: t.String({ minLength: 1 }) }) })
     /** Ticking one merch line off — from the scan panel, or later from the roster. */
     .post("/organizer/events/:id/items/:itemId/handover", ({ params, user, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = toggleHandover(db, params.id, params.itemId, user.id, now());
-      return "error" in result ? error(status, 404, result.error) : { handedOverAt: iso(result.handedOverAt) };
+      return run(toggleHandover(params.id, params.itemId, user.id, now()).pipe(
+        Effect.map((result) => ({ handedOverAt: iso(result.handedOverAt) })),
+        Effect.catchTag("HandoverRejected", ({ code }) => Effect.succeed(error(status, 404, code))),
+      ));
     }, { params: t.Object({ id: t.Numeric(), itemId: t.Numeric() }) })
     /** The event is over when whoever is running it says so — never on a timer. */
     .post("/organizer/events/:id/end", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      fireEffects(endEvent(db, params.id, now()).effects);
+      fireEffects(run(endEvent(params.id, now())).effects);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams })
     .post("/organizer/events/:id/reopen", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      fireEffects(reopenEvent(db, params.id, now()).effects);
+      fireEffects(run(reopenEvent(params.id, now())).effects);
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams })
     .post("/organizer/events/:id/attendance/:userId", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = manualToggleCheckin(db, params.id, params.userId, now());
-      return "error" in result ? error(status, 400, result.error) : result;
+      return run(manualToggleCheckin(params.id, params.userId, now()).pipe(
+        Effect.catchTag("CheckinRejected", ({ code }) => Effect.succeed(error(status, 400, code))),
+      ));
     }, { params: t.Object({ id: t.Numeric(), userId: t.Numeric() }) })
     /** HQ: live runs, what needs a person, and what is next — over the same events as /organizer/events. */
     .get("/organizer/hq", ({ actor }) => hqOverview(db, actor, now()))
@@ -1299,27 +1326,27 @@ export const app = new Elysia()
         (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
-      if (body.groups !== undefined) setEventChats(db, params.id, body.groups);
+      if (body.groups !== undefined) run(setEventChats(params.id, body.groups));
       if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined || body.homeChatId !== undefined || body.city !== undefined) db.update(events).set({
         ...(body.city === undefined ? {} : { city: body.city }),
         ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
-      if (body.capacity !== undefined) fireEffects(setCapacity(db, params.id, body.capacity, now()));
+      if (body.capacity !== undefined) fireEffects(run(setCapacity(params.id, body.capacity, now())));
       // A run that moved branch is staffed by the admins of the branch it moved to.
-      if (body.city !== undefined && body.city !== event.city) syncEventStaff(db, params.id, now());
+      if (body.city !== undefined && body.city !== event.city) run(syncEventStaff(params.id, now()));
       // Switching the queue back on hands out the spots the dormant queue missed.
-      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(issueOffers(db, params.id, now()));
+      if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects(run(issueOffers(params.id, now())));
       if (body.status === "canceled" && event.status !== "canceled") {
-        const result = cancelEvent(db, params.id);
+        const result = run(cancelEvent(params.id));
         fireEffects(result.effects);
-        void notifyEventCanceled(result.userIds, params.id).catch(console.error);
+        background(notifyEventCanceled(result.userIds, params.id));
         if (paymentProvider) {
-          void refundCanceledEvent(db, paymentProvider, params.id, now())
+          void runAsync(refundCanceledEvent(params.id, now()).pipe(Effect.provideService(Payments, paymentProvider)))
             .then(fireEffects)
             .catch((cause) => console.error(`Automatic refunds failed for event ${params.id}`, cause));
         }
       }
-      if (event.status !== "draft" && body.status !== "canceled" && changes.length) void notifyEventUpdated(activeParticipantIds(params.id), params.id, changes).catch(console.error);
+      if (event.status !== "draft" && body.status !== "canceled" && changes.length) background(notifyEventUpdated(activeParticipantIds(params.id), params.id, changes));
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? eventView(updated) : error(status, 404, "event_not_found");
     }, { params: idParams, body: eventPatchBody })
@@ -1334,21 +1361,26 @@ export const app = new Elysia()
     .post("/admin/events/:id/series", ({ params, body, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = attachEvent(db, params.id, body.seriesId);
-      if ("error" in result) {
-        const code = result.error === "event_not_found" || result.error === "series_not_found" ? 404 : 409;
-        return error(status, code, result.error);
-      }
-      const event = db.select().from(events).where(eq(events.id, params.id)).get();
-      return event ? eventView(event) : error(status, 404, "event_not_found");
+      return run(attachEvent(params.id, body.seriesId).pipe(
+        Effect.map(() => {
+          const event = db.select().from(events).where(eq(events.id, params.id)).get();
+          return event ? eventView(event) : error(status, 404, "event_not_found");
+        }),
+        Effect.catchTag("SeriesRejected", ({ code }) => Effect.succeed(
+          error(status, code === "event_not_found" || code === "series_not_found" ? 404 : 409, code),
+        )),
+      ));
     }, { params: idParams, body: t.Object({ seriesId: t.Integer({ minimum: 1 }) }) })
     .delete("/admin/events/:id/series", ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const result = detachEvent(db, params.id);
-      if ("error" in result) return error(status, 404, result.error);
-      const event = db.select().from(events).where(eq(events.id, params.id)).get();
-      return event ? eventView(event) : error(status, 404, "event_not_found");
+      return run(detachEvent(params.id).pipe(
+        Effect.map(() => {
+          const event = db.select().from(events).where(eq(events.id, params.id)).get();
+          return event ? eventView(event) : error(status, 404, "event_not_found");
+        }),
+        Effect.catchTag("SeriesRejected", ({ code }) => Effect.succeed(error(status, 404, code))),
+      ));
     }, { params: idParams })
     .put("/admin/events/:id/organizers", ({ params, body, actor, status }) => {
       const found = administrable(actor, params.id);
@@ -1357,7 +1389,7 @@ export const app = new Elysia()
         db.delete(eventOrganizers).where(eq(eventOrganizers.eventId, params.id)).run();
         for (const userId of [...new Set(body.userIds)]) db.insert(eventOrganizers).values({ eventId: params.id, userId }).run();
       })();
-      syncEventStaff(db, params.id, now());
+      run(syncEventStaff(params.id, now()));
       return { userIds: [...new Set(body.userIds)] };
     }, { params: idParams, body: t.Object({ userIds: t.Array(t.Integer()) }) })
     .get("/admin/events/:id/stats", ({ params, actor, status }) => {
@@ -1379,19 +1411,22 @@ export const app = new Elysia()
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
       if (!paymentProvider) return error(status, 503, "payments_not_configured");
-      try {
-        const result = await requestAdminRefund(db, paymentProvider, params.id, params.orderId, now());
-        if ("error" in result) return error(status, result.error === "order_not_found" ? 404 : 409, result.error);
-        fireEffects(result.effects);
-        const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
-        return order ?? error(status, 404, "order_not_found");
-      } catch (cause) {
-        console.error(`Admin refund failed for order ${params.orderId}`, cause instanceof Error ? cause.message : "unknown error");
-        const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
-        return order?.status === "refund_pending"
-          ? order
-          : error(status, 503, "payment_temporarily_unavailable");
-      }
+      return runAsync(requestAdminRefund(params.id, params.orderId, now()).pipe(
+        Effect.provideService(Payments, paymentProvider),
+        Effect.map(({ effects }) => {
+          fireEffects(effects);
+          const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+          return order ?? error(status, 404, "order_not_found");
+        }),
+        Effect.catchTag("OrderRejected", ({ code }) => Effect.succeed(error(status, code === "order_not_found" ? 404 : 409, code))),
+        Effect.catchDefect((cause) => Effect.sync(() => {
+          console.error(`Admin refund failed for order ${params.orderId}`, cause instanceof Error ? cause.message : "unknown error");
+          const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+          return order?.status === "refund_pending"
+            ? order
+            : error(status, 503, "payment_temporarily_unavailable");
+        })),
+      ));
     }, { params: t.Object({ id: t.Numeric(), orderId: t.String({ minLength: 1 }) }) })
     .get("/admin/events/:id/link", async ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
@@ -1416,14 +1451,14 @@ export const app = new Elysia()
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isBanned: true }).where(eq(users.id, params.id)).run();
-      syncAllStaff(db, now());
+      run(syncAllStaff(now()));
       return { ok: true };
     }, { params: idParams })
     .post("/admin/users/:id/unban", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isBanned: false }).where(eq(users.id, params.id)).run();
-      syncAllStaff(db, now());
+      run(syncAllStaff(now()));
       return { ok: true };
     }, { params: idParams })
     /**
@@ -1442,7 +1477,7 @@ export const app = new Elysia()
         db.insert(userCityRoles).values({ city: body.city, userId: params.id, role: body.role })
           .onConflictDoUpdate({ target: [userCityRoles.city, userCityRoles.userId], set: { role: body.role } }).run();
       }
-      syncCityStaff(db, body.city, now());
+      run(syncCityStaff(body.city, now()));
       return {
         roles: db.select({ city: userCityRoles.city, role: userCityRoles.role }).from(userCityRoles)
           .where(eq(userCityRoles.userId, params.id)).orderBy(asc(userCityRoles.city)).all(),
@@ -1452,7 +1487,7 @@ export const app = new Elysia()
     .get("/admin/groups", async ({ query, actor, status }) => {
       if (!canAdminCity(actor, query.city)) return error(status, 403, "forbidden");
       const ids = assignableChats(db, query.city);
-      await refreshChatStates(ids);
+      await runAsync(refreshChatStates(ids));
       return { groups: ids.map((id) => ({ id, ...chatState(id) })) };
     }, { query: t.Object({ city: citySchema }) })
     /**
@@ -1462,7 +1497,7 @@ export const app = new Elysia()
     .get("/admin/chats", async ({ actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       const catalog = chatCatalog(db, adminCities(actor), actor.isGlobalAdmin);
-      await refreshChatStates(catalog.map((chat) => chat.id));
+      await runAsync(refreshChatStates(catalog.map((chat) => chat.id)));
       return {
         chats: catalog.map((chat) => ({ ...chat, ...chatState(chat.id), createdAt: iso(chat.createdAt), checkedAt: iso(chat.checkedAt) })),
         canAssign: actor.isGlobalAdmin,
@@ -1473,14 +1508,14 @@ export const app = new Elysia()
       // gain reach into that group.
       if (!actor.isGlobalAdmin) return error(status, 403, "forbidden");
       if (!chatById(db, params.id)) return error(status, 404, "chat_not_found");
-      setChatCity(db, params.id, body.city);
+      run(setChatCity(params.id, body.city));
       return { ok: true };
     }, { params: idParams, body: t.Object({ city: t.Nullable(citySchema) }) })
     .post("/admin/users/:id/promote", ({ params, isAdmin, status }) => {
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: true }).where(eq(users.id, params.id)).run();
-      syncAllStaff(db, now());
+      run(syncAllStaff(now()));
       return { ok: true };
     }, { params: idParams })
     .post("/admin/users/:id/demote", ({ params, isAdmin, status }) => {
@@ -1488,7 +1523,7 @@ export const app = new Elysia()
       if (adminIds.has(params.id)) return error(status, 409, "configured_admin_cannot_be_demoted");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run();
-      syncAllStaff(db, now());
+      run(syncAllStaff(now()));
       return { ok: true };
     }, { params: idParams })
     /**
@@ -1514,10 +1549,11 @@ export const app = new Elysia()
       // A save with nothing to change still returns the card, so it needs the card's own gate.
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
-      const result = setCityRoles(db, actor, params.id, body.roles);
-      if ("error" in result) return error(status, result.error === "forbidden" ? 403 : 400, result.error);
-      for (const city of result.changed) syncCityStaff(db, city, now());
-      return personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found");
+      return run(setCityRoles(actor, params.id, body.roles).pipe(
+        Effect.flatMap(({ changed }) => Effect.forEach(changed, (city) => syncCityStaff(city, now()), { discard: true })),
+        Effect.map(() => personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found")),
+        Effect.catchTag("RolesRejected", ({ code }) => Effect.succeed(error(status, code === "forbidden" ? 403 : 400, code))),
+      ));
     }, { params: idParams, body: t.Object({ roles: t.Array(t.Object({ city: citySchema, role: t.Nullable(cityRoleSchema) }), { maxItems: cities.length }) }) })
     .get("/admin/stats", ({ query, actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");

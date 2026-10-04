@@ -6,6 +6,7 @@ import { needsAttention } from "../../src/core/attention";
 import type { Actor } from "../../src/core/cities";
 import { personCard, setCityRoles } from "../../src/core/people";
 import { monthStats } from "../../src/core/stats";
+import { run } from "../support/effect";
 
 let db: Db;
 // 2030-03-15 15:00 in Moscow.
@@ -135,14 +136,14 @@ describe("the person card", () => {
   test("saving several branches is all or nothing under canGrantRole", () => {
     const branchAdmin = actor(1, false, [["spb", "admin"]]);
     // Re-sending an untouched branch is fine; touching another branch refuses the lot.
-    expect(setCityRoles(db, branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "msk", role: "organizer" }])).toEqual({ error: "forbidden" });
+    expect(run(db, setCityRoles(branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "msk", role: "organizer" }]))).toEqual({ error: "forbidden" });
     expect(db.$client.query("SELECT count(*) AS n FROM user_city_roles").get()).toEqual({ n: 0 });
 
-    expect(setCityRoles(db, branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "msk", role: null }])).toEqual({ changed: ["spb"] });
-    expect(setCityRoles(db, branchAdmin, 2, [{ city: "spb", role: "admin" }])).toEqual({ error: "forbidden" });
-    expect(setCityRoles(db, branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "spb", role: null }])).toEqual({ error: "duplicate_city" });
+    expect(run(db, setCityRoles(branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "msk", role: null }]))).toEqual({ changed: ["spb"] });
+    expect(run(db, setCityRoles(branchAdmin, 2, [{ city: "spb", role: "admin" }]))).toEqual({ error: "forbidden" });
+    expect(run(db, setCityRoles(branchAdmin, 2, [{ city: "spb", role: "organizer" }, { city: "spb", role: null }]))).toEqual({ error: "duplicate_city" });
 
-    expect(setCityRoles(db, actor(1, true), 2, [{ city: "spb", role: null }, { city: "kzn", role: "admin" }])).toEqual({ changed: ["spb", "kzn"] });
+    expect(run(db, setCityRoles(actor(1, true), 2, [{ city: "spb", role: null }, { city: "kzn", role: "admin" }]))).toEqual({ changed: ["spb", "kzn"] });
     expect(db.$client.query("SELECT city, role FROM user_city_roles WHERE user_id = 2").all()).toEqual([{ city: "kzn", role: "admin" }]);
   });
 });

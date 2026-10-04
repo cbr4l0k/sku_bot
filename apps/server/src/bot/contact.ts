@@ -1,7 +1,9 @@
+import { Effect } from "effect";
 import { InlineKeyboard, Keyboard, RemoveKeyboard } from "gramio";
 import { eq, users } from "@sku/db";
 
 import { db } from "../db";
+import { runtime } from "../runtime";
 import { sendEventCard } from "./event-card";
 import { sendHero } from "./hero";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -20,7 +22,7 @@ type ContactContext = {
   send: (text: string | { toString(): string }, params?: { reply_markup?: InlineKeyboard | Keyboard | RemoveKeyboard }) => Promise<unknown>;
 };
 
-export const contactHandler = async (context: ContactContext): Promise<void> => {
+export const contactHandler = (context: ContactContext): Promise<void> => runtime.runPromise(Effect.gen(function* () {
   const contact = context.contact;
   const telegramUser = context.from;
   if (!contact || !telegramUser) return;
@@ -28,7 +30,7 @@ export const contactHandler = async (context: ContactContext): Promise<void> => 
   const locale = db.select({ locale: users.locale }).from(users).where(eq(users.id, telegramUser.id)).get()?.locale
     ?? localeFromLanguageCode(telegramUser.languageCode);
   if (contact.userId !== telegramUser.id) {
-    await context.send(i18n.t(locale, "contactRejected"));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "contactRejected")));
     return;
   }
 
@@ -44,12 +46,12 @@ export const contactHandler = async (context: ContactContext): Promise<void> => 
     set: { phone: contact.phoneNumber },
   }).run();
 
-  await context.send(i18n.t(locale, "contactSaved"), { reply_markup: new RemoveKeyboard() });
-  await sendHero(context, locale);
+  yield* Effect.promise(() => context.send(i18n.t(locale, "contactSaved"), { reply_markup: new RemoveKeyboard() }));
+  yield* Effect.promise(() => sendHero(context, locale));
 
   const eventId = pendingEventStarts.get(telegramUser.id);
   if (eventId !== undefined) {
     pendingEventStarts.delete(telegramUser.id);
-    await sendEventCard(context, eventId, telegramUser.id, locale);
+    yield* sendEventCard(context, eventId, telegramUser.id, locale);
   }
-};
+}));

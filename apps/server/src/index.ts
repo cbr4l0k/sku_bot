@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { webhookHandler } from "gramio";
 import { DEFAULT_CITY } from "@sku/cities";
 import { chats, migrate } from "@sku/db";
@@ -9,23 +10,26 @@ import { seedChatsFromEnv } from "./core/chats";
 import { syncAllStaff } from "./core/staff";
 import { db } from "./db";
 import { loadEnv } from "./env";
+import { runtime } from "./runtime";
 import { startSweeper } from "./sweeper";
 
 const env = loadEnv();
 const isProduction = env.NODE_ENV === "production";
 
 migrate(db);
-syncConfiguredAdmins(db, env.ADMIN_IDS);
-// Admins and organizers stand on every roster they are responsible for without
-// signing up for it. Done at boot so a change to ADMIN_IDS — the one source of
-// staff that no request passes through — lands with the deploy that made it.
-syncAllStaff(db, new Date());
+const seeded = runtime.runSync(Effect.gen(function* () {
+  yield* syncConfiguredAdmins(env.ADMIN_IDS);
+  // Admins and organizers stand on every roster they are responsible for without
+  // signing up for it. Done at boot so a change to ADMIN_IDS — the one source of
+  // staff that no request passes through — lands with the deploy that made it.
+  yield* syncAllStaff(new Date());
 
-// The chat catalog moved out of the environment and into the database. Anything
-// still listed is lifted in under the branch that has been running everything so
-// far, so no deploy has to be sequenced against the change; delete the variable
-// once the rows exist.
-const seeded = seedChatsFromEnv(db, env.EVENT_GROUPS, DEFAULT_CITY, new Date());
+  // The chat catalog moved out of the environment and into the database. Anything
+  // still listed is lifted in under the branch that has been running everything so
+  // far, so no deploy has to be sequenced against the change; delete the variable
+  // once the rows exist.
+  return yield* seedChatsFromEnv(env.EVENT_GROUPS, DEFAULT_CITY, new Date());
+}));
 if (seeded > 0) {
   console.warn(`[chat] filed ${seeded} chat(s) from EVENT_GROUPS under "${DEFAULT_CITY}". EVENT_GROUPS is deprecated — manage chats in the admin screen and drop the variable.`);
 }
@@ -35,7 +39,7 @@ if (isProduction) {
 }
 
 const server = app.listen(3000);
-const stopSweeper = startSweeper(db);
+const stopSweeper = startSweeper();
 
 if (isProduction) {
   await bot.start({
@@ -50,7 +54,7 @@ if (isProduction) {
 
 // Warm the chat titles so the admin UI names them instead of showing raw ids, and
 // surface an unreachable chat in the log at boot rather than at first use.
-void refreshChatStates(db.select({ id: chats.id }).from(chats).all().map((chat) => chat.id)).catch(console.error);
+void runtime.runPromise(refreshChatStates(db.select({ id: chats.id }).from(chats).all().map((chat) => chat.id))).catch(console.error);
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {
@@ -60,6 +64,7 @@ const shutdown = async (signal: string) => {
   stopSweeper();
   await server.stop();
   await bot.stop();
+  await runtime.dispose();
 };
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

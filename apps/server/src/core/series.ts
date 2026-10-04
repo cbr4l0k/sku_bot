@@ -1,4 +1,7 @@
+import { Effect } from "effect";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
+import { SeriesRejected } from "./errors";
 import { eventStats } from "./stats";
 import { syncEventStaff } from "./staff";
 
@@ -41,7 +44,7 @@ type VariantRow = {
   sort_order: number;
 };
 
-type SpawnError = "series_not_found" | "series_inactive" | "next_starts_at_missing" | "next_starts_at_past";
+type SpawnError = Extract<SeriesRejected["code"], "series_not_found" | "series_inactive" | "next_starts_at_missing" | "next_starts_at_past">;
 
 const seriesById = (db: Db, seriesId: number) => db.$client.query<SeriesRow, [number]>(`
   SELECT id, city, title, description, location, location_url, capacity,
@@ -54,7 +57,8 @@ const seriesById = (db: Db, seriesId: number) => db.$client.query<SeriesRow, [nu
  * inventory rows. Nothing in an old occurrence can therefore be rewritten by
  * editing the template for the next one.
  */
-export const spawnOccurrence = (db: Db, seriesId: number, now: Date): { eventId: number } | { error: SpawnError } => {
+export const spawnOccurrence = Effect.fn("series.spawnOccurrence")(function* (seriesId: number, now: Date) {
+  const db = yield* Database;
   const result = db.$client.transaction((): { eventId: number } | { error: SpawnError } => {
     const series = seriesById(db, seriesId);
     if (!series) return { error: "series_not_found" };
@@ -147,9 +151,11 @@ export const spawnOccurrence = (db: Db, seriesId: number, now: Date): { eventId:
     return { eventId: event.id };
   })();
 
-  if ("eventId" in result) syncEventStaff(db, result.eventId, now);
+  if ("error" in result) return yield* new SeriesRejected({ code: result.error });
+  // Staffing follows the committed copy rather than joining its transaction.
+  yield* syncEventStaff(result.eventId, now);
   return result;
-};
+});
 
 /** A date is due only after its review window has opened. */
 export const dueSeries = (db: Db, now: Date): number[] => db.$client
@@ -161,37 +167,43 @@ export const dueSeries = (db: Db, now: Date): number[] => db.$client
   `).all(DAY_SECONDS, seconds(now))
   .map((row) => row.id);
 
-export const skipNext = (db: Db, seriesId: number, now: Date): { ok: true } | { error: "series_not_found" | "next_starts_at_missing" | "cadence_missing" } => {
+export const skipNext = Effect.fn("series.skipNext")(function* (seriesId: number, now: Date) {
+  const db = yield* Database;
   const series = seriesById(db, seriesId);
-  if (!series) return { error: "series_not_found" };
-  if (series.next_starts_at === null) return { error: "next_starts_at_missing" };
-  if (series.cadence_days === null) return { error: "cadence_missing" };
+  if (!series) return yield* new SeriesRejected({ code: "series_not_found" });
+  if (series.next_starts_at === null) return yield* new SeriesRejected({ code: "next_starts_at_missing" });
+  if (series.cadence_days === null) return yield* new SeriesRejected({ code: "cadence_missing" });
   db.$client.query("UPDATE event_series SET next_starts_at = ?, updated_at = ? WHERE id = ?")
     .run(series.next_starts_at + series.cadence_days * DAY_SECONDS, seconds(now), seriesId);
-  return { ok: true };
-};
+  return { ok: true as const };
+});
 
 /** Moving or clearing the next run is always allowed; the schedule belongs to people. */
-export const setNextStartsAt = (db: Db, seriesId: number, date: Date | null, now: Date): { ok: true } | { error: "series_not_found" } => {
+export const setNextStartsAt = Effect.fn("series.setNextStartsAt")(function* (seriesId: number, date: Date | null, now: Date) {
+  const db = yield* Database;
   const result = db.$client.query("UPDATE event_series SET next_starts_at = ?, updated_at = ? WHERE id = ?")
     .run(date === null ? null : seconds(date), seconds(now), seriesId);
-  return result.changes ? { ok: true } : { error: "series_not_found" };
-};
+  if (!result.changes) return yield* new SeriesRejected({ code: "series_not_found" });
+  return { ok: true as const };
+});
 
-export const attachEvent = (db: Db, eventId: number, seriesId: number): { ok: true } | { error: "event_not_found" | "series_not_found" | "city_mismatch" } => {
+export const attachEvent = Effect.fn("series.attachEvent")(function* (eventId: number, seriesId: number) {
+  const db = yield* Database;
   const event = db.$client.query<{ city: string }, [number]>("SELECT city FROM events WHERE id = ?").get(eventId);
-  if (!event) return { error: "event_not_found" };
+  if (!event) return yield* new SeriesRejected({ code: "event_not_found" });
   const series = seriesById(db, seriesId);
-  if (!series) return { error: "series_not_found" };
-  if (event.city !== series.city) return { error: "city_mismatch" };
+  if (!series) return yield* new SeriesRejected({ code: "series_not_found" });
+  if (event.city !== series.city) return yield* new SeriesRejected({ code: "city_mismatch" });
   db.$client.query("UPDATE events SET series_id = ? WHERE id = ?").run(seriesId, eventId);
-  return { ok: true };
-};
+  return { ok: true as const };
+});
 
-export const detachEvent = (db: Db, eventId: number): { ok: true } | { error: "event_not_found" } => {
+export const detachEvent = Effect.fn("series.detachEvent")(function* (eventId: number) {
+  const db = yield* Database;
   const result = db.$client.query("UPDATE events SET series_id = NULL WHERE id = ?").run(eventId);
-  return result.changes ? { ok: true } : { error: "event_not_found" };
-};
+  if (!result.changes) return yield* new SeriesRejected({ code: "event_not_found" });
+  return { ok: true as const };
+});
 
 type OccurrenceRow = { id: number; title: string; starts_at: number; capacity: number | null; status: string; ended_at: number | null };
 type ParticipantRow = { user_id: number; status: string; is_staff: number };

@@ -11,6 +11,7 @@ import { getBotTokenSecretKey, signInitData } from "@gramio/init-data";
 
 const { db } = await import("../src/db");
 const { dispatchEffects } = await import("../src/notify");
+const { runtime } = await import("../src/runtime");
 const { app } = await import("../src/api");
 
 const startsAt = new Date("2030-08-05T16:30:00Z");
@@ -32,10 +33,10 @@ test("a failed offer delivery does not block later effects", async () => {
     return new Response(JSON.stringify({ ok: true, result: { message_id: 42 } }), { headers: { "content-type": "application/json" } });
   });
 
-  await dispatchEffects([
+  await runtime.runPromise(dispatchEffects([
     { kind: "offer_created", offerId: 1, userId: 1001, eventId: 1, expiresAt: startsAt },
     { kind: "offer_created", offerId: 2, userId: 2002, eventId: 1, expiresAt: startsAt },
-  ]);
+  ]));
 
   expect(calls).toBe(2);
   expect(db.$client.query<{ message_id: number | null }, [number]>("SELECT message_id FROM waitlist_offers WHERE id = ?").get(2)?.message_id).toBe(42);

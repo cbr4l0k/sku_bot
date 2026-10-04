@@ -1,15 +1,16 @@
+import { Effect } from "effect";
 import { InlineKeyboard, TelegramError } from "gramio";
 
-import { eq, users } from "@sku/db";
+import { eq, users, type Db } from "@sku/db";
 import { offerCallback } from "./bot/callbacks";
 import { i18n } from "./bot/i18n";
 import { eventSummary } from "./bot/event-card";
 import type { EventChange, EventUpdatedFields } from "./bot/event-card";
 import { bot } from "./bot";
-import { db } from "./db";
 import type { NotificationEffect } from "./core/types";
+import { Database } from "./services";
 
-const localeFor = (userId: number) =>
+const localeFor = (db: Db, userId: number) =>
   db.select({ locale: users.locale }).from(users).where(eq(users.id, userId)).get()?.locale ?? "ru";
 
 const logTelegramFailure = (action: string, error: unknown) => {
@@ -21,8 +22,9 @@ const logTelegramFailure = (action: string, error: unknown) => {
   console.warn(`Telegram ${action} failed`, error);
 };
 
-const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
-  const locale = localeFor(effect.userId);
+const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) {
+  const db = yield* Database;
+  const locale = localeFor(db, effect.userId);
 
   if (["ticket_paid", "ticket_refunded", "ticket_refund_failed", "purchase_paid", "purchase_refunded", "purchase_refund_failed"].includes(effect.kind)) {
     const event = eventSummary(effect.eventId, locale);
@@ -32,11 +34,11 @@ const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
         : effect.kind === "ticket_refund_failed" ? "ticketRefundFailed"
           : effect.kind === "purchase_paid" ? "purchasePaid"
             : effect.kind === "purchase_refunded" ? "purchaseRefunded" : "purchaseRefundFailed";
-    const response = await bot.api.sendMessage({
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
       chat_id: effect.userId,
       text: i18n.t(locale, key, event.title),
       suppress: true,
-    });
+    }));
     if (response instanceof TelegramError) logTelegramFailure("purchase notification", response);
     return;
   }
@@ -51,14 +53,14 @@ const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
       i18n.t(locale, "offerAccept"),
       offerCallback.pack({ id: effect.offerId }),
     );
-    const response = await bot.api.sendMessage({
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
       chat_id: effect.userId,
       text: effect.broadcast
         ? i18n.t(locale, "offerBroadcast", event.title, event.date)
         : i18n.t(locale, "offer", event.title, event.date),
       reply_markup: replyMarkup,
       suppress: true,
-    });
+    }));
 
     if (response instanceof TelegramError) {
       logTelegramFailure("offer notification", response);
@@ -72,54 +74,56 @@ const dispatchEffect = async (effect: NotificationEffect): Promise<void> => {
 
   if (effect.kind !== "offer_superseded") return;
 
-  if (effect.messageId !== null) {
-    const edit = await bot.api.editMessageReplyMarkup({
+  const messageId = effect.messageId;
+  if (messageId !== null) {
+    const edit = yield* Effect.promise(() => bot.api.editMessageReplyMarkup({
       chat_id: effect.userId,
-      message_id: effect.messageId,
+      message_id: messageId,
       reply_markup: undefined,
       suppress: true,
-    });
+    }));
     if (edit instanceof TelegramError) logTelegramFailure("offer keyboard removal", edit);
   }
 
-  const response = await bot.api.sendMessage({
+  const response = yield* Effect.promise(() => bot.api.sendMessage({
     chat_id: effect.userId,
     text: i18n.t(locale, "offerSuperseded"),
     suppress: true,
-  });
+  }));
   if (response instanceof TelegramError) logTelegramFailure("offer superseded notification", response);
-};
+});
 
-export const dispatchEffects = async (effects: NotificationEffect[]): Promise<void> => {
+/** One at a time, and one failed delivery never holds back the rest. */
+export const dispatchEffects = Effect.fn("notify.dispatchEffects")(function* (effects: NotificationEffect[]) {
   for (const effect of effects) {
-    try {
-      await dispatchEffect(effect);
-    } catch (error) {
-      logTelegramFailure("notification dispatch", error);
-    }
+    yield* dispatchEffect(effect).pipe(
+      Effect.catchDefect((error) => Effect.sync(() => logTelegramFailure("notification dispatch", error))),
+    );
   }
-};
+});
 
-export const notifyEventCanceled = async (userIds: number[], eventId: number): Promise<void> => {
+export const notifyEventCanceled = Effect.fn("notify.notifyEventCanceled")(function* (userIds: number[], eventId: number) {
+  const db = yield* Database;
   for (const userId of userIds) {
-    const locale = localeFor(userId);
+    const locale = localeFor(db, userId);
     const event = eventSummary(eventId, locale);
     if (!event) {
       console.warn(`Event cancellation notification skipped: event ${eventId} was not found.`);
       continue;
     }
-    const response = await bot.api.sendMessage({
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
       chat_id: userId,
       text: i18n.t(locale, "eventCanceled", event.title),
       suppress: true,
-    });
+    }));
     if (response instanceof TelegramError) logTelegramFailure("event cancellation notification", response);
   }
-};
+});
 
-export const notifyEventUpdated = async (userIds: number[], eventId: number, changes: EventChange[]): Promise<void> => {
+export const notifyEventUpdated = Effect.fn("notify.notifyEventUpdated")(function* (userIds: number[], eventId: number, changes: EventChange[]) {
+  const db = yield* Database;
   for (const userId of userIds) {
-    const locale = localeFor(userId);
+    const locale = localeFor(db, userId);
     const event = eventSummary(eventId, locale);
     if (!event) {
       console.warn(`Event update notification skipped: event ${eventId} was not found.`);
@@ -132,11 +136,11 @@ export const notifyEventUpdated = async (userIds: number[], eventId: number, cha
       ...(changes.includes("location") ? { location: event.location } : {}),
       ...(changes.includes("capacity") ? { capacity: event.capacity } : {}),
     };
-    const response = await bot.api.sendMessage({
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
       chat_id: userId,
       text: i18n.t(locale, "eventUpdated", event.title, fields),
       suppress: true,
-    });
+    }));
     if (response instanceof TelegramError) logTelegramFailure("event update notification", response);
   }
-};
+});

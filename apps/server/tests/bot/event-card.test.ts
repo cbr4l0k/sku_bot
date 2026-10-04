@@ -7,6 +7,7 @@ process.env.DATABASE_PATH = ":memory:";
 process.env.NODE_ENV = "test";
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import { run } from "../support/effect";
 
 const { renderEventCard } = await import("../../src/bot/event-card");
 const { joinEvent } = await import("../../src/core/registration");
@@ -51,26 +52,26 @@ describe("bot event card", () => {
   });
 
   test("offers the queue once full, when the queue is on", () => {
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     expect(actions(1, 3)).toEqual(["⏳ Join the queue"]);
   });
 
   test("offers nothing and says so when full with the queue off", () => {
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     db.$client.query("UPDATE events SET waitlist_enabled = 0 WHERE id = 1").run();
     expect(actions(1, 3)).toEqual([]);
     expect(cardText(1, 3)).toContain("No spots left");
   });
 
   test("shows a signed-up user their standing instead of a button", () => {
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     expect(actions(1, 2)).toEqual([]);
     expect(cardText(1, 2)).toContain("You are signed up");
   });
 
   test("shows that a user is queued without exposing their place", () => {
-    joinEvent(db, 1, 2, now);
-    joinEvent(db, 1, 3, now);
+    run(db, joinEvent(1, 2, now));
+    run(db, joinEvent(1, 3, now));
     expect(actions(1, 3)).toEqual([]);
     expect(cardText(1, 3)).toContain("You are in the queue");
     expect(cardText(1, 3)).not.toContain("#1");

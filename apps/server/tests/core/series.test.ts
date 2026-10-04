@@ -7,6 +7,7 @@ import {
   skipNext,
   spawnOccurrence,
 } from "../../src/core/series";
+import { run } from "../support/effect";
 
 let db: Db;
 const now = new Date("2030-01-01T12:00:00Z");
@@ -53,7 +54,7 @@ describe("series spawning", () => {
     if (!product) throw new Error("Product insert returned no id");
     db.$client.query("INSERT INTO series_product_variants (product_id, name, stock, sort_order) VALUES (?, 'M', 8, 5)").run(product.id);
 
-    const result = spawnOccurrence(db, seriesId, now);
+    const result = run(db, spawnOccurrence(seriesId, now));
     expect("eventId" in result).toBe(true);
     if (!("eventId" in result)) return;
     const event = db.$client.query<{ status: string; starts_at: number; series_id: number }, [number]>(
@@ -74,7 +75,7 @@ describe("series spawning", () => {
 
   test("always creates a draft even when the approved date is already in the past", () => {
     const seriesId = createSeries(new Date("2029-12-01T09:00:00Z"));
-    const result = spawnOccurrence(db, seriesId, now);
+    const result = run(db, spawnOccurrence(seriesId, now));
     if (!("eventId" in result)) throw new Error(result.error);
     expect(db.$client.query<{ status: string }, [number]>("SELECT status FROM events WHERE id = ?").get(result.eventId)?.status).toBe("draft");
   });
@@ -82,12 +83,12 @@ describe("series spawning", () => {
   test("advances by the cadence hint and clears a hand-scheduled date", () => {
     const firstDate = new Date("2030-01-10T19:30:00Z");
     const weekly = createSeries(firstDate, 7);
-    spawnOccurrence(db, weekly, now);
+    run(db, spawnOccurrence(weekly, now));
     expect(db.$client.query<{ next_starts_at: number | null }, [number]>("SELECT next_starts_at FROM event_series WHERE id = ?").get(weekly)?.next_starts_at)
       .toBe(unix(firstDate) + days(7));
 
     const handScheduled = createSeries(firstDate, null);
-    spawnOccurrence(db, handScheduled, now);
+    run(db, spawnOccurrence(handScheduled, now));
     expect(db.$client.query<{ next_starts_at: number | null }, [number]>("SELECT next_starts_at FROM event_series WHERE id = ?").get(handScheduled)?.next_starts_at)
       .toBeNull();
   });
@@ -95,8 +96,8 @@ describe("series spawning", () => {
   test("two immediate spawns cannot create the same occurrence date twice", () => {
     const firstDate = new Date("2030-01-10T19:30:00Z");
     const seriesId = createSeries(firstDate, 7);
-    spawnOccurrence(db, seriesId, now);
-    spawnOccurrence(db, seriesId, now);
+    run(db, spawnOccurrence(seriesId, now));
+    run(db, spawnOccurrence(seriesId, now));
     expect(eventDates(seriesId)).toEqual([unix(firstDate), unix(firstDate) + days(7)]);
     expect(new Set(eventDates(seriesId)).size).toBe(2);
   });
@@ -105,10 +106,10 @@ describe("series spawning", () => {
     const sunday = new Date("2030-01-06T09:30:00Z");
     const wednesday = new Date("2030-01-09T19:00:00Z");
     const seriesId = createSeries(null, null);
-    expect(setNextStartsAt(db, seriesId, sunday, now)).toEqual({ ok: true });
-    spawnOccurrence(db, seriesId, now);
-    expect(setNextStartsAt(db, seriesId, wednesday, now)).toEqual({ ok: true });
-    spawnOccurrence(db, seriesId, now);
+    expect(run(db, setNextStartsAt(seriesId, sunday, now))).toEqual({ ok: true });
+    run(db, spawnOccurrence(seriesId, now));
+    expect(run(db, setNextStartsAt(seriesId, wednesday, now))).toEqual({ ok: true });
+    run(db, spawnOccurrence(seriesId, now));
     expect(eventDates(seriesId)).toEqual([unix(sunday), unix(wednesday)]);
   });
 
@@ -119,8 +120,8 @@ describe("series spawning", () => {
     const stale = new Date("2030-01-01T19:30:00Z");
     const seriesId = createSeries(stale, 7);
     const backUp = new Date("2030-01-31T12:00:00Z");
-    for (const id of dueSeries(db, backUp)) spawnOccurrence(db, id, backUp);
-    for (const id of dueSeries(db, backUp)) spawnOccurrence(db, id, backUp);
+    for (const id of dueSeries(db, backUp)) run(db, spawnOccurrence(id, backUp));
+    for (const id of dueSeries(db, backUp)) run(db, spawnOccurrence(id, backUp));
     expect(eventDates(seriesId)).toEqual([
       unix(new Date("2030-02-05T19:30:00Z")),
       unix(new Date("2030-02-12T19:30:00Z")),
@@ -130,14 +131,14 @@ describe("series spawning", () => {
   test("a hand-scheduled series whose date passed stops asking rather than guessing", () => {
     const seriesId = createSeries(new Date("2030-01-01T09:30:00Z"), null);
     const later = new Date("2030-01-20T12:00:00Z");
-    expect(spawnOccurrence(db, seriesId, later)).toEqual({ error: "next_starts_at_past" });
+    expect(run(db, spawnOccurrence(seriesId, later))).toEqual({ error: "next_starts_at_past" });
     expect(eventDates(seriesId)).toEqual([]);
   });
 
   test("skip advances the proposal without creating an event", () => {
     const firstDate = new Date("2030-01-10T19:30:00Z");
     const seriesId = createSeries(firstDate, 7);
-    expect(skipNext(db, seriesId, now)).toEqual({ ok: true });
+    expect(run(db, skipNext(seriesId, now))).toEqual({ ok: true });
     expect(eventDates(seriesId)).toEqual([]);
     expect(db.$client.query<{ next_starts_at: number }, [number]>("SELECT next_starts_at FROM event_series WHERE id = ?").get(seriesId)?.next_starts_at)
       .toBe(unix(firstDate) + days(7));
@@ -151,7 +152,7 @@ describe("series spawning", () => {
 
   test("deleting a series preserves its occurrences and registrations", () => {
     const seriesId = createSeries(new Date("2030-01-10T19:30:00Z"), null);
-    const result = spawnOccurrence(db, seriesId, now);
+    const result = run(db, spawnOccurrence(seriesId, now));
     if (!("eventId" in result)) throw new Error(result.error);
     db.$client.query("INSERT INTO registrations (event_id, user_id, status) VALUES (?, 3, 'registered')").run(result.eventId);
     db.$client.query("DELETE FROM event_series WHERE id = ?").run(seriesId);

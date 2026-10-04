@@ -1,7 +1,10 @@
+import { Effect } from "effect";
 import type { Db, TicketOrderStatus } from "@sku/db";
-import { PaymentProviderError, type PaymentProvider, type ProviderPayment, type ProviderRefund } from "../payments";
+import { PaymentProviderError, type ProviderPayment, type ProviderRefund } from "../payments/provider";
+import { Database, Payments } from "../services";
+import { CheckoutRejected, OrderRejected, type CheckoutError } from "./errors";
 import type { NotificationEffect } from "./types";
-import { issueOffers } from "./waitlist";
+import { issueOffersSync } from "./waitlist";
 
 const CHECKOUT_WINDOW_SECONDS = 60 * 60;
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
@@ -95,24 +98,6 @@ type OrderItemRow = {
   unit_amount_minor: number;
   quantity: number;
 };
-
-export type CheckoutError =
-  | "event_not_found"
-  | "event_over"
-  | "not_eligible"
-  | "already_joined"
-  | "ticket_not_found"
-  | "ticket_sales_closed"
-  | "ticket_sold_out"
-  | "invalid_basket"
-  | "product_not_found"
-  | "product_variant_required"
-  | "product_variant_not_found"
-  | "product_sold_out"
-  | "product_limit_exceeded"
-  | "active_order_exists"
-  | "event_full"
-  | "contact_required";
 
 export type Checkout = {
   orderId: string;
@@ -270,9 +255,7 @@ const verifyPayment = (order: OrderRow, payment: ProviderPayment) => {
 };
 
 /** Reserve inventory first, then create the remote payment with a stable idempotency key. */
-export const createCheckout = async (
-  db: Db,
-  provider: PaymentProvider,
+export const createCheckout = Effect.fn("tickets.createCheckout")(function* (
   input: {
     eventId: number;
     tierId?: number | null;
@@ -282,15 +265,23 @@ export const createCheckout = async (
     userPhone?: string | null;
   },
   now: Date,
-): Promise<Checkout | { error: CheckoutError }> => {
+): Effect.fn.Return<Checkout, CheckoutRejected, Database | Payments> {
+  const db = yield* Database;
+  const provider = yield* Payments;
   const phoneDigits = input.userPhone?.replace(/\D/g, "") ?? "";
   const receiptPhone = phoneDigits.length >= 8 && phoneDigits.length <= 15 ? `+${phoneDigits}` : null;
-  if (provider.requiresCustomerContact && !receiptPhone) return { error: "contact_required" };
+  if (provider.requiresCustomerContact && !receiptPhone) return yield* new CheckoutRejected({ code: "contact_required" });
   const products = requestedProducts(input.productItems ?? []);
-  if (!products) return { error: "invalid_basket" };
+  if (!products) return yield* new CheckoutRejected({ code: "invalid_basket" });
   const tierId = input.tierId ?? null;
-  if (tierId === null && products.size === 0) return { error: "invalid_basket" };
-  const prepared = transaction(db, () => {
+  if (tierId === null && products.size === 0) return yield* new CheckoutRejected({ code: "invalid_basket" });
+  const prepared = transaction(db, (): { error: CheckoutError } | {
+    order: OrderRow;
+    attempt: AttemptRow | null | undefined;
+    event: EventRow;
+    existing: boolean;
+    error?: undefined;
+  } => {
     const event = db.$client.query<EventRow, [number]>(
       "SELECT id, title, status, ended_at, capacity FROM events WHERE id = ?",
     ).get(input.eventId);
@@ -389,41 +380,43 @@ export const createCheckout = async (
     return { order: orderById(db, orderId)!, attempt: attemptForOrder(db, orderId)!, event, existing: false as const };
   });
 
-  if ("error" in prepared && prepared.error !== undefined) return { error: prepared.error };
+  if (prepared.error !== undefined) return yield* new CheckoutRejected({ code: prepared.error });
   if (prepared.attempt?.confirmation_url) return orderView(prepared.order, prepared.attempt.confirmation_url);
-  if (!prepared.attempt) throw new Error(`Order ${prepared.order.id} has no payment attempt`);
+  const attempt = prepared.attempt;
+  if (!attempt) throw new Error(`Order ${prepared.order.id} has no payment attempt`);
 
-  try {
-    const payment = await provider.createPayment({
+  return yield* Effect.gen(function* () {
+    const payment = yield* Effect.promise(() => provider.createPayment({
       amountMinor: prepared.order.amount_minor,
       currency: "RUB",
       description: `${prepared.event.title} — ${prepared.order.ticket_name ?? receiptItemsForOrder(db, prepared.order)[0]!.description}`,
       orderId: prepared.order.id,
       returnUrl: input.returnUrl,
-      idempotenceKey: prepared.attempt.idempotence_key,
+      idempotenceKey: attempt.idempotence_key,
       receiptItems: receiptItemsForOrder(db, prepared.order),
       ...(receiptPhone ? { customerPhone: receiptPhone } : {}),
-    });
+    }));
     verifyPayment(prepared.order, payment);
     const expiresAt = payment.expiresAt ? Math.floor(new Date(payment.expiresAt).getTime() / 1000) : prepared.order.expires_at;
     const timestamp = seconds(now);
     db.$client.query(`
       UPDATE payment_attempts SET provider_payment_id = ?, status = ?, confirmation_url = ?, provider_created_at = ?, updated_at = ? WHERE id = ?
-    `).run(payment.id, payment.status, payment.confirmationUrl, payment.createdAt, timestamp, prepared.attempt.id);
+    `).run(payment.id, payment.status, payment.confirmationUrl, payment.createdAt, timestamp, attempt.id);
     db.$client.query("UPDATE ticket_orders SET expires_at = ?, updated_at = ? WHERE id = ?")
       .run(expiresAt, timestamp, prepared.order.id);
-    if (payment.status !== "pending") await reconcilePayment(db, provider, payment.id, now);
+    if (payment.status !== "pending") yield* reconcilePayment(payment.id, now);
     const current = orderById(db, prepared.order.id)!;
     return orderView(current, payment.confirmationUrl);
-  } catch (error) {
+  }).pipe(
     // A timeout can hide a remotely created payment. Keep the attempt identity for
     // webhook recovery, but release only after marking this order cancel-pending.
-    const definitiveRejection = error instanceof PaymentProviderError && error.status >= 400 && error.status < 500;
-    db.$client.query("UPDATE ticket_orders SET status = ?, canceled_at = ?, updated_at = ? WHERE id = ?")
-      .run(definitiveRejection ? "canceled" : "cancel_pending", definitiveRejection ? seconds(now) : null, seconds(now), prepared.order.id);
-    throw error;
-  }
-};
+    Effect.tapDefect((error) => Effect.sync(() => {
+      const definitiveRejection = error instanceof PaymentProviderError && error.status >= 400 && error.status < 500;
+      db.$client.query("UPDATE ticket_orders SET status = ?, canceled_at = ?, updated_at = ? WHERE id = ?")
+        .run(definitiveRejection ? "canceled" : "cancel_pending", definitiveRejection ? seconds(now) : null, seconds(now), prepared.order.id);
+    })),
+  );
+});
 
 const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: Date): NotificationEffect[] => {
   if (remote.id !== refundRow.provider_refund_id && refundRow.provider_refund_id !== null) throw new Error("Refund id mismatch");
@@ -451,7 +444,7 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
         .run(timestamp, order.id);
     }
   });
-  const effects: NotificationEffect[] = shouldOffer ? issueOffers(db, order.event_id, now) : [];
+  const effects: NotificationEffect[] = shouldOffer ? issueOffersSync(db, order.event_id, now) : [];
   if (remote.status === "succeeded" && refundRow.status !== "succeeded") {
     effects.push({ kind: hasTicket ? "ticket_refunded" : "purchase_refunded", userId: order.user_id, eventId: order.event_id });
   } else if (remote.status === "canceled" && refundRow.status !== "canceled") {
@@ -460,13 +453,13 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
   return effects;
 };
 
-export const ensureRefund = async (
-  db: Db,
-  provider: PaymentProvider,
+export const ensureRefund = Effect.fn("tickets.ensureRefund")(function* (
   orderId: string,
   reason: RequestedRefundReason,
   now: Date,
-): Promise<NotificationEffect[]> => {
+): Effect.fn.Return<NotificationEffect[], never, Database | Payments> {
+  const db = yield* Database;
+  const provider = yield* Payments;
   const knownOrder = orderById(db, orderId);
   if (!knownOrder) throw new Error(`Order ${orderId} was not found`);
   if (knownOrder.status === "refunded") return [];
@@ -478,7 +471,8 @@ export const ensureRefund = async (
   // one created in the YooKassa dashboard or recovered after an ambiguous API
   // failure, using the immutable provider payment id as the link.
   if (knownRefund?.provider_refund_id && knownRefund.status !== "canceled") {
-    return applyRefund(db, knownRefund, await provider.getRefund(knownRefund.provider_refund_id), now);
+    const providerRefundId = knownRefund.provider_refund_id;
+    return applyRefund(db, knownRefund, yield* Effect.promise(() => provider.getRefund(providerRefundId)), now);
   }
   const knownAttempt = db.$client.query<AttemptRow, [string]>(`
     SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
@@ -486,18 +480,19 @@ export const ensureRefund = async (
     WHERE order_id = ? AND status = 'succeeded' AND provider_payment_id IS NOT NULL
     ORDER BY created_at DESC LIMIT 1
   `).get(orderId);
-  if (!knownAttempt?.provider_payment_id) throw new Error(`Order ${orderId} has no succeeded payment`);
-  const activeRefunds = (await provider.getRefundsForPayment(knownAttempt.provider_payment_id))
+  const knownPaymentId = knownAttempt?.provider_payment_id;
+  if (!knownPaymentId) throw new Error(`Order ${orderId} has no succeeded payment`);
+  const activeRefunds = (yield* Effect.promise(() => provider.getRefundsForPayment(knownPaymentId)))
     .filter((refund) => refund.status !== "canceled");
   const existingFullRefunds = activeRefunds.filter((refund) =>
     refund.amountMinor === knownOrder.amount_minor && refund.currency === knownOrder.currency
   );
   if (existingFullRefunds.length > 1) {
-    throw new Error(`Payment ${knownAttempt.provider_payment_id} has multiple active full refunds; nothing was changed`);
+    throw new Error(`Payment ${knownPaymentId} has multiple active full refunds; nothing was changed`);
   }
-  if (existingFullRefunds[0]) return reconcileRefund(db, provider, existingFullRefunds[0].id, now);
+  if (existingFullRefunds[0]) return yield* reconcileRefund(existingFullRefunds[0].id, now);
   if (activeRefunds.length > 0) {
-    throw new Error(`Payment ${knownAttempt.provider_payment_id} already has a partial refund; nothing was changed`);
+    throw new Error(`Payment ${knownPaymentId} already has a partial refund; nothing was changed`);
   }
 
   const prepared = transaction(db, () => {
@@ -531,11 +526,12 @@ export const ensureRefund = async (
     return { order, attempt, refund, done: false as const };
   });
   if (prepared.done) return [];
-  if (prepared.refund.provider_refund_id) return applyRefund(
-    db, prepared.refund, await provider.getRefund(prepared.refund.provider_refund_id), now,
+  const providerRefundId = prepared.refund.provider_refund_id;
+  if (providerRefundId) return applyRefund(
+    db, prepared.refund, yield* Effect.promise(() => provider.getRefund(providerRefundId)), now,
   );
-  try {
-    const remote = await provider.createRefund({
+  return yield* Effect.gen(function* () {
+    const remote = yield* Effect.promise(() => provider.createRefund({
       paymentId: prepared.attempt.provider_payment_id!,
       amountMinor: prepared.order.amount_minor,
       currency: "RUB",
@@ -551,37 +547,41 @@ export const ensureRefund = async (
         return digits.length >= 8 && digits.length <= 15 ? { customerPhone: `+${digits}` } : {};
       })(),
       idempotenceKey: prepared.refund.idempotence_key,
-    });
+    }));
     return applyRefund(db, prepared.refund, remote, now);
-  } catch (error) {
+  }).pipe(
     // Authentication, permission, validation, and missing-resource errors cannot
     // succeed by repeating the same request every 30 seconds. Record the failure
     // and require an explicit retry after its cause has been corrected. Timeouts
     // and rate limiting remain pending because they are expected to recover.
-    if (!isDefinitiveProviderRejection(error)) throw error;
-    const timestamp = seconds(now);
-    transaction(db, () => {
-      db.$client.query("UPDATE refunds SET status = 'canceled', failure_reason = ?, updated_at = ? WHERE id = ?")
-        .run(providerFailureReason(error), timestamp, prepared.refund.id);
-      db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
-        .run(timestamp, prepared.order.id);
-    });
-    return [{
-      kind: prepared.order.ticket_tier_id === null ? "purchase_refund_failed" : "ticket_refund_failed",
-      userId: prepared.order.user_id,
-      eventId: prepared.order.event_id,
-    }];
-  }
-};
+    Effect.catchDefect((error) => {
+      if (!isDefinitiveProviderRejection(error)) return Effect.die(error);
+      return Effect.sync((): NotificationEffect[] => {
+        const timestamp = seconds(now);
+        transaction(db, () => {
+          db.$client.query("UPDATE refunds SET status = 'canceled', failure_reason = ?, updated_at = ? WHERE id = ?")
+            .run(providerFailureReason(error), timestamp, prepared.refund.id);
+          db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
+            .run(timestamp, prepared.order.id);
+        });
+        return [{
+          kind: prepared.order.ticket_tier_id === null ? "purchase_refund_failed" : "ticket_refund_failed",
+          userId: prepared.order.user_id,
+          eventId: prepared.order.event_id,
+        }];
+      });
+    }),
+  );
+});
 
 /** Fetching the payment here is the authenticity check; webhook JSON is never trusted. */
-export const reconcilePayment = async (
-  db: Db,
-  provider: PaymentProvider,
+export const reconcilePayment = Effect.fn("tickets.reconcilePayment")(function* (
   paymentId: string,
   now: Date,
-): Promise<{ orderId: string | null; effects: NotificationEffect[] }> => {
-  const payment = await provider.getPayment(paymentId);
+): Effect.fn.Return<{ orderId: string | null; effects: NotificationEffect[] }, never, Database | Payments> {
+  const db = yield* Database;
+  const provider = yield* Payments;
+  const payment = yield* Effect.promise(() => provider.getPayment(paymentId));
   let attempt = db.$client.query<AttemptRow, [string]>(`
     SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
     FROM payment_attempts WHERE provider_payment_id = ?
@@ -594,6 +594,7 @@ export const reconcilePayment = async (
     }
   }
   if (!attempt) return { orderId: null, effects: [] };
+  const settledAttempt = attempt;
   const order = orderById(db, attempt.order_id);
   if (!order) throw new Error(`Payment ${payment.id} points to a missing order`);
   verifyPayment(order, payment);
@@ -602,7 +603,7 @@ export const reconcilePayment = async (
   if (payment.status === "pending") return { orderId: order.id, effects: [] };
   if (payment.status === "canceled") {
     transaction(db, () => {
-      db.$client.query("UPDATE payment_attempts SET status = 'canceled', updated_at = ? WHERE id = ?").run(timestamp, attempt!.id);
+      db.$client.query("UPDATE payment_attempts SET status = 'canceled', updated_at = ? WHERE id = ?").run(timestamp, settledAttempt.id);
       if (["awaiting_payment", "cancel_pending"].includes(order.status)) {
         db.$client.query("UPDATE ticket_orders SET status = 'canceled', canceled_at = ?, updated_at = ? WHERE id = ?")
           .run(timestamp, timestamp, order.id);
@@ -612,7 +613,7 @@ export const reconcilePayment = async (
   }
 
   const result = transaction(db, () => {
-    db.$client.query("UPDATE payment_attempts SET status = 'succeeded', updated_at = ? WHERE id = ?").run(timestamp, attempt!.id);
+    db.$client.query("UPDATE payment_attempts SET status = 'succeeded', updated_at = ? WHERE id = ?").run(timestamp, settledAttempt.id);
     const event = db.$client.query<{ status: string; ended_at: number | null }, [number]>(
       "SELECT status, ended_at FROM events WHERE id = ?",
     ).get(order.event_id);
@@ -641,16 +642,17 @@ export const reconcilePayment = async (
     return { needsRefund: false, fulfilled: false };
   });
   const effects: NotificationEffect[] = result.needsRefund
-    ? await ensureRefund(db, provider, order.id, "payment_after_cancellation", now)
+    ? yield* ensureRefund(order.id, "payment_after_cancellation", now)
     : result.fulfilled ? [{
         kind: order.ticket_tier_id === null ? "purchase_paid" : "ticket_paid",
         userId: order.user_id,
         eventId: order.event_id,
       }] : [];
   return { orderId: order.id, effects };
-};
+});
 
-export const requestUserRefund = async (db: Db, provider: PaymentProvider, eventId: number, userId: number, now: Date) => {
+export const requestUserRefund = Effect.fn("tickets.requestUserRefund")(function* (eventId: number, userId: number, now: Date) {
+  const db = yield* Database;
   const order = db.$client.query<{ id: string }, [number, number]>(`
     SELECT id FROM ticket_orders
     WHERE event_id = ? AND user_id = ? AND ticket_tier_id IS NOT NULL
@@ -658,27 +660,27 @@ export const requestUserRefund = async (db: Db, provider: PaymentProvider, event
     ORDER BY created_at DESC LIMIT 1
   `).get(eventId, userId);
   if (!order) return null;
-  return ensureRefund(db, provider, order.id, "user_canceled", now);
-};
+  return yield* ensureRefund(order.id, "user_canceled", now);
+});
 
-export const requestAdminRefund = async (
-  db: Db,
-  provider: PaymentProvider,
-  eventId: number,
-  orderId: string,
-  now: Date,
-): Promise<{ effects: NotificationEffect[] } | { error: "order_not_found" | "order_not_refundable" }> => {
+export const requestAdminRefund = Effect.fn("tickets.requestAdminRefund")(function* (eventId: number, orderId: string, now: Date) {
+  const db = yield* Database;
   const order = orderById(db, orderId);
-  if (!order || order.event_id !== eventId) return { error: "order_not_found" };
+  if (!order || order.event_id !== eventId) return yield* new OrderRejected({ code: "order_not_found" });
   if (!["fulfilled", "payment_succeeded", "refund_failed"].includes(order.status)) {
-    return { error: "order_not_refundable" };
+    return yield* new OrderRejected({ code: "order_not_refundable" });
   }
 
-  return { effects: await ensureRefund(db, provider, order.id, "admin_requested", now) };
-};
+  return { effects: yield* ensureRefund(order.id, "admin_requested", now) };
+});
 
-export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundId: string, now: Date) => {
-  const remote = await provider.getRefund(refundId);
+export const reconcileRefund = Effect.fn("tickets.reconcileRefund")(function* (
+  refundId: string,
+  now: Date,
+): Effect.fn.Return<NotificationEffect[], never, Database | Payments> {
+  const db = yield* Database;
+  const provider = yield* Payments;
+  const remote = yield* Effect.promise(() => provider.getRefund(refundId));
   let refund = db.$client.query<RefundRow, [string]>(`
     SELECT id, order_id, payment_attempt_id, provider_refund_id, idempotence_key, amount_minor, status, reason
     FROM refunds WHERE provider_refund_id = ?
@@ -697,7 +699,7 @@ export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundI
     // Refunds created in the YooKassa dashboard do not carry the order metadata
     // that we attach to API-created refunds. The refund object still contains the
     // original payment id, which is a unique and authoritative local link.
-    refund = transaction(db, () => {
+    refund = transaction(db, (): RefundRow | null => {
       const attempt = db.$client.query<AttemptRow, [string]>(`
         SELECT id, order_id, provider_payment_id, idempotence_key, status, confirmation_url
         FROM payment_attempts
@@ -753,18 +755,21 @@ export const reconcileRefund = async (db: Db, provider: PaymentProvider, refundI
     });
   }
   return refund ? applyRefund(db, refund, remote, now) : [];
-};
+});
 
-export const refundCanceledEvent = async (db: Db, provider: PaymentProvider, eventId: number, now: Date) => {
+export const refundCanceledEvent = Effect.fn("tickets.refundCanceledEvent")(function* (eventId: number, now: Date) {
+  const db = yield* Database;
   const orders = db.$client.query<{ id: string }, [number]>(`
     SELECT id FROM ticket_orders WHERE event_id = ? AND status IN ('fulfilled', 'payment_succeeded', 'refund_pending')
   `).all(eventId);
   const effects: NotificationEffect[] = [];
-  for (const order of orders) effects.push(...await ensureRefund(db, provider, order.id, "event_canceled", now));
+  for (const order of orders) effects.push(...yield* ensureRefund(order.id, "event_canceled", now));
   return effects;
-};
+});
 
-export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now: Date) => {
+export const sweepTicketPayments = Effect.fn("tickets.sweepTicketPayments")(function* (now: Date) {
+  const db = yield* Database;
+  const provider = yield* Payments;
   const timestamp = seconds(now);
   const effects: NotificationEffect[] = [];
   // Webhooks are the fast path, not a single point of failure. Polling the same
@@ -775,7 +780,7 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
     WHERE o.status IN ('awaiting_payment', 'cancel_pending') AND p.provider_payment_id IS NOT NULL
   `).all();
   for (const row of awaitingRemote) {
-    effects.push(...(await reconcilePayment(db, provider, row.provider_payment_id, now)).effects);
+    effects.push(...(yield* reconcilePayment(row.provider_payment_id, now)).effects);
   }
 
   const expiring = db.$client.query<{ id: string; provider_payment_id: string | null }, [number]>(`
@@ -808,11 +813,12 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
     FROM refunds WHERE status = 'pending'
   `).all();
   for (const refund of pendingRefunds) {
-    if (refund.provider_refund_id) {
-      effects.push(...applyRefund(db, refund, await provider.getRefund(refund.provider_refund_id), now));
+    const providerRefundId = refund.provider_refund_id;
+    if (providerRefundId) {
+      effects.push(...applyRefund(db, refund, yield* Effect.promise(() => provider.getRefund(providerRefundId)), now));
     } else {
       if (refund.reason === "external_refund") throw new Error(`External refund ${refund.id} has no provider id`);
-      effects.push(...await ensureRefund(db, provider, refund.order_id, refund.reason, now));
+      effects.push(...yield* ensureRefund(refund.order_id, refund.reason, now));
     }
   }
 
@@ -823,9 +829,9 @@ export const sweepTicketPayments = async (db: Db, provider: PaymentProvider, now
     JOIN events e ON e.id = o.event_id
     WHERE e.status = 'canceled' AND o.status IN ('fulfilled', 'payment_succeeded', 'refund_pending')
   `).all();
-  for (const row of canceledPaidEvents) effects.push(...await refundCanceledEvent(db, provider, row.event_id, now));
+  for (const row of canceledPaidEvents) effects.push(...yield* refundCanceledEvent(row.event_id, now));
   return effects;
-};
+});
 
 export const orderForUser = (db: Db, orderId: string, userId: number) => {
   const order = orderById(db, orderId);
@@ -926,15 +932,11 @@ export const ordersForEvent = (db: Db, eventId: number): EventPurchaseOrder[] =>
  * cannot be canceled via the API, so the sweeper keeps reconciling the remote
  * payment and refunds it if it somehow succeeds after abandonment.
  */
-export const cancelPendingOrder = async (
-  db: Db,
-  orderId: string,
-  userId: number,
-  now: Date,
-): Promise<Checkout | { error: "order_not_found" | "order_not_cancelable" }> => {
+export const cancelPendingOrder = Effect.fn("tickets.cancelPendingOrder")(function* (orderId: string, userId: number, now: Date) {
+  const db = yield* Database;
   const initial = orderById(db, orderId);
-  if (!initial || initial.user_id !== userId) return { error: "order_not_found" };
-  if (!["awaiting_payment", "cancel_pending"].includes(initial.status)) return { error: "order_not_cancelable" };
+  if (!initial || initial.user_id !== userId) return yield* new OrderRejected({ code: "order_not_found" });
+  if (!["awaiting_payment", "cancel_pending"].includes(initial.status)) return yield* new OrderRejected({ code: "order_not_cancelable" });
 
   const attempt = attemptForOrder(db, orderId);
   const timestamp = seconds(now);
@@ -951,4 +953,4 @@ export const cancelPendingOrder = async (
       .run(timestamp, attempt.id);
   });
   return orderView(orderById(db, orderId)!, null);
-};
+});

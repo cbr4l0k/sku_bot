@@ -1,9 +1,11 @@
+import { Effect } from "effect";
 import { InlineKeyboard, Keyboard, RemoveKeyboard } from "gramio";
 import { eq, users } from "@sku/db";
 
 import { db } from "../db";
 import { parseStartPayload } from "../core/links";
 import { loadEnv } from "../env";
+import { runtime } from "../runtime";
 import { sendEventCard } from "./event-card";
 import { sendHero } from "./hero";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -25,7 +27,7 @@ type StartContext = {
 
 export const pendingEventStarts = new Map<number, number>();
 
-export const startHandler = async (context: StartContext): Promise<void> => {
+export const startHandler = (context: StartContext): Promise<void> => runtime.runPromise(Effect.gen(function* () {
   const telegramUser = context.from;
   if (!telegramUser) return;
 
@@ -48,21 +50,21 @@ export const startHandler = async (context: StartContext): Promise<void> => {
   const locale = user?.locale ?? localeFromLanguageCode(telegramUser.languageCode);
 
   if (!user?.phone) {
-    if (context.args && !payload) await context.send(i18n.t(locale, "unknownPayload"));
-    await context.send(i18n.t(locale, "welcome"));
-    await context.send(i18n.t(locale, "contactPrompt"), {
+    if (context.args && !payload) yield* Effect.promise(() => context.send(i18n.t(locale, "unknownPayload")));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "welcome")));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "contactPrompt"), {
       reply_markup: new Keyboard()
         .requestContact(i18n.t(locale, "contactButton"))
         .oneTime()
         .resized(),
-    });
+    }));
     return;
   }
 
-  if (context.args && !payload) await context.send(i18n.t(locale, "unknownPayload"));
+  if (context.args && !payload) yield* Effect.promise(() => context.send(i18n.t(locale, "unknownPayload")));
   if (payload) {
-    await sendEventCard(context, payload.eventId, telegramUser.id, locale);
+    yield* sendEventCard(context, payload.eventId, telegramUser.id, locale);
     return;
   }
-  await sendHero(context, locale);
-};
+  yield* Effect.promise(() => sendHero(context, locale));
+}));

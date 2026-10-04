@@ -3,6 +3,7 @@ import { createDb, migrate, type Db } from "@sku/db";
 import { endEvent } from "../../src/core/waitlist";
 import { joinEvent } from "../../src/core/registration";
 import { mintTicketToken, scanTicket, toggleHandover, verifyTicketToken } from "../../src/core/checkin";
+import { run } from "../support/effect";
 
 let db: Db;
 const now = new Date("2030-01-01T12:00:00Z");
@@ -52,61 +53,61 @@ describe("runner-held tickets", () => {
   });
 
   test("scanning checks the runner in, and a second scan reports rather than refuses", () => {
-    joinEvent(db, 1, 1, now);
-    const first = scanTicket(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
+    const first = run(db, scanTicket(1, 1, now));
     expect(first).toEqual({ ok: true, alreadyCheckedIn: false, checkedInAt: now });
 
     const later = new Date(now.getTime() + 60_000);
-    const second = scanTicket(db, 1, 1, later);
+    const second = run(db, scanTicket(1, 1, later));
     // Still an answer with the person's details behind it — and it names the
     // moment the ticket was actually burned, not the moment it was re-shown.
     expect(second).toEqual({ ok: true, alreadyCheckedIn: true, checkedInAt: now });
   });
 
   test("a ticket for someone who never registered, or an ended event, is refused", () => {
-    expect(scanTicket(db, 1, 3, now)).toEqual({ error: "not_registered" });
-    joinEvent(db, 1, 2, now);
-    endEvent(db, 1, now);
-    expect(scanTicket(db, 1, 2, now)).toEqual({ error: "event_over" });
+    expect(run(db, scanTicket(1, 3, now))).toEqual({ error: "not_registered" });
+    run(db, joinEvent(1, 2, now));
+    run(db, endEvent(1, now));
+    expect(run(db, scanTicket(1, 2, now))).toEqual({ error: "event_over" });
   });
 
   test("a waitlisted runner cannot walk in on a ticket", () => {
     db.$client.query("UPDATE events SET capacity = 1 WHERE id = 1").run();
-    joinEvent(db, 1, 1, now);
-    joinEvent(db, 1, 2, now);
-    expect(scanTicket(db, 1, 2, now)).toEqual({ error: "not_registered" });
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    expect(run(db, scanTicket(1, 2, now))).toEqual({ error: "not_registered" });
   });
 });
 
 describe("merch handover", () => {
   test("a line toggles, and records who handed it over", () => {
-    joinEvent(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
     const itemId = purchase(1);
 
-    expect(toggleHandover(db, 1, itemId, 2, now)).toEqual({ handedOverAt: now });
+    expect(run(db, toggleHandover(1, itemId, 2, now))).toEqual({ handedOverAt: now });
     expect(handedOver(itemId)).toEqual({ handed_over_at: unix(now), handed_over_by: 2 });
 
     // The commonest correction at a busy counter is an undo.
-    expect(toggleHandover(db, 1, itemId, 2, now)).toEqual({ handedOverAt: null });
+    expect(run(db, toggleHandover(1, itemId, 2, now))).toEqual({ handedOverAt: null });
     expect(handedOver(itemId)).toEqual({ handed_over_at: null, handed_over_by: null });
   });
 
   test("lines are independent, and belong to the event that sold them", () => {
-    joinEvent(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
     const hoodie = purchase(1, "hoodie");
     const cap = purchase(1, "cap", 2);
 
-    toggleHandover(db, 1, hoodie, 2, now);
+    run(db, toggleHandover(1, hoodie, 2, now));
     expect(handedOver(hoodie)?.handed_over_at).toBe(unix(now));
     expect(handedOver(cap)?.handed_over_at).toBeNull();
 
     // Another event's organizer cannot reach into this one's counter.
-    expect(toggleHandover(db, 2, hoodie, 3, now)).toEqual({ error: "item_not_found" });
-    expect(toggleHandover(db, 1, 9999, 3, now)).toEqual({ error: "item_not_found" });
+    expect(run(db, toggleHandover(2, hoodie, 3, now))).toEqual({ error: "item_not_found" });
+    expect(run(db, toggleHandover(1, 9999, 3, now))).toEqual({ error: "item_not_found" });
   });
 
   test("the seat itself is not a merch line", () => {
-    joinEvent(db, 1, 1, now);
+    run(db, joinEvent(1, 1, now));
     db.$client
       .query("INSERT INTO ticket_orders (id, event_id, user_id, ticket_name, amount_minor, status, expires_at) VALUES ('seat', 1, 1, 'Standard', 5000, 'fulfilled', ?)")
       .run(unix(now));
@@ -114,6 +115,6 @@ describe("merch handover", () => {
       .query("INSERT INTO order_items (order_id, kind, name, unit_amount_minor, quantity) VALUES ('seat', 'ticket', 'Standard', 5000, 1)")
       .run();
     const seat = db.$client.query<{ id: number }, []>("SELECT id FROM order_items WHERE order_id = 'seat'").get()!.id;
-    expect(toggleHandover(db, 1, seat, 2, now)).toEqual({ error: "item_not_found" });
+    expect(run(db, toggleHandover(1, seat, 2, now))).toEqual({ error: "item_not_found" });
   });
 });

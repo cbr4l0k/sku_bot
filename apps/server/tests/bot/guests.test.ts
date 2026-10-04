@@ -7,6 +7,7 @@ process.env.DATABASE_PATH = ":memory:";
 process.env.NODE_ENV = "test";
 
 import { beforeEach, describe, expect, test } from "bun:test";
+import { run, runAsync } from "../support/effect";
 
 const { syncChatGuests } = await import("../../src/bot/guests");
 const { SETTLEMENT_GRACE_MS } = await import("../../src/core/guests");
@@ -93,10 +94,10 @@ describe("chat guest sync", () => {
 
   test("an outsider is sent a single-use link and put on trial", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([]);
 
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     expect(calls.invitesFor).toEqual([2]);
     expect(calls.messagedUsers).toEqual([2]);
@@ -105,47 +106,47 @@ describe("chat guest sync", () => {
 
   test("someone already in the chat is left completely alone", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([2]);
 
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     expect(calls.invitesFor).toEqual([]);
     expect(calls.messagedUsers).toEqual([]);
     expect(guestRow(2)).toBeNull();
 
     // ...and having settled that once, they are not looked up again on every pass.
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
     expect(calls.memberLookups).toBe(1);
   });
 
   test("someone who leaves the chat is invited back once the cached answer goes stale", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const inChat = stubBot([2]);
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
     expect(inChat.invitesFor).toEqual([]);
 
     // They leave. Until the cached "member" answer expires, the sweep still believes it.
     const left = stubBot([]);
-    await syncChatGuests(db, new Date(now.getTime() + MEMBERSHIP_TTL_MS - 1_000));
+    await runAsync(db, syncChatGuests(new Date(now.getTime() + MEMBERSHIP_TTL_MS - 1_000)));
     expect(left.invitesFor).toEqual([]);
 
-    await syncChatGuests(db, new Date(now.getTime() + MEMBERSHIP_TTL_MS + 1_000));
+    await runAsync(db, syncChatGuests(new Date(now.getTime() + MEMBERSHIP_TTL_MS + 1_000)));
     expect(left.invitesFor).toEqual([2]);
     expect(guestRow(2)).toEqual({ status: "invited" });
   });
 
   test("an existing member is never removed, because no trial was ever opened on them", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     stubBot([2]);
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     // They skip the run entirely, and the event is ended and swept.
-    endEvent(db, 1, afterEvent);
+    run(db, endEvent(1, afterEvent));
     const settle = stubBot([2]);
-    await syncChatGuests(db, afterGrace);
+    await runAsync(db, syncChatGuests(afterGrace));
 
     expect(settle.bannedUsers).toEqual([]);
     expect(guestRow(2)).toBeNull();
@@ -153,15 +154,15 @@ describe("chat guest sync", () => {
 
   test("a guest who never checks in is kicked without being banned", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([]);
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     // They take the invite, then never turn up.
     stubBot([2]);
-    endEvent(db, 1, afterEvent);
+    run(db, endEvent(1, afterEvent));
     const settle = stubBot([2]);
-    await syncChatGuests(db, afterGrace);
+    await runAsync(db, syncChatGuests(afterGrace));
 
     expect(settle.bannedUsers).toEqual([2]);
     expect(settle.unbannedUsers).toEqual([2]);
@@ -172,14 +173,14 @@ describe("chat guest sync", () => {
 
   test("a guest who checks in keeps their place", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     stubBot([]);
-    await syncChatGuests(db, now);
-    expect(checkIn(db, 1, 2, now)).toEqual({ ok: true });
+    await runAsync(db, syncChatGuests(now));
+    expect(run(db, checkIn(1, 2, now))).toEqual({ ok: true });
 
-    endEvent(db, 1, afterEvent);
+    run(db, endEvent(1, afterEvent));
     const settle = stubBot([2]);
-    await syncChatGuests(db, afterGrace);
+    await runAsync(db, syncChatGuests(afterGrace));
 
     expect(settle.bannedUsers).toEqual([]);
     expect(guestRow(2)).toEqual({ status: "kept" });
@@ -187,28 +188,28 @@ describe("chat guest sync", () => {
 
   test("nothing is removed inside the grace window, so the roster can still be fixed", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     stubBot([]);
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
-    endEvent(db, 1, afterEvent);
+    run(db, endEvent(1, afterEvent));
     const settle = stubBot([2]);
-    await syncChatGuests(db, afterEvent);
+    await runAsync(db, syncChatGuests(afterEvent));
     expect(settle.bannedUsers).toEqual([]);
 
     // The organizer marks them present by hand before the window closes.
     db.$client.query("UPDATE registrations SET status = 'checked_in' WHERE event_id = 1 AND user_id = 2").run();
-    await syncChatGuests(db, afterGrace);
+    await runAsync(db, syncChatGuests(afterGrace));
     expect(settle.bannedUsers).toEqual([]);
     expect(guestRow(2)).toEqual({ status: "kept" });
   });
 
   test("an unanswerable chat invites nobody rather than guessing they are outside", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([], true);
 
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     expect(calls.invitesFor).toEqual([]);
     expect(guestRow(2)).toBeNull();
@@ -216,7 +217,7 @@ describe("chat guest sync", () => {
 
   test("a failed invite DM leaves no trial behind and revokes the unused link", async () => {
     event(1);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([]);
     const { TelegramError } = await import("gramio");
     Object.assign(bot.api, {
@@ -227,7 +228,7 @@ describe("chat guest sync", () => {
       ),
     });
 
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     expect(calls.invitesFor).toEqual([2]);
     expect(calls.revokedLinks).toEqual(["https://t.me/+link-u2"]);
@@ -236,10 +237,10 @@ describe("chat guest sync", () => {
 
   test("an event with no home chat invites nobody at all", async () => {
     event(1, null);
-    joinEvent(db, 1, 2, now);
+    run(db, joinEvent(1, 2, now));
     const calls = stubBot([]);
 
-    await syncChatGuests(db, now);
+    await runAsync(db, syncChatGuests(now));
 
     expect(calls.memberLookups).toBe(0);
     expect(calls.invitesFor).toEqual([]);

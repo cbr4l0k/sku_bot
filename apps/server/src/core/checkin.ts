@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { Effect } from "effect";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
+import { CheckinRejected, HandoverRejected } from "./errors";
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
 const slotAt = (now: Date) => Math.floor(seconds(now) / 45);
 const signature = (secret: string, eventId: number, slot: number) => createHmac("sha256", secret).update(`${eventId}:${slot}`).digest("base64url").slice(0, 16);
@@ -18,23 +21,33 @@ export const isEventOver = (db: Db, eventId: number): boolean => {
   const event = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
   return !event || event.ended_at !== null;
 };
-export const checkIn = (db: Db, eventId: number, userId: number, now: Date): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => db.$client.transaction((): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => {
-  // The scan closes when the organizer ends the event, not when its start time passes.
-  if (isEventOver(db, eventId)) return { error: "event_over" };
-  const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
-  if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
-  if (registration.status === "checked_in") return { error: "already_checked_in" };
-  db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, checkin_method = 'qr', updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
-  return { ok: true };
-})();
+export const checkIn = Effect.fn("checkin.checkIn")(function* (eventId: number, userId: number, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => {
+    // The scan closes when the organizer ends the event, not when its start time passes.
+    if (isEventOver(db, eventId)) return { error: "event_over" };
+    const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
+    if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
+    if (registration.status === "checked_in") return { error: "already_checked_in" };
+    db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, checkin_method = 'qr', updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
+    return { ok: true };
+  })();
+  if ("error" in result) return yield* new CheckinRejected({ code: result.error });
+  return result;
+});
 /** Stays open after the event ends: fixing the roster afterwards is part of the job. */
-export const manualToggleCheckin = (db: Db, eventId: number, userId: number, now: Date): { status: "registered" | "checked_in" } | { error: "not_registered" } => db.$client.transaction((): { status: "registered" | "checked_in" } | { error: "not_registered" } => {
-  const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
-  if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) return { error: "not_registered" };
-  const status = registration.status === "checked_in" ? "registered" : "checked_in";
-  db.$client.query("UPDATE registrations SET status = ?, checked_in_at = ?, checkin_method = ?, updated_at = ? WHERE id = ?").run(status, status === "checked_in" ? seconds(now) : null, status === "checked_in" ? "manual" : null, seconds(now), registration.id);
-  return { status };
-})();
+export const manualToggleCheckin = Effect.fn("checkin.manualToggleCheckin")(function* (eventId: number, userId: number, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): { status: "registered" | "checked_in" } | { error: "not_registered" } => {
+    const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
+    if (!registration || (registration.status !== "registered" && registration.status !== "checked_in")) return { error: "not_registered" };
+    const status = registration.status === "checked_in" ? "registered" : "checked_in";
+    db.$client.query("UPDATE registrations SET status = ?, checked_in_at = ?, checkin_method = ?, updated_at = ? WHERE id = ?").run(status, status === "checked_in" ? seconds(now) : null, status === "checked_in" ? "manual" : null, seconds(now), registration.id);
+    return { status };
+  })();
+  if ("error" in result) return yield* new CheckinRejected({ code: result.error });
+  return result;
+});
 
 /* ------------------------------------------------------- runner-held tickets */
 
@@ -64,7 +77,7 @@ export const verifyTicketToken = (secret: string, token: string): { eventId: num
   return expected.length === actual.length && timingSafeEqual(expected, actual) ? { eventId, userId } : null;
 };
 
-export type ScanOutcome =
+type ScanOutcome =
   | { ok: true; alreadyCheckedIn: boolean; checkedInAt: Date }
   | { error: "not_registered" | "event_over" };
 
@@ -73,8 +86,9 @@ export type ScanOutcome =
  * needs to recover from — they still want to see who it is and what merch the
  * person is owed — so it reports `alreadyCheckedIn` instead of refusing.
  */
-export const scanTicket = (db: Db, eventId: number, userId: number, now: Date): ScanOutcome =>
-  db.$client.transaction((): ScanOutcome => {
+export const scanTicket = Effect.fn("checkin.scanTicket")(function* (eventId: number, userId: number, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): ScanOutcome => {
     if (isEventOver(db, eventId)) return { error: "event_over" };
     const registration = db.$client
       .query<Registration & { checked_in_at: number | null }, [number, number]>(
@@ -90,18 +104,21 @@ export const scanTicket = (db: Db, eventId: number, userId: number, now: Date): 
       .run(seconds(now), seconds(now), registration.id);
     return { ok: true, alreadyCheckedIn: false, checkedInAt: now };
   })();
+  if ("error" in result) return yield* new CheckinRejected({ code: result.error });
+  return result;
+});
 
 /**
  * Ticking a merch line off at the door. Toggles, because the commonest
  * correction is an organizer tapping the wrong row on a busy night.
  */
-export const toggleHandover = (
-  db: Db,
+export const toggleHandover = Effect.fn("checkin.toggleHandover")(function* (
   eventId: number,
   itemId: number,
   organizerId: number,
   now: Date,
-): { handedOverAt: Date | null } | { error: "item_not_found" } => {
+) {
+  const db = yield* Database;
   const item = db.$client
     .query<{ id: number; handed_over_at: number | null }, [number, number]>(
       `SELECT i.id, i.handed_over_at FROM order_items i
@@ -109,10 +126,10 @@ export const toggleHandover = (
        WHERE i.id = ? AND o.event_id = ? AND i.kind != 'ticket'`,
     )
     .get(itemId, eventId);
-  if (!item) return { error: "item_not_found" };
+  if (!item) return yield* new HandoverRejected({ code: "item_not_found" });
   const handedOver = item.handed_over_at === null;
   db.$client
     .query("UPDATE order_items SET handed_over_at = ?, handed_over_by = ? WHERE id = ?")
     .run(handedOver ? seconds(now) : null, handedOver ? organizerId : null, itemId);
   return { handedOverAt: handedOver ? now : null };
-};
+});

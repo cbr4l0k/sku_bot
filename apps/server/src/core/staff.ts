@@ -1,5 +1,7 @@
+import { Effect } from "effect";
 import type { CitySlug } from "@sku/cities";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
 
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
 
@@ -51,7 +53,7 @@ const liveEvent = (db: Db, eventId: number) => db.$client
  * dropping them from an event clears them off future rosters, but anyone who
  * actually turned up stays on the record of the night.
  */
-export const syncEventStaff = (db: Db, eventId: number, now: Date): { added: number; removed: number } =>
+const syncEventStaffIn = (db: Db, eventId: number, now: Date): { added: number; removed: number } =>
   db.$client.transaction((): { added: number; removed: number } => {
     if (!liveEvent(db, eventId)) return { added: 0, removed: 0 };
     const staff = staffUserIds(db, eventId);
@@ -80,6 +82,10 @@ export const syncEventStaff = (db: Db, eventId: number, now: Date): { added: num
     return { added, removed };
   })();
 
+export const syncEventStaff = Effect.fn("staff.syncEventStaff")(function* (eventId: number, now: Date) {
+  return syncEventStaffIn(yield* Database, eventId, now);
+});
+
 const liveEventIds = (db: Db, city: CitySlug | null): number[] => (city === null
   ? db.$client.query<{ id: number }, []>("SELECT id FROM events WHERE ended_at IS NULL AND status <> 'canceled'").all()
   : db.$client
@@ -88,15 +94,17 @@ const liveEventIds = (db: Db, city: CitySlug | null): number[] => (city === null
 ).map((row) => row.id);
 
 /** After a branch role changes: every run of that branch that has not happened yet. */
-export const syncCityStaff = (db: Db, city: CitySlug, now: Date): void => {
-  for (const eventId of liveEventIds(db, city)) syncEventStaff(db, eventId, now);
-};
+export const syncCityStaff = Effect.fn("staff.syncCityStaff")(function* (city: CitySlug, now: Date) {
+  const db = yield* Database;
+  for (const eventId of liveEventIds(db, city)) syncEventStaffIn(db, eventId, now);
+});
 
 /**
  * After a club-wide change — a promotion, or a boot that brought new ADMIN_IDS
  * with it. Cheap enough to run at startup: it touches only events that are
  * still to come, and does nothing at all once the rows are in place.
  */
-export const syncAllStaff = (db: Db, now: Date): void => {
-  for (const eventId of liveEventIds(db, null)) syncEventStaff(db, eventId, now);
-};
+export const syncAllStaff = Effect.fn("staff.syncAllStaff")(function* (now: Date) {
+  const db = yield* Database;
+  for (const eventId of liveEventIds(db, null)) syncEventStaffIn(db, eventId, now);
+});

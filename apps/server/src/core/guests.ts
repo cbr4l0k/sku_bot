@@ -1,4 +1,6 @@
+import { Effect } from "effect";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
 
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
 
@@ -52,7 +54,8 @@ export const inviteCandidates = (db: Db): InviteCandidate[] => db.$client
  * There is one row per person per chat, so a returning guest overwrites their own
  * settled record rather than accumulating history.
  */
-export const startTrial = (db: Db, candidate: InviteCandidate, inviteLink: string, now: Date): void => {
+export const startTrial = Effect.fn("guests.startTrial")(function* (candidate: InviteCandidate, inviteLink: string, now: Date) {
+  const db = yield* Database;
   db.$client
     .query(`
       INSERT INTO chat_guests (chat_id, user_id, event_id, invite_link, status, created_at, settled_at)
@@ -62,7 +65,7 @@ export const startTrial = (db: Db, candidate: InviteCandidate, inviteLink: strin
             status = 'invited', created_at = excluded.created_at, settled_at = NULL
     `)
     .run(candidate.chatId, candidate.userId, candidate.eventId, inviteLink, seconds(now));
-};
+});
 
 /** What ending an event decided about one guest whose trial hung on it. */
 export type TrialVerdict = {
@@ -83,47 +86,50 @@ export type TrialVerdict = {
  *   second run would quietly buy a permanent seat.
  * - Otherwise they are removed, and the caller kicks them from the chat.
  */
-export const settleTrials = (db: Db, eventId: number, now: Date): TrialVerdict[] => db.$client.transaction((): TrialVerdict[] => {
-  type Row = { chatId: number; userId: number; inviteLink: string; checkedIn: number; carriedTo: number | null };
-  const rows = db.$client
-    .query<Row, [number]>(`
-      SELECT g.chat_id AS chatId, g.user_id AS userId, g.invite_link AS inviteLink,
-        EXISTS (
-          SELECT 1 FROM registrations r
-          WHERE r.event_id = g.event_id AND r.user_id = g.user_id AND r.status = 'checked_in'
-        ) AS checkedIn,
-        (
-          SELECT other.id FROM events other
-          JOIN registrations r ON r.event_id = other.id AND r.user_id = g.user_id
-          WHERE other.id <> g.event_id
-            AND other.home_chat_id = g.chat_id
-            AND other.status = 'published'
-            AND other.ended_at IS NULL
-            AND r.status IN ('registered', 'checked_in')
-            AND r.is_staff = 0
-          ORDER BY other.starts_at
-          LIMIT 1
-        ) AS carriedTo
-      FROM chat_guests g
-      WHERE g.event_id = ? AND g.status = 'invited'
-    `)
-    .all(eventId);
+export const settleTrials = Effect.fn("guests.settleTrials")(function* (eventId: number, now: Date) {
+  const db = yield* Database;
+  return db.$client.transaction((): TrialVerdict[] => {
+    type Row = { chatId: number; userId: number; inviteLink: string; checkedIn: number; carriedTo: number | null };
+    const rows = db.$client
+      .query<Row, [number]>(`
+        SELECT g.chat_id AS chatId, g.user_id AS userId, g.invite_link AS inviteLink,
+          EXISTS (
+            SELECT 1 FROM registrations r
+            WHERE r.event_id = g.event_id AND r.user_id = g.user_id AND r.status = 'checked_in'
+          ) AS checkedIn,
+          (
+            SELECT other.id FROM events other
+            JOIN registrations r ON r.event_id = other.id AND r.user_id = g.user_id
+            WHERE other.id <> g.event_id
+              AND other.home_chat_id = g.chat_id
+              AND other.status = 'published'
+              AND other.ended_at IS NULL
+              AND r.status IN ('registered', 'checked_in')
+              AND r.is_staff = 0
+            ORDER BY other.starts_at
+            LIMIT 1
+          ) AS carriedTo
+        FROM chat_guests g
+        WHERE g.event_id = ? AND g.status = 'invited'
+      `)
+      .all(eventId);
 
-  const verdicts: TrialVerdict[] = [];
-  for (const row of rows) {
-    const keep = row.checkedIn === 1;
-    const carriedTo = keep ? null : row.carriedTo;
-    if (carriedTo !== null) {
-      db.$client.query("UPDATE chat_guests SET event_id = ? WHERE chat_id = ? AND user_id = ?")
-        .run(carriedTo, row.chatId, row.userId);
-    } else {
-      db.$client.query("UPDATE chat_guests SET status = ?, settled_at = ? WHERE chat_id = ? AND user_id = ?")
-        .run(keep ? "kept" : "removed", seconds(now), row.chatId, row.userId);
+    const verdicts: TrialVerdict[] = [];
+    for (const row of rows) {
+      const keep = row.checkedIn === 1;
+      const carriedTo = keep ? null : row.carriedTo;
+      if (carriedTo !== null) {
+        db.$client.query("UPDATE chat_guests SET event_id = ? WHERE chat_id = ? AND user_id = ?")
+          .run(carriedTo, row.chatId, row.userId);
+      } else {
+        db.$client.query("UPDATE chat_guests SET status = ?, settled_at = ? WHERE chat_id = ? AND user_id = ?")
+          .run(keep ? "kept" : "removed", seconds(now), row.chatId, row.userId);
+      }
+      verdicts.push({ chatId: row.chatId, userId: row.userId, inviteLink: row.inviteLink, carriedTo, keep });
     }
-    verdicts.push({ chatId: row.chatId, userId: row.userId, inviteLink: row.inviteLink, carriedTo, keep });
-  }
-  return verdicts;
-})();
+    return verdicts;
+  })();
+});
 
 /**
  * Events whose trials are ready to settle: an event is over once it has been ended or
