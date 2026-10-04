@@ -5,6 +5,7 @@ import { eq, users } from "@sku/db";
 import { loadActor } from "../core/cities";
 import { db } from "../db";
 import { loadEnv } from "../env";
+import { runtime } from "../runtime";
 import { localeFromLanguageCode } from "../bot/i18n";
 
 const env = loadEnv();
@@ -41,6 +42,6 @@ export const auth = new Elysia({ name: "auth" })
 
     const isAdmin = user.isAdmin || isConfiguredAdmin;
     // Resolved once here so handlers can answer "may they?" without another query.
-    return { user, isAdmin, actor: loadActor(db, user.id, isAdmin) };
+    return { user, isAdmin, actor: runtime.runSync(loadActor(user.id, isAdmin)) };
   })
   .as("scoped");

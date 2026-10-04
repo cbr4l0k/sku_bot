@@ -54,7 +54,7 @@ describe("needs attention", () => {
     const night = event("spb", "2030-03-10T19:00:00Z");
     failedRefund(night, "ord-1", "card_expired");
 
-    const result = needsAttention(db, ["spb", "msk", "kzn"], true, now);
+    const result = run(db, needsAttention(["spb", "msk", "kzn"], true, now));
     expect(result.unassignedChats.map((chat) => chat.id)).toEqual([-1]);
     expect(result.seriesDrafts).toEqual([
       { eventId: draft, seriesId: series, seriesTitle: "Intervals", title: "Run 2030-03-20T16:00:00Z", city: "spb", startsAt: "2030-03-20T16:00:00.000Z" },
@@ -69,10 +69,10 @@ describe("needs attention", () => {
     failedRefund(event("spb", "2030-03-10T19:00:00Z"), "ord-spb", null);
     failedRefund(event("msk", "2030-03-10T19:00:00Z"), "ord-msk", "insufficient_funds");
 
-    const result = needsAttention(db, ["msk"], false, now);
+    const result = run(db, needsAttention(["msk"], false, now));
     expect(result.unassignedChats).toEqual([]);
     expect(result.failedRefunds.map((refund) => refund.orderId)).toEqual(["ord-msk"]);
-    expect(needsAttention(db, [], false, now)).toEqual({ unassignedChats: [], seriesDrafts: [], failedRefunds: [] });
+    expect(run(db, needsAttention([], false, now))).toEqual({ unassignedChats: [], seriesDrafts: [], failedRefunds: [] });
   });
 });
 
@@ -94,14 +94,14 @@ describe("month in numbers", () => {
     register(feb, 3, "checked_in");
     register(moscow, 6, "checked_in");
 
-    expect(monthStats(db, "spb", now)).toEqual({ month: "2030-03", events: 2, runners: 2, turnout: 3 / 4 });
-    expect(monthStats(db, null, now)).toEqual({ month: "2030-03", events: 3, runners: 3, turnout: 4 / 5 });
-    expect(monthStats(db, "kzn", now)).toEqual({ month: "2030-03", events: 0, runners: 0, turnout: null });
+    expect(run(db, monthStats("spb", now))).toEqual({ month: "2030-03", events: 2, runners: 2, turnout: 3 / 4 });
+    expect(run(db, monthStats(null, now))).toEqual({ month: "2030-03", events: 3, runners: 3, turnout: 4 / 5 });
+    expect(run(db, monthStats("kzn", now))).toEqual({ month: "2030-03", events: 0, runners: 0, turnout: null });
   });
 
   test("the month turns over at Moscow midnight, not UTC", () => {
     // 2030-03-31 22:30 UTC is already April 1st in Moscow.
-    expect(monthStats(db, null, new Date("2030-03-31T22:30:00Z")).month).toBe("2030-04");
+    expect(run(db, monthStats(null, new Date("2030-03-31T22:30:00Z"))).month).toBe("2030-04");
   });
 });
 
@@ -119,7 +119,7 @@ describe("the person card", () => {
     const draft = event("spb", "2030-03-25T16:00:00Z", "draft");
     db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (?, 2)").run(draft);
 
-    const card = personCard(db, actor(1, false, [["spb", "admin"]]), 2, new Set());
+    const card = run(db, personCard(actor(1, false, [["spb", "admin"]]), 2, new Set()));
     expect(card).toMatchObject({
       username: "anya", phone: "+79210000014", isBanned: false, canBlock: false,
       stats: { signUps: 3, turnout: 0.5, led: 2 },
@@ -129,8 +129,8 @@ describe("the person card", () => {
         { city: "kzn", role: null, grantable: [] },
       ],
     });
-    expect(personCard(db, actor(1, true), 2, new Set())?.roles[2]).toEqual({ city: "kzn", role: null, grantable: [null, "organizer", "admin"] });
-    expect(personCard(db, actor(1, true), 99, new Set())).toBeNull();
+    expect(run(db, personCard(actor(1, true), 2, new Set()))?.roles[2]).toEqual({ city: "kzn", role: null, grantable: [null, "organizer", "admin"] });
+    expect(run(db, personCard(actor(1, true), 99, new Set()))).toBeNull();
   });
 
   test("saving several branches is all or nothing under canGrantRole", () => {

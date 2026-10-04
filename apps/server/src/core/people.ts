@@ -49,7 +49,8 @@ const record = (db: Db, userId: number) => {
   return { signUps: runs?.sign_ups ?? 0, turnout: held > 0 ? (runs?.ran ?? 0) / held : null, led };
 };
 
-export const personCard = (db: Db, actor: Actor, userId: number, configuredAdminIds: ReadonlySet<number>) => {
+export const personCard = Effect.fn("people.personCard")(function* (actor: Actor, userId: number, configuredAdminIds: ReadonlySet<number>) {
+  const db = yield* Database;
   const person = db.select().from(users).where(eq(users.id, userId)).get();
   if (!person) return null;
   return {
@@ -68,7 +69,7 @@ export const personCard = (db: Db, actor: Actor, userId: number, configuredAdmin
     // Blocking reaches every branch at once, so it stays with the club (as the ban route enforces).
     canBlock: actor.isGlobalAdmin,
   };
-};
+});
 
 /**
  * The card's Save: every branch at once, all or nothing. Each change is checked

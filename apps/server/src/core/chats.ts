@@ -37,28 +37,33 @@ export const recordChatState = Effect.fn("chats.recordChatState")(function* (
     .run();
 });
 
-export const chatById = (db: Db, chatId: number) =>
-  db.select().from(chats).where(eq(chats.id, chatId)).get();
+export const chatById = Effect.fnUntraced(function* (chatId: number) {
+  const db = yield* Database;
+  return db.select().from(chats).where(eq(chats.id, chatId)).get();
+});
 
 /**
  * What an admin sees: every chat of the branches they run, plus every chat still
  * waiting to be filed. Unassigned chats are shown to general admins only — they
  * are the ones who may file them.
  */
-export const chatCatalog = (db: Db, ownedCities: readonly CitySlug[], includeUnassigned: boolean) => {
+export const chatCatalog = Effect.fnUntraced(function* (ownedCities: readonly CitySlug[], includeUnassigned: boolean) {
+  const db = yield* Database;
   const owned = new Set(ownedCities);
   // A handful of rows at most — filtering here keeps the branch rule in one place.
   return db.select().from(chats).orderBy(asc(chats.city), asc(chats.id)).all()
     .filter((chat) => (chat.city === null ? includeUnassigned : owned.has(chat.city)));
-};
+});
 
 /**
  * The chats an event in `city` may be gated to or funnelled into. A chat belongs
  * to exactly one branch, so a Kazan run can never reach into a Moscow group.
  */
-export const assignableChats = (db: Db, city: CitySlug): number[] =>
-  db.select({ id: chats.id }).from(chats).where(eq(chats.city, city)).orderBy(asc(chats.id)).all()
+export const assignableChats = Effect.fnUntraced(function* (city: CitySlug): Effect.fn.Return<number[], never, Database> {
+  const db = yield* Database;
+  return db.select({ id: chats.id }).from(chats).where(eq(chats.city, city)).orderBy(asc(chats.id)).all()
     .map((row) => row.id);
+});
 
 export const setChatCity = Effect.fn("chats.setChatCity")(function* (chatId: number, city: CitySlug | null) {
   const db = yield* Database;

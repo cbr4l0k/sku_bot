@@ -17,15 +17,19 @@ export const verifyCheckinToken = (secret: string, token: string, now: Date): { 
 };
 type Registration = { id: number; status: string };
 /** An event nobody has ended yet is still running, however long ago it started. */
-export const isEventOver = (db: Db, eventId: number): boolean => {
+const eventOver = (db: Db, eventId: number): boolean => {
   const event = db.$client.query<{ ended_at: number | null }, [number]>("SELECT ended_at FROM events WHERE id = ?").get(eventId);
   return !event || event.ended_at !== null;
 };
+
+export const isEventOver = Effect.fnUntraced(function* (eventId: number) {
+  return eventOver(yield* Database, eventId);
+});
 export const checkIn = Effect.fn("checkin.checkIn")(function* (eventId: number, userId: number, now: Date) {
   const db = yield* Database;
   const result = db.$client.transaction((): { ok: true } | { error: "not_registered" | "already_checked_in" | "event_over" } => {
     // The scan closes when the organizer ends the event, not when its start time passes.
-    if (isEventOver(db, eventId)) return { error: "event_over" };
+    if (eventOver(db, eventId)) return { error: "event_over" };
     const registration = db.$client.query<Registration, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
     if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
     if (registration.status === "checked_in") return { error: "already_checked_in" };
@@ -89,7 +93,7 @@ type ScanOutcome =
 export const scanTicket = Effect.fn("checkin.scanTicket")(function* (eventId: number, userId: number, now: Date) {
   const db = yield* Database;
   const result = db.$client.transaction((): ScanOutcome => {
-    if (isEventOver(db, eventId)) return { error: "event_over" };
+    if (eventOver(db, eventId)) return { error: "event_over" };
     const registration = db.$client
       .query<Registration & { checked_in_at: number | null }, [number, number]>(
         "SELECT id, status, checked_in_at FROM registrations WHERE event_id = ? AND user_id = ?",

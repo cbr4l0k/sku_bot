@@ -1,8 +1,7 @@
 import { Effect } from "effect";
 import { chatById, recordChatState } from "../core/chats";
 import type { MembershipProbe } from "../core/membership";
-import { db } from "../db";
-import { Database } from "../services";
+import { runtime } from "../runtime";
 import { bot } from "./index";
 
 /** Statuses that mean the user is in the chat right now. */
@@ -51,10 +50,10 @@ export type ChatState = { title: string | null; problem: string | null; movedTo:
  */
 const migrations = new Map<number, number>();
 
-export const chatTitle = (chatId: number): string | null => chatById(db, chatId)?.title ?? null;
+export const chatTitle = (chatId: number): string | null => runtime.runSync(chatById(chatId))?.title ?? null;
 
 export const chatState = (chatId: number): ChatState => {
-  const row = chatById(db, chatId);
+  const row = runtime.runSync(chatById(chatId));
   return { title: row?.title ?? null, problem: row?.problem ?? null, movedTo: migrations.get(chatId) ?? null };
 };
 
@@ -66,11 +65,9 @@ const selfId = async (): Promise<number> => bot.info?.id ?? (await bot.api.getMe
  * membership uses the same call the real checks use, and so fails the same way.
  */
 export const refreshChatStates = Effect.fn("chats.refreshChatStates")(function* (chatIds: readonly number[], now: Date = new Date()) {
-  const db = yield* Database;
-  const stale = [...new Set(chatIds)].filter((chatId) => {
-    const row = chatById(db, chatId);
-    return !row?.checkedAt || now.getTime() - row.checkedAt.getTime() >= TITLE_TTL_MS;
-  });
+  const stale = yield* Effect.filter([...new Set(chatIds)], (chatId) => chatById(chatId).pipe(
+    Effect.map((row) => !row?.checkedAt || now.getTime() - row.checkedAt.getTime() >= TITLE_TTL_MS),
+  ));
   if (stale.length === 0) return;
 
   const botId = yield* Effect.promise(() => selfId().catch(() => null));

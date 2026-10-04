@@ -179,7 +179,7 @@ const eventProductView = (product: typeof eventProducts.$inferSelect) => ({
 
 const eventView = (event: typeof events.$inferSelect) => ({
   ...event,
-  groups: chatsOfEvent(db, event.id).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
+  groups: run(chatsOfEvent(event.id)).map((id) => ({ id, title: chatTitle(id) ?? String(id) })),
   homeChat: event.homeChatId === null ? null : { id: event.homeChatId, title: chatTitle(event.homeChatId) ?? String(event.homeChatId) },
   startsAt: event.startsAt.toISOString(),
   endedAt: iso(event.endedAt),
@@ -229,12 +229,12 @@ const seriesView = (series: typeof eventSeries.$inferSelect) => ({
  * outlive the catalog, so an event keeps whatever it was given before a chat moved.
  */
 const unknownGroup = (city: CitySlug, groups: readonly number[]) => {
-  const allowed = new Set(assignableChats(db, city));
+  const allowed = new Set(run(assignableChats(city)));
   return groups.some((id) => !allowed.has(id));
 };
 /** Guests can only be funnelled into a chat of the event's own branch. */
 const unknownHomeChat = (city: CitySlug, chatId: number | null | undefined) =>
-  chatId !== null && chatId !== undefined && !assignableChats(db, city).includes(chatId);
+  chatId !== null && chatId !== undefined && !run(assignableChats(city)).includes(chatId);
 
 /** Telegram owns membership, so refresh what the caller is about to be filtered against. */
 const syncMemberships = (userId: number, chatIds: readonly number[]) =>
@@ -262,7 +262,7 @@ const parseLocationUrl = (value: string | null): string | null | undefined => {
 const manageable = (actor: Actor, eventId: number) => {
   const event = db.select().from(events).where(eq(events.id, eventId)).get();
   if (!event) return { denied: "event_not_found" as const, code: 404 as const };
-  if (!canManageEvent(db, actor, event)) return { denied: "forbidden" as const, code: 403 as const };
+  if (!run(canManageEvent(actor, event))) return { denied: "forbidden" as const, code: 403 as const };
   return { event };
 };
 
@@ -554,7 +554,7 @@ export const app = new Elysia()
       // Nothing to show until they have said which branch is theirs; the mini app
       // puts the picker up in place of the list rather than guessing.
       if (user.city === null) return [];
-      await runAsync(syncMemberships(user.id, chatsGatingLiveEvents(db)));
+      await runAsync(syncMemberships(user.id, run(chatsGatingLiveEvents())));
       // A started event stays listed until an organizer ends it, so people can still
       // find it to sign up late or to check in on their way out.
       return db.select().from(events)
@@ -576,9 +576,9 @@ export const app = new Elysia()
     .get("/events/:id", async ({ params, user, status }) => {
       const event = participantEvent(params.id);
       if (!event) return error(status, 404, "event_not_found");
-      await runAsync(syncMemberships(user.id, chatsOfEvent(db, event.id)));
+      await runAsync(syncMemberships(user.id, run(chatsOfEvent(event.id))));
       // A restricted event stays invisible rather than forbidden — do not leak that it exists.
-      if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
+      if (!run(canSeeEvent(event.id, user.id))) return error(status, 404, "event_not_found");
       const registration = db.select({ status: registrations.status, isStaff: registrations.isStaff }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
       const waitlistPosition = registration?.status === "waitlisted" ? waitlistPositionOf(event.id, user.id) : null;
@@ -589,7 +589,7 @@ export const app = new Elysia()
       const paid = db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, params.id)).get();
       if (paid) return error(status, 409, "payment_required");
       return runAsync(Effect.gen(function* () {
-        yield* syncMemberships(user.id, chatsOfEvent(db, params.id));
+        yield* syncMemberships(user.id, yield* chatsOfEvent(params.id));
         return yield* joinEvent(params.id, user.id, now());
       }).pipe(Effect.catchTag("JoinRejected", ({ code }) => Effect.succeed(
         error(status, code === "already_joined" || code === "event_full" ? 409 : code === "not_eligible" ? 403 : 400, code),
@@ -600,7 +600,7 @@ export const app = new Elysia()
       if (!paymentProvider) return error(status, 503, "payments_not_configured");
       const provider = paymentProvider;
       return runAsync(Effect.gen(function* () {
-        yield* syncMemberships(user.id, chatsOfEvent(db, params.id));
+        yield* syncMemberships(user.id, yield* chatsOfEvent(params.id));
         return yield* createCheckout({
           eventId: params.id,
           tierId: body.ticketTierId ?? null,
@@ -630,10 +630,10 @@ export const app = new Elysia()
       }),
     })
     .get("/orders/:id", ({ params, user, status }) => {
-      const order = orderForUser(db, params.id, user.id);
+      const order = run(orderForUser(params.id, user.id));
       return order ?? error(status, 404, "order_not_found");
     }, { params: t.Object({ id: t.String({ minLength: 1 }) }) })
-    .get("/orders", ({ user }) => ordersForUser(db, user.id))
+    .get("/orders", ({ user }) => run(ordersForUser(user.id)))
     .post("/orders/:id/cancel", async ({ params, user, status }) => runAsync(cancelPendingOrder(params.id, user.id, now()).pipe(
       Effect.catchTag("OrderRejected", ({ code }) => Effect.succeed(error(status, code === "order_not_found" ? 404 : 409, code))),
       Effect.catchDefect((cause) => Effect.sync(() => {
@@ -699,8 +699,8 @@ export const app = new Elysia()
     .get("/events/:id/ticket", async ({ params, user, status }) => {
       const event = participantEvent(params.id);
       if (!event) return error(status, 404, "event_not_found");
-      await runAsync(syncMemberships(user.id, chatsOfEvent(db, event.id)));
-      if (!canSeeEvent(db, event.id, user.id)) return error(status, 404, "event_not_found");
+      await runAsync(syncMemberships(user.id, run(chatsOfEvent(event.id))));
+      if (!run(canSeeEvent(event.id, user.id))) return error(status, 404, "event_not_found");
       if (!isPaidEvent(event.id)) return error(status, 409, "not_ticketed");
       const registration = db.select({ id: registrations.id, status: registrations.status }).from(registrations)
         .where(and(eq(registrations.eventId, event.id), eq(registrations.userId, user.id))).get();
@@ -717,7 +717,7 @@ export const app = new Elysia()
     }, { params: idParams })
 
     .get("/organizer/series", ({ user, isAdmin, actor }) => {
-      const listView = (series: typeof eventSeries.$inferSelect) => ({ ...seriesView(series), ...seriesSummary(db, series.id, now()) });
+      const listView = (series: typeof eventSeries.$inferSelect) => ({ ...seriesView(series), ...run(seriesSummary(series.id, now())) });
       if (isAdmin) return db.select().from(eventSeries).orderBy(desc(eventSeries.nextStartsAt), desc(eventSeries.id)).all().map(listView);
       const runs = adminCities(actor);
       const byCity = runs.length
@@ -856,7 +856,7 @@ export const app = new Elysia()
     .get("/organizer/series/:id/stats", ({ params, actor, status }) => {
       const found = manageableSeries(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const stats = seriesStats(db, params.id);
+      const stats = run(seriesStats(params.id));
       return {
         ...stats,
         occurrences: stats.occurrences.map((occurrence) => ({
@@ -1181,7 +1181,7 @@ export const app = new Elysia()
       // The roster is the one screen that must never be stale about who is on it,
       // and it is cheap to reconcile: a no-op once the rows are there.
       run(syncEventStaff(params.id, now()));
-      const flags = rosterFlags(db, params.id);
+      const flags = run(rosterFlags(params.id));
       const attendance = db.select({
         userId: users.id,
         firstName: users.firstName,
@@ -1212,13 +1212,13 @@ export const app = new Elysia()
           ...flags(row.userId),
           purchaseItems: purchaseLines(params.id, row.userId),
         }));
-      return { registrations: attendance, counts: eventStats(db, params.id), ticketed: isPaidEvent(params.id) };
+      return { registrations: attendance, counts: run(eventStats(params.id)), ticketed: isPaidEvent(params.id) };
     }, { params: idParams })
     .get("/organizer/events/:id/checkin-token", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
       // No point showing a code nobody's scan would be accepted from.
-      if (isEventOver(db, params.id)) return error(status, 409, "event_over");
+      if (run(isEventOver(params.id))) return error(status, 409, "event_over");
       // Paid runs go the other way round — the runner holds the ticket and the
       // organizer scans it. Refused here, not merely hidden in the mini app, so
       // the two doors cannot drift apart.
@@ -1291,12 +1291,12 @@ export const app = new Elysia()
       ));
     }, { params: t.Object({ id: t.Numeric(), userId: t.Numeric() }) })
     /** HQ: live runs, what needs a person, and what is next — over the same events as /organizer/events. */
-    .get("/organizer/hq", ({ actor }) => hqOverview(db, actor, now()))
+    .get("/organizer/hq", ({ actor }) => run(hqOverview(actor, now())))
     /** The phase and the numbers of one event's screen, beyond what eventView and the roster carry. */
     .get("/organizer/events/:id/summary", ({ params, actor, status }) => {
       const found = manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const summary = eventSummary(db, params.id, now());
+      const summary = run(eventSummary(params.id, now()));
       // Cancelling is a branch admin's call; the screen needs to know whether to offer it.
       return summary
         ? { ...summary, canCancel: canAdminCity(actor, found.event.city), organizers: organizersOf(params.id) }
@@ -1395,7 +1395,7 @@ export const app = new Elysia()
     .get("/admin/events/:id/stats", ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      const stats = eventStats(db, params.id);
+      const stats = run(eventStats(params.id));
       return {
         ...stats,
         noShowRate: stats.registered ? (stats.registered - stats.checkedIn) / stats.registered : 0,
@@ -1405,7 +1405,7 @@ export const app = new Elysia()
     .get("/admin/events/:id/orders", ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
-      return { orders: ordersForEvent(db, params.id), paymentsConfigured };
+      return { orders: run(ordersForEvent(params.id)), paymentsConfigured };
     }, { params: idParams })
     .post("/admin/events/:id/orders/:orderId/refund", async ({ params, actor, status }) => {
       const found = administrable(actor, params.id);
@@ -1415,13 +1415,13 @@ export const app = new Elysia()
         Effect.provideService(Payments, paymentProvider),
         Effect.map(({ effects }) => {
           fireEffects(effects);
-          const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+          const order = run(ordersForEvent(params.id)).find((entry) => entry.orderId === params.orderId);
           return order ?? error(status, 404, "order_not_found");
         }),
         Effect.catchTag("OrderRejected", ({ code }) => Effect.succeed(error(status, code === "order_not_found" ? 404 : 409, code))),
         Effect.catchDefect((cause) => Effect.sync(() => {
           console.error(`Admin refund failed for order ${params.orderId}`, cause instanceof Error ? cause.message : "unknown error");
-          const order = ordersForEvent(db, params.id).find((entry) => entry.orderId === params.orderId);
+          const order = run(ordersForEvent(params.id)).find((entry) => entry.orderId === params.orderId);
           return order?.status === "refund_pending"
             ? order
             : error(status, 503, "payment_temporarily_unavailable");
@@ -1486,7 +1486,7 @@ export const app = new Elysia()
     /** The chats an event in this branch may be gated to or funnelled into. */
     .get("/admin/groups", async ({ query, actor, status }) => {
       if (!canAdminCity(actor, query.city)) return error(status, 403, "forbidden");
-      const ids = assignableChats(db, query.city);
+      const ids = run(assignableChats(query.city));
       await runAsync(refreshChatStates(ids));
       return { groups: ids.map((id) => ({ id, ...chatState(id) })) };
     }, { query: t.Object({ city: citySchema }) })
@@ -1496,7 +1496,7 @@ export const app = new Elysia()
      */
     .get("/admin/chats", async ({ actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
-      const catalog = chatCatalog(db, adminCities(actor), actor.isGlobalAdmin);
+      const catalog = run(chatCatalog(adminCities(actor), actor.isGlobalAdmin));
       await runAsync(refreshChatStates(catalog.map((chat) => chat.id)));
       return {
         chats: catalog.map((chat) => ({ ...chat, ...chatState(chat.id), createdAt: iso(chat.createdAt), checkedAt: iso(chat.checkedAt) })),
@@ -1507,7 +1507,7 @@ export const app = new Elysia()
       // Filing a chat under a branch is a club-wide act: it decides which admins
       // gain reach into that group.
       if (!actor.isGlobalAdmin) return error(status, 403, "forbidden");
-      if (!chatById(db, params.id)) return error(status, 404, "chat_not_found");
+      if (!run(chatById(params.id))) return error(status, 404, "chat_not_found");
       run(setChatCity(params.id, body.city));
       return { ok: true };
     }, { params: idParams, body: t.Object({ city: t.Nullable(citySchema) }) })
@@ -1534,12 +1534,12 @@ export const app = new Elysia()
     .get("/admin/attention", ({ query, actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       if (query.city !== undefined && !canAdminCity(actor, query.city)) return error(status, 403, "forbidden");
-      return needsAttention(db, query.city === undefined ? adminCities(actor) : [query.city], actor.isGlobalAdmin, now());
+      return run(needsAttention(query.city === undefined ? adminCities(actor) : [query.city], actor.isGlobalAdmin, now()));
     }, { query: t.Object({ city: t.Optional(citySchema) }) })
     /** The person card. Any branch admin may open it; what they may change is in `roles[].grantable`. */
     .get("/admin/users/:id", ({ params, actor, status }) => {
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
-      return personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found");
+      return run(personCard(actor, params.id, adminIds)) ?? error(status, 404, "user_not_found");
     }, { params: idParams })
     /**
      * The card's Save: several branches in one go, all or nothing. Unchanged rows may
@@ -1551,7 +1551,7 @@ export const app = new Elysia()
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       return run(setCityRoles(actor, params.id, body.roles).pipe(
         Effect.flatMap(({ changed }) => Effect.forEach(changed, (city) => syncCityStaff(city, now()), { discard: true })),
-        Effect.map(() => personCard(db, actor, params.id, adminIds) ?? error(status, 404, "user_not_found")),
+        Effect.map(() => run(personCard(actor, params.id, adminIds)) ?? error(status, 404, "user_not_found")),
         Effect.catchTag("RolesRejected", ({ code }) => Effect.succeed(error(status, code === "forbidden" ? 403 : 400, code))),
       ));
     }, { params: idParams, body: t.Object({ roles: t.Array(t.Object({ city: citySchema, role: t.Nullable(cityRoleSchema) }), { maxItems: cities.length }) }) })
@@ -1562,7 +1562,7 @@ export const app = new Elysia()
       const runs = adminCities(actor);
       const city = query.city ?? (actor.isGlobalAdmin ? null : runs[0] ?? null);
       if (city !== null && !canAdminCity(actor, city)) return error(status, 403, "forbidden");
-      return { ...globalStats(db, city), month: monthStats(db, city, now()) };
+      return { ...run(globalStats(city)), month: run(monthStats(city, now())) };
     }, { query: t.Object({ city: t.Optional(citySchema) }) }))
   .get("/*", ({ request }) => staticFile(new URL(request.url).pathname));
 

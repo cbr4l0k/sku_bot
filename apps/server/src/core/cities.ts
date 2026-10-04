@@ -1,5 +1,7 @@
+import { Effect } from "effect";
 import { CITIES, cities, type CityRole, type CitySlug } from "@sku/cities";
 import { and, eq, eventOrganizers, events, sql, userCityRoles, type Db } from "@sku/db";
+import { Database } from "../services";
 
 /**
  * The runs a person browses: their own branch's, plus anything they already hold a
@@ -35,7 +37,9 @@ export type Actor = {
   roles: ReadonlyMap<CitySlug, CityRole>;
 };
 
-export const loadActor = (db: Db, userId: number, isGlobalAdmin: boolean): Actor => ({
+export const loadActor = Effect.fnUntraced(function* (userId: number, isGlobalAdmin: boolean): Effect.fn.Return<Actor, never, Database> {
+  const db = yield* Database;
+  return ({
   userId,
   isGlobalAdmin,
   roles: new Map(
@@ -45,6 +49,7 @@ export const loadActor = (db: Db, userId: number, isGlobalAdmin: boolean): Actor
       .all()
       .map((row) => [row.city, row.role] as const),
   ),
+});
 });
 
 /** Runs the branch: every power a general admin has, bounded to one city. */
@@ -61,13 +66,15 @@ export const canCreateEventIn = (actor: Actor, city: CitySlug): boolean =>
  * row with no branch role behind it, so every organizer who existed before cities
  * did keeps working untouched.
  */
-export const canManageEvent = (db: Db, actor: Actor, event: { id: number; city: CitySlug }): boolean =>
-  canAdminCity(actor, event.city) || Boolean(
+export const canManageEvent = Effect.fnUntraced(function* (actor: Actor, event: { id: number; city: CitySlug }): Effect.fn.Return<boolean, never, Database> {
+  const db = yield* Database;
+  return canAdminCity(actor, event.city) || Boolean(
     db.select({ eventId: eventOrganizers.eventId })
       .from(eventOrganizers)
       .where(and(eq(eventOrganizers.eventId, event.id), eq(eventOrganizers.userId, actor.userId)))
       .get(),
   );
+});
 
 /** The branches this actor runs — every city for a general admin. */
 export const adminCities = (actor: Actor): CitySlug[] =>

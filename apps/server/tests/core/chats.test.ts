@@ -24,24 +24,24 @@ describe("the chat catalog", () => {
 
   test("a discovered chat arrives with no branch and is usable by nobody", () => {
     run(db, rememberChat(-100123, "Морозная набережная", now));
-    const row = chatById(db, -100123);
+    const row = run(db, chatById(-100123));
     expect(row?.city).toBeNull();
     expect(row?.title).toBe("Морозная набережная");
-    for (const city of ["spb", "msk", "kzn"] as const) expect(assignableChats(db, city)).toEqual([]);
+    for (const city of ["spb", "msk", "kzn"] as const) expect(run(db, assignableChats(city))).toEqual([]);
   });
 
   test("filing it under a branch is what makes it usable, and only there", () => {
     run(db, rememberChat(-100123, "Чат", now));
     run(db, setChatCity(-100123, "msk"));
-    expect(assignableChats(db, "msk")).toEqual([-100123]);
-    expect(assignableChats(db, "spb")).toEqual([]);
+    expect(run(db, assignableChats("msk"))).toEqual([-100123]);
+    expect(run(db, assignableChats("spb"))).toEqual([]);
   });
 
   test("meeting a chat again refreshes its name but never re-files it", () => {
     run(db, rememberChat(-100123, "Старое имя", now));
     run(db, setChatCity(-100123, "kzn"));
     run(db, rememberChat(-100123, "Новое имя", now));
-    const row = chatById(db, -100123);
+    const row = run(db, chatById(-100123));
     expect(row?.title).toBe("Новое имя");
     expect(row?.city).toBe("kzn");
   });
@@ -49,15 +49,15 @@ describe("the chat catalog", () => {
   test("a nameless re-discovery keeps the name we already had", () => {
     run(db, rememberChat(-100123, "Имя", now));
     run(db, rememberChat(-100123, null, now));
-    expect(chatById(db, -100123)?.title).toBe("Имя");
+    expect(run(db, chatById(-100123))?.title).toBe("Имя");
   });
 
   test("an unreachable chat records why, and recovers when it answers again", () => {
     run(db, rememberChat(-100123, "Чат", now));
     run(db, recordChatState(-100123, { title: null, problem: "Bad Request: chat not found" }, now));
-    expect(chatById(db, -100123)?.problem).toBe("Bad Request: chat not found");
+    expect(run(db, chatById(-100123))?.problem).toBe("Bad Request: chat not found");
     run(db, recordChatState(-100123, { title: "Чат", problem: null }, now));
-    expect(chatById(db, -100123)?.problem).toBeNull();
+    expect(run(db, chatById(-100123))?.problem).toBeNull();
   });
 });
 
@@ -73,12 +73,12 @@ describe("who sees which chats", () => {
   });
 
   test("a general admin sees every branch's chats and the unfiled ones", () => {
-    const seen = chatCatalog(db, ["spb", "msk", "kzn"], true).map((chat) => chat.id).sort((a, b) => a - b);
+    const seen = run(db, chatCatalog(["spb", "msk", "kzn"], true)).map((chat) => chat.id).sort((a, b) => a - b);
     expect(seen).toEqual([-3, -2, -1]);
   });
 
   test("a branch admin sees their own and is not shown chats waiting to be filed", () => {
-    expect(chatCatalog(db, ["msk"], false).map((chat) => chat.id)).toEqual([-2]);
+    expect(run(db, chatCatalog(["msk"], false)).map((chat) => chat.id)).toEqual([-2]);
   });
 });
 
@@ -91,14 +91,14 @@ describe("lifting EVENT_GROUPS into the table", () => {
 
   test("anything still listed is filed under the default branch", () => {
     expect(run(db, seedChatsFromEnv([-1, -2], "spb", now))).toBe(2);
-    expect(assignableChats(db, "spb")).toEqual([-2, -1]);
+    expect(run(db, assignableChats("spb"))).toEqual([-2, -1]);
   });
 
   test("it never runs twice, and never overrides a branch already chosen", () => {
     run(db, seedChatsFromEnv([-1], "spb", now));
     run(db, setChatCity(-1, "kzn"));
     expect(run(db, seedChatsFromEnv([-1], "spb", now))).toBe(0);
-    expect(chatById(db, -1)?.city).toBe("kzn");
+    expect(run(db, chatById(-1))?.city).toBe("kzn");
   });
 });
 
@@ -121,10 +121,10 @@ describe("a group upgraded to a supergroup", () => {
 
   test("the catalog row moves across, keeping its branch — no admin action needed", () => {
     run(db, migrateChat(-1, -1001));
-    expect(chatById(db, -1)).toBeUndefined();
-    expect(chatById(db, -1001)?.city).toBe("msk");
-    expect(chatById(db, -1001)?.title).toBe("Клуб");
-    expect(assignableChats(db, "msk")).toEqual([-1001]);
+    expect(run(db, chatById(-1))).toBeUndefined();
+    expect(run(db, chatById(-1001))?.city).toBe("msk");
+    expect(run(db, chatById(-1001))?.title).toBe("Клуб");
+    expect(run(db, assignableChats("msk"))).toEqual([-1001]);
   });
 
   test("the restriction, the guest chat and the trials all follow it", () => {
@@ -141,8 +141,8 @@ describe("a group upgraded to a supergroup", () => {
     run(db, rememberChat(-1001, "Уже знаем", now));
     run(db, setChatCity(-1001, "kzn"));
     run(db, migrateChat(-1, -1001));
-    expect(chatById(db, -1)).toBeUndefined();
-    expect(chatById(db, -1001)?.city).toBe("kzn");
+    expect(run(db, chatById(-1))).toBeUndefined();
+    expect(run(db, chatById(-1001))?.city).toBe("kzn");
     expect(db.select().from(chats).all()).toHaveLength(1);
   });
 });

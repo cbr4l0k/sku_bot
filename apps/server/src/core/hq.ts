@@ -1,6 +1,8 @@
+import { Effect } from "effect";
 import type { CheckinMethod, Db } from "@sku/db";
 import { adminCities, type Actor } from "./cities";
 import { eventStats } from "./stats";
+import { Database } from "../services";
 
 const DAY_SECONDS = 24 * 60 * 60;
 /** Door duty starts before the gun: runners check in while the organizer sets up. */
@@ -78,11 +80,12 @@ const fromWaitlistIds = (db: Db, eventId: number) => new Set(db.$client.query<{ 
 ).all(eventId).map((row) => row.user_id));
 
 /** Per-person roster flags, keyed by user id. */
-export const rosterFlags = (db: Db, eventId: number) => {
+export const rosterFlags = Effect.fnUntraced(function* (eventId: number) {
+  const db = yield* Database;
   const firstTimers = firstTimerIds(db, eventId);
   const fromWaitlist = fromWaitlistIds(db, eventId);
   return (userId: number) => ({ firstTime: firstTimers.has(userId), fromWaitlist: fromWaitlist.has(userId) });
-};
+});
 
 /** Only a current check-in has a method; an undone one leaves a stale value behind. */
 export const checkinMethodOf = (status: string, method: CheckinMethod | null) => status === "checked_in" ? method : null;
@@ -102,7 +105,8 @@ type ScopedEvent = PhaseRow & {
  * The organizer's front page: what is running, what needs a person, what is next.
  * Canceled and ended events are history and never appear here.
  */
-export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
+export const hqOverview = Effect.fn("hq.hqOverview")(function* (actor: Actor, now: Date, nextLimit = 10) {
+  const db = yield* Database;
   const timestamp = seconds(now);
   const scope = eventScope(actor);
   const rows = db.$client.query<ScopedEvent, (string | number)[]>(`
@@ -126,7 +130,7 @@ export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
       continue;
     }
     if (phase === "start") {
-      const counts = eventStats(db, event.id);
+      const counts = yield* eventStats(event.id);
       live.push({
         id: event.id,
         title: event.title,
@@ -147,7 +151,7 @@ export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
       todo.push({ kind: "publish_draft", eventId: event.id, title: event.title, city: event.city, startsAt, seriesId: event.series_id });
     }
     if (next.length >= nextLimit) continue;
-    const counts = eventStats(db, event.id);
+    const counts = yield* eventStats(event.id);
     const ticketed = isTicketed(db, event.id);
     next.push({
       id: event.id,
@@ -164,11 +168,12 @@ export const hqOverview = (db: Db, actor: Actor, now: Date, nextLimit = 10) => {
     });
   }
   return { live, todo, next };
-};
+});
 
 /* ------------------------------------------------------------- series list */
 
-export const seriesSummary = (db: Db, seriesId: number, now: Date) => {
+export const seriesSummary = Effect.fn("hq.seriesSummary")(function* (seriesId: number, now: Date) {
+  const db = yield* Database;
   const timestamp = seconds(now);
   const series = db.$client.query<{ active: number; next_starts_at: number | null; updated_at: number }, [number]>(
     "SELECT active, next_starts_at, updated_at FROM event_series WHERE id = ?",
@@ -209,7 +214,7 @@ export const seriesSummary = (db: Db, seriesId: number, now: Date) => {
     // The template's last edit; pausing is an edit, and nothing records it more precisely.
     pausedSince: active ? null : isoAt(series?.updated_at ?? null),
   };
-};
+});
 
 /* ---------------------------------------------------------- event summary */
 
@@ -218,13 +223,14 @@ export const seriesSummary = (db: Db, seriesId: number, now: Date) => {
  * the roster: the phase, the headline numbers, the money, the leftovers to hand
  * out, who a cancellation would reach, and what comes next in the series.
  */
-export const eventSummary = (db: Db, eventId: number, now: Date) => {
+export const eventSummary = Effect.fn("hq.eventSummary")(function* (eventId: number, now: Date) {
+  const db = yield* Database;
   const timestamp = seconds(now);
   const event = db.$client.query<PhaseRow & { series_id: number | null }, [number]>(
     "SELECT status, starts_at, ended_at, series_id FROM events WHERE id = ?",
   ).get(eventId);
   if (!event) return null;
-  const counts = eventStats(db, eventId);
+  const counts = yield* eventStats(eventId);
   const ticketed = isTicketed(db, eventId);
 
   const confirmed = db.$client.query<{ user_id: number; status: string }, [number]>(
@@ -301,7 +307,7 @@ export const eventSummary = (db: Db, eventId: number, now: Date) => {
     cancelPreview: { registered: counts.registered, waitlisted: counts.waitlisted },
     nextInSeries: event.series_id === null ? null : nextInSeries(db, event.series_id, event.starts_at),
   };
-};
+});
 
 const nextInSeries = (db: Db, seriesId: number, after: number) => {
   const series = db.$client.query<{ title: string; active: number; next_starts_at: number | null; lead_days: number }, [number]>(

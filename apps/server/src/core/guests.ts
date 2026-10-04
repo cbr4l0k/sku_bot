@@ -27,7 +27,9 @@ export type InviteCandidate = { eventId: number; chatId: number; userId: number 
  * already in it is simply skipped, which is what keeps long-standing members out
  * of `chat_guests` — and so beyond the reach of the removal sweep.
  */
-export const inviteCandidates = (db: Db): InviteCandidate[] => db.$client
+export const inviteCandidates = Effect.fnUntraced(function* (): Effect.fn.Return<InviteCandidate[], never, Database> {
+  const db = yield* Database;
+  return db.$client
   .query<InviteCandidate, []>(`
     SELECT e.id AS eventId, e.home_chat_id AS chatId, r.user_id AS userId
     FROM events e
@@ -48,6 +50,7 @@ export const inviteCandidates = (db: Db): InviteCandidate[] => db.$client
     ORDER BY r.created_at, r.id
   `)
   .all();
+});
 
 /**
  * Starts a trial, or restarts one for a guest removed after an earlier no-show.
@@ -137,7 +140,9 @@ export const settleTrials = Effect.fn("guests.settleTrials")(function* (eventId:
  * rather than stranding its guests in the chat forever. Only an ending waits out
  * SETTLEMENT_GRACE_MS — the others are deliberate acts on an event nobody is running.
  */
-export const eventsAwaitingSettlement = (db: Db, now: Date): number[] => db.$client
+export const eventsAwaitingSettlement = Effect.fnUntraced(function* (now: Date): Effect.fn.Return<number[], never, Database> {
+  const db = yield* Database;
+  return db.$client
   .query<{ eventId: number }, [number]>(`
     SELECT DISTINCT g.event_id AS eventId
     FROM chat_guests g
@@ -148,3 +153,4 @@ export const eventsAwaitingSettlement = (db: Db, now: Date): number[] => db.$cli
   `)
   .all(seconds(new Date(now.getTime() - SETTLEMENT_GRACE_MS)))
   .map((row) => row.eventId);
+});

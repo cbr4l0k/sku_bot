@@ -43,7 +43,7 @@ export const joinHandler = (context: JoinContext): Promise<void> => runtime.runP
     return;
   }
 
-  yield* refreshMemberships(telegramMembership, telegramUser.id, chatsOfEvent(db, eventId), new Date());
+  yield* refreshMemberships(telegramMembership, telegramUser.id, yield* chatsOfEvent(eventId), new Date());
   const notice = yield* joinEvent(eventId, telegramUser.id, new Date()).pipe(
     Effect.map((result) => result.status === "registered" ? "joinedNotice" as const : "queuedNotice" as const),
     Effect.catchTag("JoinRejected", (rejection) => Effect.succeed(({

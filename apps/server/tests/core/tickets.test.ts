@@ -20,7 +20,7 @@ import {
   type ProviderPaymentStatus,
   type ProviderRefund,
 } from "../../src/payments/provider";
-import { runAsync, runPaid } from "../support/effect";
+import { run, runAsync, runPaid } from "../support/effect";
 
 class FakeProvider implements PaymentProvider {
   readonly requiresCustomerContact = false;
@@ -234,8 +234,8 @@ test("an active payment is reused only for the exact same basket", async () => {
 test("purchase history includes the event, basket lines, and payment controls", async () => {
   await checkout(1, [{ productId: 22, variantId: 31, quantity: 2 }]);
 
-  expect(ordersForUser(db, 2)).toEqual([]);
-  expect(ordersForUser(db, 1)).toMatchObject([{
+  expect(run(db, ordersForUser(2))).toEqual([]);
+  expect(run(db, ordersForUser(1))).toMatchObject([{
     status: "awaiting_payment",
     confirmationUrl: expect.stringContaining("https://pay.example/"),
     amountMinor: 650000,
@@ -259,7 +259,7 @@ test("admin event history includes ticket and merchandise-only orders with immut
   provider.setPaymentStatus("pay-2", "succeeded");
   await runPaid(db, provider, reconcilePayment("pay-2", now));
 
-  const history = ordersForEvent(db, 1);
+  const history = run(db, ordersForEvent(1));
   expect(history).toHaveLength(2);
   expect(history.find((order) => order.orderId === merchOrder.orderId)).toMatchObject({
     includesTicket: false,
@@ -297,7 +297,7 @@ test("admin can request a full refund for one specific event order", async () =>
     amountMinor: 200000,
     reason: "admin_requested",
   });
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "refunded", refundable: false });
   expect(await runPaid(db, provider, requestAdminRefund(1, checkoutResult.orderId, now))).toEqual({ error: "order_not_refundable" });
 });
 
@@ -318,7 +318,7 @@ test("a definitive provider rejection fails the refund once and requires an expl
   expect(db.$client.query<{ status: string; failure_reason: string | null }, []>(
     "SELECT status, failure_reason FROM refunds",
   ).get()).toEqual({ status: "canceled", failure_reason: "Refunds are restricted for this shop" });
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({
     status: "refund_failed",
     refundFailureReason: "Refunds are restricted for this shop",
     refundable: true,
@@ -334,7 +334,7 @@ test("a definitive provider rejection fails the refund once and requires an expl
   expect(provider.refundInputs).toHaveLength(2);
   expect(provider.refundInputs[1]?.idempotenceKey).not.toBe(provider.refundInputs[0]?.idempotenceKey);
   expect(db.$client.query<{ count: number }, []>("SELECT count(*) AS count FROM refunds").get()?.count).toBe(2);
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "refunded", refundable: false });
 });
 
 test("the admin refund button reconciles a full refund already created in YooKassa", async () => {
@@ -367,7 +367,7 @@ test("the admin refund button reconciles a full refund already created in YooKas
   expect(db.$client.query<{ provider_refund_id: string | null; status: string }, []>(
     "SELECT provider_refund_id, status FROM refunds",
   ).get()).toEqual({ provider_refund_id: "dashboard-refund", status: "succeeded" });
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "refunded", refundable: false });
 });
 
 test("the admin refund button refuses to overwrite a partial YooKassa refund", async () => {
@@ -388,7 +388,7 @@ test("the admin refund button refuses to overwrite a partial YooKassa refund", a
   await expect(runPaid(db, provider, requestAdminRefund(1, checkoutResult.orderId, now)))
     .rejects.toThrow("already has a partial refund");
   expect(provider.refundInputs).toHaveLength(0);
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "fulfilled", refundable: true });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "fulfilled", refundable: true });
 });
 
 test("user cancellation reconciles a full refund already created in YooKassa", async () => {
@@ -411,7 +411,7 @@ test("user cancellation reconciles a full refund already created in YooKassa", a
   ]);
   expect(provider.refundInputs).toHaveLength(0);
   expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("canceled");
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "refunded", refundable: false });
 });
 
 test("event cancellation reconciles a full refund already created in YooKassa", async () => {
@@ -435,7 +435,7 @@ test("event cancellation reconciles a full refund already created in YooKassa", 
   ]);
   expect(provider.refundInputs).toHaveLength(0);
   expect(db.$client.query<{ status: string }, []>("SELECT status FROM registrations").get()?.status).toBe("canceled");
-  expect(ordersForEvent(db, 1)[0]).toMatchObject({ status: "refunded", refundable: false });
+  expect(run(db, ordersForEvent(1))[0]).toMatchObject({ status: "refunded", refundable: false });
 });
 
 test("a transient provider failure leaves the refund pending for the sweeper", async () => {
@@ -447,12 +447,12 @@ test("a transient provider failure leaves the refund pending for the sweeper", a
 
   await expect(runPaid(db, provider, requestAdminRefund(1, checkoutResult.orderId, now))).rejects.toThrow("returned 500");
   expect(db.$client.query<{ status: string }, []>("SELECT status FROM refunds").get()?.status).toBe("pending");
-  expect(ordersForEvent(db, 1)[0]?.status).toBe("refund_pending");
+  expect(run(db, ordersForEvent(1))[0]?.status).toBe("refund_pending");
 
   provider.refundError = null;
   await runPaid(db, provider, sweepTicketPayments(now));
   expect(provider.refundInputs).toHaveLength(2);
-  expect(ordersForEvent(db, 1)[0]?.status).toBe("refunded");
+  expect(run(db, ordersForEvent(1))[0]?.status).toBe("refunded");
 });
 
 test("a user can abandon an unfinished basket and immediately start another checkout", async () => {
@@ -490,7 +490,7 @@ test("an expired pending payment is abandoned locally without calling unsupporte
   await runPaid(db, provider, sweepTicketPayments(now));
   expect(provider.payments.get("pay-1")?.status).toBe("pending");
   expect(db.$client.query<{ status: string }, []>("SELECT status FROM ticket_orders").get()?.status).toBe("cancel_pending");
-  expect(ordersForUser(db, 1)[0]?.confirmationUrl).toBeNull();
+  expect(run(db, ordersForUser(1))[0]?.confirmationUrl).toBeNull();
   expect(await checkout(2)).not.toHaveProperty("error");
 });
 

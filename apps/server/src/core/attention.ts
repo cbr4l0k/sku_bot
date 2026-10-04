@@ -1,5 +1,7 @@
+import { Effect } from "effect";
 import type { CitySlug } from "@sku/cities";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
 
 /**
  * What is stuck until an admin does something about it — the top of their HQ.
@@ -12,7 +14,8 @@ import type { Db } from "@sku/db";
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
 const placeholders = (values: readonly unknown[]) => values.map(() => "?").join(", ");
 
-export const needsAttention = (db: Db, scope: readonly CitySlug[], includeUnassigned: boolean, now: Date) => {
+export const needsAttention = Effect.fn("attention.needsAttention")(function* (scope: readonly CitySlug[], includeUnassigned: boolean, now: Date) {
+  const db = yield* Database;
   const unassignedChats = includeUnassigned
     ? db.$client.query<{ id: number; title: string | null; created_at: number }, []>(
       "SELECT id, title, created_at FROM chats WHERE city IS NULL ORDER BY created_at, id",
@@ -72,4 +75,4 @@ export const needsAttention = (db: Db, scope: readonly CitySlug[], includeUnassi
   }));
 
   return { unassignedChats, seriesDrafts, failedRefunds };
-};
+});

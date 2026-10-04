@@ -59,7 +59,7 @@ describe("Telegram-gated events", () => {
 
   test("an event without chats stays open to everyone", () => {
     event(1);
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
     expect(run(db, joinEvent(1, 2, now))).toEqual({ status: "registered" });
   });
 
@@ -71,9 +71,9 @@ describe("Telegram-gated events", () => {
     await runAsync(db, refreshMemberships(probe, 2, [CHAT], now));
     await runAsync(db, refreshMemberships(probe, 3, [CHAT], now));
 
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
     expect(run(db, joinEvent(1, 2, now))).toEqual({ status: "registered" });
-    expect(canSeeEvent(db, 1, 3)).toBe(false);
+    expect(run(db, canSeeEvent(1, 3))).toBe(false);
     expect(run(db, joinEvent(1, 3, now))).toEqual({ error: "not_eligible" });
   });
 
@@ -82,7 +82,7 @@ describe("Telegram-gated events", () => {
     run(db, setEventChats(1, [CHAT, OTHER]));
     const { probe } = probeFor({ [OTHER]: [3] });
     await runAsync(db, refreshMemberships(probe, 3, [CHAT, OTHER], now));
-    expect(canSeeEvent(db, 1, 3)).toBe(true);
+    expect(run(db, canSeeEvent(1, 3))).toBe(true);
   });
 
   test("answers are cached until the TTL lapses, then re-asked", async () => {
@@ -100,11 +100,11 @@ describe("Telegram-gated events", () => {
     run(db, setEventChats(1, [CHAT]));
     const present = probeFor({ [CHAT]: [2] });
     await runAsync(db, refreshMemberships(present.probe, 2, [CHAT], now));
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
 
     const gone = probeFor({});
     await runAsync(db, refreshMemberships(gone.probe, 2, [CHAT], new Date(now.getTime() + MEMBERSHIP_TTL_MS)));
-    expect(canSeeEvent(db, 1, 2)).toBe(false);
+    expect(run(db, canSeeEvent(1, 2))).toBe(false);
   });
 
   test("a failed lookup keeps the last answer, and closes the event when there is none", async () => {
@@ -115,11 +115,11 @@ describe("Telegram-gated events", () => {
 
     const broken = probeFor({}, [CHAT]);
     await runAsync(db, refreshMemberships(broken.probe, 2, [CHAT], new Date(now.getTime() + MEMBERSHIP_TTL_MS)));
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
 
     // User 3 was never resolved, so an unreachable chat must not open the event to them.
     await runAsync(db, refreshMemberships(broken.probe, 3, [CHAT], now));
-    expect(canSeeEvent(db, 1, 3)).toBe(false);
+    expect(run(db, canSeeEvent(1, 3))).toBe(false);
   });
 
   test("a group upgraded to a supergroup carries its restriction to the new chat id", async () => {
@@ -130,8 +130,8 @@ describe("Telegram-gated events", () => {
 
     await runAsync(db, refreshMemberships(probe, 2, [CHAT], now));
 
-    expect(chatsOfEvent(db, 1)).toEqual([OTHER]);
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, chatsOfEvent(1))).toEqual([OTHER]);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
     expect(run(db, joinEvent(1, 2, now))).toEqual({ status: "registered" });
   });
 
@@ -142,8 +142,8 @@ describe("Telegram-gated events", () => {
 
     await runAsync(db, refreshMemberships(probe, 3, [CHAT], now));
 
-    expect(chatsOfEvent(db, 1)).toEqual([OTHER]);
-    expect(canSeeEvent(db, 1, 3)).toBe(false);
+    expect(run(db, chatsOfEvent(1))).toEqual([OTHER]);
+    expect(run(db, canSeeEvent(1, 3))).toBe(false);
   });
 
   test("restricting an event afterwards leaves existing registrations visible and cancelable", () => {
@@ -151,21 +151,21 @@ describe("Telegram-gated events", () => {
     run(db, joinEvent(1, 2, now));
     run(db, setEventChats(1, [CHAT]));
 
-    expect(canSeeEvent(db, 1, 2)).toBe(true);
+    expect(run(db, canSeeEvent(1, 2))).toBe(true);
     run(db, cancelRegistration(1, 2, now));
     // Once cancelled the exemption lapses, so a non-member cannot slip back in.
-    expect(canSeeEvent(db, 1, 2)).toBe(false);
+    expect(run(db, canSeeEvent(1, 2))).toBe(false);
     expect(run(db, joinEvent(1, 2, now))).toEqual({ error: "not_eligible" });
   });
 
   test("assignments replace rather than accumulate, and drive the refresh set", () => {
     event(1);
     run(db, setEventChats(1, [OTHER, CHAT, CHAT]));
-    expect(chatsOfEvent(db, 1)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
-    expect(chatsGatingLiveEvents(db).sort((a, b) => a - b)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
+    expect(run(db, chatsOfEvent(1))).toEqual([OTHER, CHAT].sort((a, b) => a - b));
+    expect(run(db, chatsGatingLiveEvents()).sort((a, b) => a - b)).toEqual([OTHER, CHAT].sort((a, b) => a - b));
 
     run(db, setEventChats(1, []));
-    expect(chatsOfEvent(db, 1)).toEqual([]);
-    expect(chatsGatingLiveEvents(db)).toEqual([]);
+    expect(run(db, chatsOfEvent(1))).toEqual([]);
+    expect(run(db, chatsGatingLiveEvents())).toEqual([]);
   });
 });

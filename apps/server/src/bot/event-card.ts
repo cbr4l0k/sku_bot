@@ -7,6 +7,7 @@ import type { Locale } from "@sku/db";
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
 import { db } from "../db";
 import { loadEnv } from "../env";
+import { runtime } from "../runtime";
 import { joinCallback } from "./callbacks";
 import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
@@ -92,7 +93,7 @@ const money = (minor: number, locale: Locale) => new Intl.NumberFormat(locale ==
  */
 export const renderEventCard = (eventId: number, userId: number, locale: Locale): { text: ReturnType<typeof format>; keyboard: InlineKeyboard } | null => {
   const event = publishedEvent(eventId);
-  if (!event || !canSeeEvent(db, eventId, userId)) return null;
+  if (!event || !runtime.runSync(canSeeEvent(eventId, userId))) return null;
 
   const confirmed = confirmedCount(event.id);
   const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed - pendingTicketCount(event.id), 0);
@@ -150,7 +151,7 @@ export const eventSummary = (eventId: number, locale: Locale): EventSummary | nu
 
 export const sendEventCard = Effect.fn("bot.sendEventCard")(function* (context: EventCardContext, eventId: number, userId: number, locale: Locale) {
   // A deep link must not reveal an event the recipient's chats exclude them from.
-  yield* refreshMemberships(telegramMembership, userId, chatsOfEvent(db, eventId), new Date());
+  yield* refreshMemberships(telegramMembership, userId, yield* chatsOfEvent(eventId), new Date());
   const card = renderEventCard(eventId, userId, locale);
   if (!card) {
     yield* Effect.promise(() => context.send(i18n.t(locale, "eventUnavailable")));

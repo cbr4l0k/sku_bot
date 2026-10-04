@@ -141,10 +141,9 @@ const settleEvent = Effect.fnUntraced(function* (eventId: number, now: Date) {
  * event that already has people signed up all converge on the same result.
  */
 export const syncChatGuests = Effect.fn("guests.syncChatGuests")(function* (now: Date = new Date()) {
-  const db = yield* Database;
-  for (const eventId of eventsAwaitingSettlement(db, now)) yield* settleEvent(eventId, now);
+  for (const eventId of yield* eventsAwaitingSettlement(now)) yield* settleEvent(eventId, now);
 
-  for (const candidate of inviteCandidates(db)) {
+  for (const candidate of yield* inviteCandidates()) {
     // Someone who has blocked the bot fails at the DM every time and stays a candidate.
     // That is the intended cost of not giving up on a merely transient failure.
     if (yield* confirmedOutsider(candidate.chatId, candidate.userId, now)) yield* issueInvite(candidate, now);

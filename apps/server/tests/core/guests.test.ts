@@ -38,7 +38,7 @@ describe("chat guests", () => {
     )
     .get(chatId, userId);
 
-  const candidateIds = () => inviteCandidates(db).map((candidate) => candidate.userId);
+  const candidateIds = () => run(db, inviteCandidates()).map((candidate) => candidate.userId);
 
   beforeEach(() => {
     db = createDb(":memory:");
@@ -50,7 +50,7 @@ describe("chat guests", () => {
     event(1);
     run(db, joinEvent(1, 2, now));
     run(db, joinEvent(1, 3, now));
-    expect(inviteCandidates(db)).toEqual([
+    expect(run(db, inviteCandidates())).toEqual([
       { eventId: 1, chatId: CHAT, userId: 2 },
       { eventId: 1, chatId: CHAT, userId: 3 },
     ]);
@@ -59,7 +59,7 @@ describe("chat guests", () => {
   test("an event with no home chat invites nobody", () => {
     event(1, null);
     run(db, joinEvent(1, 2, now));
-    expect(inviteCandidates(db)).toEqual([]);
+    expect(run(db, inviteCandidates())).toEqual([]);
   });
 
   test("setting a home chat later picks up people who already signed up", () => {
@@ -169,7 +169,7 @@ describe("chat guests", () => {
 
     event(2);
     run(db, joinEvent(2, 2, settleTime));
-    expect(inviteCandidates(db)).toEqual([{ eventId: 2, chatId: CHAT, userId: 2 }]);
+    expect(run(db, inviteCandidates())).toEqual([{ eventId: 2, chatId: CHAT, userId: 2 }]);
 
     invite(2, 2);
     expect(guestRow(2)).toMatchObject({ event_id: 2, status: "invited", settled_at: null });
@@ -182,16 +182,16 @@ describe("chat guests", () => {
     run(db, joinEvent(2, 3, now));
     invite(1, 2);
     invite(2, 3);
-    expect(eventsAwaitingSettlement(db, settleTime)).toEqual([]);
+    expect(run(db, eventsAwaitingSettlement(settleTime))).toEqual([]);
 
     run(db, endEvent(1, later));
     db.$client.query("UPDATE events SET status = 'canceled' WHERE id = 2").run();
-    expect(eventsAwaitingSettlement(db, settleTime).sort()).toEqual([1, 2]);
+    expect(run(db, eventsAwaitingSettlement(settleTime)).sort()).toEqual([1, 2]);
 
     run(db, settleTrials(1, settleTime));
-    expect(eventsAwaitingSettlement(db, settleTime)).toEqual([2]);
+    expect(run(db, eventsAwaitingSettlement(settleTime))).toEqual([2]);
     run(db, settleTrials(2, settleTime));
-    expect(eventsAwaitingSettlement(db, settleTime)).toEqual([]);
+    expect(run(db, eventsAwaitingSettlement(settleTime))).toEqual([]);
   });
 
   test("an ended event holds off long enough for the roster to be corrected", () => {
@@ -201,9 +201,9 @@ describe("chat guests", () => {
     run(db, endEvent(1, later));
 
     // Straight after the organizer taps "end", nothing is removable yet.
-    expect(eventsAwaitingSettlement(db, later)).toEqual([]);
-    expect(eventsAwaitingSettlement(db, new Date(later.getTime() + SETTLEMENT_GRACE_MS - 1_000))).toEqual([]);
-    expect(eventsAwaitingSettlement(db, settleTime)).toEqual([1]);
+    expect(run(db, eventsAwaitingSettlement(later))).toEqual([]);
+    expect(run(db, eventsAwaitingSettlement(new Date(later.getTime() + SETTLEMENT_GRACE_MS - 1_000)))).toEqual([]);
+    expect(run(db, eventsAwaitingSettlement(settleTime))).toEqual([1]);
   });
 
   test("leaving 'published' settles at once, whichever way it happens", () => {
@@ -211,10 +211,10 @@ describe("chat guests", () => {
       event(id);
       run(db, joinEvent(id, 2, now));
       invite(id, 2);
-      expect(eventsAwaitingSettlement(db, now)).toEqual([]);
+      expect(run(db, eventsAwaitingSettlement(now))).toEqual([]);
 
       db.$client.query("UPDATE events SET status = ? WHERE id = ?").run(status, id);
-      expect(eventsAwaitingSettlement(db, now)).toEqual([id]);
+      expect(run(db, eventsAwaitingSettlement(now))).toEqual([id]);
 
       run(db, settleTrials(id, now));
     }
@@ -227,7 +227,7 @@ describe("chat guests", () => {
     run(db, endEvent(1, later));
     run(db, reopenEvent(1, later));
 
-    expect(eventsAwaitingSettlement(db, settleTime)).toEqual([]);
+    expect(run(db, eventsAwaitingSettlement(settleTime))).toEqual([]);
     expect(guestRow(2)).toMatchObject({ status: "invited", settled_at: null });
   });
 });

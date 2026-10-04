@@ -41,22 +41,22 @@ describe("who counts as staff", () => {
     cityRole(3, "msk", "admin");
     cityRole(4, "spb", "admin");
     nameOnEvent(1, 5);
-    expect(staffUserIds(db, 1)).toEqual([2, 3, 5]);
+    expect(run(db, staffUserIds(1))).toEqual([2, 3, 5]);
   });
 
   test("a branch organizer is not staff on every run of their branch, only on the ones they are named on", () => {
     event(10);
     cityRole(6, "msk", "organizer");
-    expect(staffUserIds(db, 1)).toEqual([]);
+    expect(run(db, staffUserIds(1))).toEqual([]);
     nameOnEvent(1, 6);
-    expect(staffUserIds(db, 1)).toEqual([6]);
+    expect(run(db, staffUserIds(1))).toEqual([6]);
   });
 
   test("a banned account is off the list however it got there", () => {
     event(10);
     globalAdmin(2);
     db.$client.query("UPDATE users SET is_banned = 1 WHERE id = 2").run();
-    expect(staffUserIds(db, 1)).toEqual([]);
+    expect(run(db, staffUserIds(1))).toEqual([]);
   });
 });
 
@@ -143,7 +143,7 @@ describe("staff hold no spot", () => {
     run(db, joinEvent(1, 6, now));
     db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ? WHERE event_id = 1 AND user_id = 2").run(unix(now));
 
-    const stats = eventStats(db, 1);
+    const stats = run(db, eventStats(1));
     expect(stats).toMatchObject({ registered: 1, checkedIn: 0, staff: 1, staffCheckedIn: 1 });
     // A staff member scanning in does not move the attendance rate.
     expect(stats.attendanceRate).toBe(0);

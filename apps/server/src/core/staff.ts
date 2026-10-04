@@ -18,7 +18,7 @@ const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
  * Banned users are excluded: a revoked account should not reappear on rosters
  * because an old role row outlived it.
  */
-export const staffUserIds = (db: Db, eventId: number): number[] => db.$client
+const staffOf = (db: Db, eventId: number): number[] => db.$client
   .query<{ user_id: number }, [number, number]>(`
     SELECT u.id AS user_id FROM users u
     WHERE u.is_banned = 0
@@ -35,6 +35,10 @@ export const staffUserIds = (db: Db, eventId: number): number[] => db.$client
   `)
   .all(eventId, eventId)
   .map((row) => row.user_id);
+
+export const staffUserIds = Effect.fnUntraced(function* (eventId: number) {
+  return staffOf(yield* Database, eventId);
+});
 
 /** Only events where checking in could still happen are worth staffing. */
 const liveEvent = (db: Db, eventId: number) => db.$client
@@ -56,7 +60,7 @@ const liveEvent = (db: Db, eventId: number) => db.$client
 const syncEventStaffIn = (db: Db, eventId: number, now: Date): { added: number; removed: number } =>
   db.$client.transaction((): { added: number; removed: number } => {
     if (!liveEvent(db, eventId)) return { added: 0, removed: 0 };
-    const staff = staffUserIds(db, eventId);
+    const staff = staffOf(db, eventId);
     const timestamp = seconds(now);
 
     let added = 0;

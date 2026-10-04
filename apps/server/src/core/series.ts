@@ -158,7 +158,9 @@ export const spawnOccurrence = Effect.fn("series.spawnOccurrence")(function* (se
 });
 
 /** A date is due only after its review window has opened. */
-export const dueSeries = (db: Db, now: Date): number[] => db.$client
+export const dueSeries = Effect.fnUntraced(function* (now: Date): Effect.fn.Return<number[], never, Database> {
+  const db = yield* Database;
+  return db.$client
   .query<{ id: number }, [number, number]>(`
     SELECT id FROM event_series
     WHERE active = 1 AND next_starts_at IS NOT NULL
@@ -166,6 +168,7 @@ export const dueSeries = (db: Db, now: Date): number[] => db.$client
     ORDER BY next_starts_at, id
   `).all(DAY_SECONDS, seconds(now))
   .map((row) => row.id);
+});
 
 export const skipNext = Effect.fn("series.skipNext")(function* (seriesId: number, now: Date) {
   const db = yield* Database;
@@ -208,7 +211,8 @@ export const detachEvent = Effect.fn("series.detachEvent")(function* (eventId: n
 type OccurrenceRow = { id: number; title: string; starts_at: number; capacity: number | null; status: string; ended_at: number | null };
 type ParticipantRow = { user_id: number; status: string; is_staff: number };
 
-export const seriesStats = (db: Db, seriesId: number) => {
+export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: number) {
+  const db = yield* Database;
   const rows = db.$client.query<OccurrenceRow, [number]>(`
     SELECT id, title, starts_at, capacity, status, ended_at FROM events
     WHERE series_id = ? ORDER BY starts_at, id
@@ -225,8 +229,8 @@ export const seriesStats = (db: Db, seriesId: number) => {
   `).all(seriesId).map((row) => [row.user_id, row.starts_at] as const));
   let revenueMinor = 0;
 
-  const occurrences = rows.map((event) => {
-    const counts = eventStats(db, event.id);
+  const occurrences = yield* Effect.forEach(rows, Effect.fnUntraced(function* (event) {
+    const counts = yield* eventStats(event.id);
     // Series analytics describe participants, never the people staffing the run;
     // staff rows are excluded from every participant count just as in stats.ts.
     // Regulars are the exception: they reward turning up, and an admin who
@@ -272,7 +276,7 @@ export const seriesStats = (db: Db, seriesId: number) => {
       returning,
       revenueMinor: settled,
     };
-  });
+  }));
 
   if (checkedInByUser.size) {
     const placeholders = [...checkedInByUser].map(() => "?").join(", ");
@@ -331,4 +335,4 @@ export const seriesStats = (db: Db, seriesId: number) => {
       fourPlus: participationCounts.filter((count) => count >= 4).length,
     },
   };
-};
+});

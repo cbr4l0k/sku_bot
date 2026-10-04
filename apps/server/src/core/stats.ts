@@ -1,7 +1,10 @@
+import { Effect } from "effect";
 import { CITIES, type CitySlug } from "@sku/cities";
 import type { Db } from "@sku/db";
+import { Database } from "../services";
 type Registration = { event_id: number; user_id: number; status: string; is_staff: number };
-export const eventStats = (db: Db, eventId: number) => {
+export const eventStats = Effect.fnUntraced(function* (eventId: number) {
+  const db = yield* Database;
   const all = db.$client.query<Registration, [number]>("SELECT event_id, user_id, status, is_staff FROM registrations WHERE event_id = ?").all(eventId);
   // Staff hold no spot, so they are counted apart: mixing them into "registered"
   // would flatter the attendance rate and understate how full a run really is.
@@ -11,9 +14,10 @@ export const eventStats = (db: Db, eventId: number) => {
   const checkedIn = registrations.filter((row) => row.status === "checked_in").length;
   const offers = db.$client.query<{ status: string }, [number]>("SELECT status FROM waitlist_offers WHERE event_id = ?").all(eventId);
   return { registered, waitlisted: registrations.filter((row) => row.status === "waitlisted").length, checkedIn, staff: staff.filter((row) => row.status !== "canceled").length, staffCheckedIn: staff.filter((row) => row.status === "checked_in").length, attendanceRate: registered ? checkedIn / registered : 0, offersMade: offers.length, offersAccepted: offers.filter((row) => row.status === "accepted").length };
-};
+});
 /** Narrowed to one branch for a branch admin; the whole club when `city` is null. */
-export const globalStats = (db: Db, city: CitySlug | null = null) => {
+export const globalStats = Effect.fn("stats.globalStats")(function* (city: CitySlug | null = null) {
+  const db = yield* Database;
   const events = city === null
     ? db.$client.query<{ id: number; capacity: number | null }, []>("SELECT id, capacity FROM events").all()
     : db.$client.query<{ id: number; capacity: number | null }, [string]>("SELECT id, capacity FROM events WHERE city = ?").all(city);
@@ -30,7 +34,7 @@ export const globalStats = (db: Db, city: CitySlug | null = null) => {
   for (const row of registrations) if (row.status !== "canceled") counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
   const names = new Map(db.$client.query<{ id: number; first_name: string }, []>("SELECT id, first_name FROM users").all().map((row) => [row.id, row.first_name]));
   return { totalEvents: events.length, uniqueParticipants: counts.size, avgFillRate: capacityEvents.length ? capacityEvents.reduce((sum, event) => sum + confirmed.filter((row) => row.event_id === event.id).length / (event.capacity ?? 1), 0) / capacityEvents.length : 0, attendanceRate: confirmed.length ? checkedIn.length / confirmed.length : 0, topParticipants: [...counts.entries()].map(([userId, count]) => ({ userId, firstName: names.get(userId) ?? "", count })).sort((a, b) => b.count - a.count || a.userId - b.userId).slice(0, 10) };
-};
+});
 
 /** How far `zone` runs ahead of UTC at `at`, in milliseconds. */
 const zoneOffset = (at: Date, zone: string) => {
@@ -49,7 +53,8 @@ const zoneOffset = (at: Date, zone: string) => {
  * Turnout is check-ins over spots held at those runs; staff are left out, as
  * everywhere else in the club's numbers.
  */
-export const monthStats = (db: Db, city: CitySlug | null, now: Date) => {
+export const monthStats = Effect.fn("stats.monthStats")(function* (city: CitySlug | null, now: Date) {
+  const db = yield* Database;
   const zone = CITIES[city ?? "spb"].timezone;
   const local = new Date(now.getTime() + zoneOffset(now, zone));
   const year = local.getUTCFullYear();
@@ -77,4 +82,4 @@ export const monthStats = (db: Db, city: CitySlug | null, now: Date) => {
     runners: row?.runners ?? 0,
     turnout: held > 0 ? (row?.checked_in ?? 0) / held : null,
   };
-};
+});

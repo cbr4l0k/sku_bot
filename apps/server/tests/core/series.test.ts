@@ -120,8 +120,8 @@ describe("series spawning", () => {
     const stale = new Date("2030-01-01T19:30:00Z");
     const seriesId = createSeries(stale, 7);
     const backUp = new Date("2030-01-31T12:00:00Z");
-    for (const id of dueSeries(db, backUp)) run(db, spawnOccurrence(id, backUp));
-    for (const id of dueSeries(db, backUp)) run(db, spawnOccurrence(id, backUp));
+    for (const id of run(db, dueSeries(backUp))) run(db, spawnOccurrence(id, backUp));
+    for (const id of run(db, dueSeries(backUp))) run(db, spawnOccurrence(id, backUp));
     expect(eventDates(seriesId)).toEqual([
       unix(new Date("2030-02-05T19:30:00Z")),
       unix(new Date("2030-02-12T19:30:00Z")),
@@ -147,7 +147,7 @@ describe("series spawning", () => {
   test("due dates honor the per-series lead window", () => {
     const due = createSeries(new Date(now.getTime() + days(14) * 1000));
     createSeries(new Date(now.getTime() + days(15) * 1000));
-    expect(dueSeries(db, now)).toEqual([due]);
+    expect(run(db, dueSeries(now))).toEqual([due]);
   });
 
   test("deleting a series preserves its occurrences and registrations", () => {
@@ -203,7 +203,7 @@ test("series stats distinguish newcomers, returning runners, retention and settl
   order("fulfilled", eventIds[1]!, "fulfilled", 300, 1);
   order("refunded", eventIds[2]!, "refunded", 900, 1);
 
-  const stats = seriesStats(db, seriesId);
+  const stats = run(db, seriesStats(seriesId));
   expect(stats.occurrences.map(({ newcomers, returning, registered, waitlisted }) => ({ newcomers, returning, registered, waitlisted }))).toEqual([
     { newcomers: 2, returning: 0, registered: 2, waitlisted: 1 },
     { newcomers: 1, returning: 1, registered: 2, waitlisted: 0 },

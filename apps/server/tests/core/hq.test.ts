@@ -76,7 +76,7 @@ describe("hq overview", () => {
     event({ startsIn: 24 * HOUR, status: "canceled" });
     event({ startsIn: -24 * HOUR, status: "draft" });
 
-    const hq = hqOverview(db, admin, now);
+    const hq = run(db, hqOverview(admin, now));
     expect(hq.live).toEqual([expect.objectContaining({ id: live, checkedIn: 1, total: 2, minutesSinceStart: 12, ticketed: false })]);
     expect(hq.todo).toEqual([
       { kind: "end_event", eventId: stale, title: "run", startsAt: expect.any(String), hoursSinceStart: 14 },
@@ -94,9 +94,9 @@ describe("hq overview", () => {
     event({ startsIn: 26 * HOUR, city: "spb" });
     db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (?, 5)").run(named);
     const organizer: Actor = { userId: 5, isGlobalAdmin: false, roles: new Map([["kzn", "admin"]]) };
-    expect(hqOverview(db, organizer, now).next.map((row) => row.id)).toEqual([named, branch]);
+    expect(run(db, hqOverview(organizer, now)).next.map((row) => row.id)).toEqual([named, branch]);
     const nobody: Actor = { userId: 6, isGlobalAdmin: false, roles: new Map() };
-    expect(hqOverview(db, nobody, now)).toEqual({ live: [], todo: [], next: [] });
+    expect(run(db, hqOverview(nobody, now))).toEqual({ live: [], todo: [], next: [] });
   });
 });
 
@@ -111,7 +111,7 @@ describe("roster", () => {
     for (const userId of [2, 3, 4]) register(current, userId);
     db.$client.query("INSERT INTO waitlist_offers (event_id, user_id, offered_at, expires_at, status) VALUES (?, 4, 0, 0, 'accepted'), (?, 3, 0, 0, 'superseded')").run(current, current);
 
-    const flags = rosterFlags(db, current);
+    const flags = run(db, rosterFlags(current));
     expect(flags(2)).toEqual({ firstTime: false, fromWaitlist: false });
     expect(flags(3)).toEqual({ firstTime: true, fromWaitlist: false });
     expect(flags(4)).toEqual({ firstTime: true, fromWaitlist: true });
@@ -157,7 +157,7 @@ describe("event summary", () => {
     db.$client.query("INSERT INTO payment_attempts (id, order_id, idempotence_key) VALUES ('pa', 'c', 'k')").run();
     db.$client.query("INSERT INTO refunds (id, order_id, payment_attempt_id, idempotence_key, amount_minor, status, reason) VALUES ('r', 'c', 'pa', 'rk', 50000, 'succeeded', 'user_canceled')").run();
 
-    const summary = eventSummary(db, id, now)!;
+    const summary = run(db, eventSummary(id, now))!;
     expect(summary.phase).toBe("wrapup");
     expect(summary.counts).toEqual({ registered: 3, waitlisted: 1, checkedIn: 2, noShows: 1, staff: 1, turnout: 2 / 3 });
     expect(summary.newcomers).toEqual({ registered: 2, came: 1, missed: 1, removedFromChat: 1 });
@@ -181,12 +181,12 @@ describe("event summary", () => {
     const seriesId = createSeries(1, unix(now) + 30 * 24 * HOUR);
     const id = event({ startsIn: 3 * HOUR, seriesId });
     const following = event({ startsIn: 7 * 24 * HOUR, status: "draft", seriesId });
-    const summary = eventSummary(db, id, now)!;
+    const summary = run(db, eventSummary(id, now))!;
     expect(summary.phase).toBe("signup");
     expect(summary.minutesToStart).toBe(180);
     expect(summary.money).toBeNull();
     expect(summary.nextInSeries).toMatchObject({ eventId: following, draftAt: null });
-    expect(eventSummary(db, 999, now)).toBeNull();
+    expect(run(db, eventSummary(999, now))).toBeNull();
   });
 });
 
@@ -199,7 +199,7 @@ describe("series aggregates", () => {
     register(held, 3);
     event({ startsIn: -48 * HOUR, status: "canceled", seriesId });
     const draft = event({ startsIn: 48 * HOUR, status: "draft", seriesId });
-    expect(seriesSummary(db, seriesId, now)).toEqual({
+    expect(run(db, seriesSummary(seriesId, now))).toEqual({
       held: 1,
       avgTurnout: 0.5,
       leaders: ["U2", "U3"],
@@ -208,9 +208,9 @@ describe("series aggregates", () => {
       nextEventId: draft,
       pausedSince: null,
     });
-    expect(seriesSummary(db, createSeries(), now)).toMatchObject({ status: "no_date", nextUp: null, held: 0, avgTurnout: null });
-    expect(seriesSummary(db, createSeries(1, unix(now) + HOUR), now)).toMatchObject({ status: "scheduled", nextEventId: null });
-    expect(seriesSummary(db, createSeries(0), now).status).toBe("paused");
+    expect(run(db, seriesSummary(createSeries(), now))).toMatchObject({ status: "no_date", nextUp: null, held: 0, avgTurnout: null });
+    expect(run(db, seriesSummary(createSeries(1, unix(now) + HOUR), now))).toMatchObject({ status: "scheduled", nextEventId: null });
+    expect(run(db, seriesSummary(createSeries(0), now)).status).toBe("paused");
   });
 
   test("an empty held run counts as 0% turnout, as in series stats", () => {
@@ -218,13 +218,13 @@ describe("series aggregates", () => {
     const full = event({ startsIn: -72 * HOUR, endedAgo: 70 * HOUR, seriesId });
     register(full, 2, "checked_in");
     event({ startsIn: -48 * HOUR, endedAgo: 46 * HOUR, seriesId });
-    expect(seriesSummary(db, seriesId, now).avgTurnout).toBe(0.5);
+    expect(run(db, seriesSummary(seriesId, now)).avgTurnout).toBe(0.5);
   });
 
   test("a template date before this run is not its successor", () => {
     const seriesId = createSeries(1, unix(now) + HOUR);
     const id = event({ startsIn: 3 * HOUR, seriesId });
-    expect(eventSummary(db, id, now)!.nextInSeries).toMatchObject({ eventId: null, startsAt: null, draftAt: null });
+    expect(run(db, eventSummary(id, now))!.nextInSeries).toMatchObject({ eventId: null, startsAt: null, draftAt: null });
   });
 
   test("series stats average over held runs only and split first-timers from returning", () => {
@@ -240,7 +240,7 @@ describe("series aggregates", () => {
     const upcoming = event({ startsIn: 7 * 24 * HOUR, seriesId });
     register(upcoming, 5);
 
-    const stats = seriesStats(db, seriesId);
+    const stats = run(db, seriesStats(seriesId));
     expect(stats.occurrences.map((occurrence) => occurrence.held)).toEqual([true, true, false]);
     expect(stats.totals).toMatchObject({ occurrences: 3, held: 2, turnout: 0.75, fillRate: 0.2, uniqueParticipants: 4, firstTime: 3, returning: 1 });
   });

@@ -14,6 +14,7 @@ import {
   type Actor,
 } from "../../src/core/cities";
 import { and, asc, eq, isNull } from "@sku/db";
+import { run } from "../support/effect";
 
 const seedUser = (db: Db, id: number) =>
   db.insert(users).values({ id, firstName: `u${id}` }).onConflictDoNothing().run();
@@ -110,19 +111,19 @@ describe("running an event", () => {
 
   test("whoever runs the branch runs its events", () => {
     const actor = actorOf(false, [["msk", "admin"]]);
-    expect(canManageEvent(db, actor, { id: 1, city: "msk" })).toBe(true);
-    expect(canManageEvent(db, actor, { id: 2, city: "kzn" })).toBe(false);
+    expect(run(db, canManageEvent(actor, { id: 1, city: "msk" }))).toBe(true);
+    expect(run(db, canManageEvent(actor, { id: 2, city: "kzn" }))).toBe(false);
   });
 
   test("being named on an event is enough on its own, with no branch role behind it", () => {
     // The pre-cities arrangement: an organizer row and nothing else.
     db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (2, 7)").run();
-    expect(canManageEvent(db, actorOf(false), { id: 2, city: "kzn" })).toBe(true);
-    expect(canManageEvent(db, actorOf(false), { id: 1, city: "msk" })).toBe(false);
+    expect(run(db, canManageEvent(actorOf(false), { id: 2, city: "kzn" }))).toBe(true);
+    expect(run(db, canManageEvent(actorOf(false), { id: 1, city: "msk" }))).toBe(false);
   });
 
   test("an organizer role alone does not hand over the branch's other events", () => {
-    expect(canManageEvent(db, actorOf(false, [["kzn", "organizer"]]), { id: 2, city: "kzn" })).toBe(false);
+    expect(run(db, canManageEvent(actorOf(false, [["kzn", "organizer"]]), { id: 2, city: "kzn" }))).toBe(false);
   });
 
   test("loadActor reads the holds off the table", () => {
@@ -130,7 +131,7 @@ describe("running an event", () => {
       { city: "msk", userId: 7, role: "admin" },
       { city: "kzn", userId: 7, role: "organizer" },
     ]).run();
-    const actor = loadActor(db, 7, false);
+    const actor = run(db, loadActor(7, false));
     expect(actor.roles.get("msk")).toBe("admin");
     expect(actor.roles.get("kzn")).toBe("organizer");
     expect(actor.roles.get("spb")).toBeUndefined();

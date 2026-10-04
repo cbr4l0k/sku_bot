@@ -6,7 +6,7 @@ import { sweepTicketPayments } from "./core/tickets";
 import { dueSeries, spawnOccurrence } from "./core/series";
 import { paymentProvider } from "./payments";
 import { runtime } from "./runtime";
-import { Database, Payments } from "./services";
+import { Payments, type Database } from "./services";
 
 /** Each pass stands alone: one failing must not hold back the others. */
 const guarded = <E>(name: string, work: () => Effect.Effect<void, E, Database>) => {
@@ -32,7 +32,7 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
 
 /** Templates that are due open their next draft; one that cannot is left for a person to look at. */
 const spawnDueSeries = Effect.fn("sweeper.spawnDueSeries")(function* (sweepAt: Date) {
-  for (const seriesId of dueSeries(yield* Database, sweepAt)) {
+  for (const seriesId of yield* dueSeries(sweepAt)) {
     yield* spawnOccurrence(seriesId, sweepAt).pipe(Effect.catchTag("SeriesRejected", () => Effect.void));
   }
 });

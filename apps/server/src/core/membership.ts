@@ -37,26 +37,35 @@ export const visibleToUser = (userId: number) => sql`(
   )
 )`;
 
-export const canSeeEvent = (db: Db, eventId: number, userId: number): boolean => Boolean(
+export const canSeeEvent = Effect.fnUntraced(function* (eventId: number, userId: number): Effect.fn.Return<boolean, never, Database> {
+  const db = yield* Database;
+  return Boolean(
   db.select({ id: events.id }).from(events).where(and(eq(events.id, eventId), visibleToUser(userId))).get(),
 );
+});
 
-export const chatsOfEvent = (db: Db, eventId: number): number[] => db
+export const chatsOfEvent = Effect.fnUntraced(function* (eventId: number): Effect.fn.Return<number[], never, Database> {
+  const db = yield* Database;
+  return db
   .select({ chatId: eventChats.chatId })
   .from(eventChats)
   .where(eq(eventChats.eventId, eventId))
   .orderBy(asc(eventChats.chatId))
   .all()
   .map((row) => row.chatId);
+});
 
 /** Every chat gating an event the participant list can show — the set worth refreshing. */
-export const chatsGatingLiveEvents = (db: Db): number[] => db
+export const chatsGatingLiveEvents = Effect.fnUntraced(function* (): Effect.fn.Return<number[], never, Database> {
+  const db = yield* Database;
+  return db
   .selectDistinct({ chatId: eventChats.chatId })
   .from(eventChats)
   .innerJoin(events, eq(events.id, eventChats.eventId))
   .where(and(eq(events.status, "published"), isNull(events.endedAt)))
   .all()
   .map((row) => row.chatId);
+});
 
 export const setEventChats = Effect.fn("membership.setEventChats")(function* (eventId: number, chatIds: readonly number[]) {
   const db = yield* Database;

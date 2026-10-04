@@ -833,13 +833,15 @@ export const sweepTicketPayments = Effect.fn("tickets.sweepTicketPayments")(func
   return effects;
 });
 
-export const orderForUser = (db: Db, orderId: string, userId: number) => {
+export const orderForUser = Effect.fnUntraced(function* (orderId: string, userId: number) {
+  const db = yield* Database;
   const order = orderById(db, orderId);
   if (!order || order.user_id !== userId) return null;
   return orderView(order, attemptForOrder(db, order.id)?.confirmation_url ?? null);
-};
+});
 
-export const ordersForUser = (db: Db, userId: number): PurchaseOrder[] => {
+export const ordersForUser = Effect.fnUntraced(function* (userId: number): Effect.fn.Return<PurchaseOrder[], never, Database> {
+  const db = yield* Database;
   const orders = db.$client.query<OrderRow & {
     event_title: string;
     event_starts_at: number;
@@ -874,9 +876,10 @@ export const ordersForUser = (db: Db, userId: number): PurchaseOrder[] => {
       quantity: item.quantity,
     })),
   }));
-};
+});
 
-export const ordersForEvent = (db: Db, eventId: number): EventPurchaseOrder[] => {
+export const ordersForEvent = Effect.fnUntraced(function* (eventId: number): Effect.fn.Return<EventPurchaseOrder[], never, Database> {
+  const db = yield* Database;
   const orders = db.$client.query<OrderRow & {
     first_name: string;
     last_name: string | null;
@@ -925,7 +928,7 @@ export const ordersForEvent = (db: Db, eventId: number): EventPurchaseOrder[] =>
       quantity: item.quantity,
     })),
   }));
-};
+});
 
 /**
  * Abandon an unfinished checkout locally. Pending one-stage YooKassa payments
