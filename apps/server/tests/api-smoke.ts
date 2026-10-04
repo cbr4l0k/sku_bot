@@ -1,13 +1,23 @@
 process.env.BOT_TOKEN = "12345:smoke-test-token";
 process.env.DOMAIN = "club.example.com";
 process.env.ADMIN_IDS = "1001,4004";
-process.env.EVENT_GROUPS = "-1001234567890,-1009876543210";
 process.env.WEBHOOK_SECRET = "smoke-webhook";
 process.env.CHECKIN_SECRET = "smoke-checkin";
 process.env.DATABASE_PATH = ":memory:";
 process.env.NODE_ENV = "development";
 
 import { getBotTokenSecretKey, signInitData } from "@gramio/init-data";
+
+// Telegram is never reachable from a smoke run: every lookup comes back unanswered,
+// which the server treats as "unknown" exactly as it would a real outage.
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (url.startsWith("https://api.telegram.org/")) {
+    return new Response(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: smoke run is offline" }), { headers: { "content-type": "application/json" } });
+  }
+  return realFetch(input, init);
+}) as typeof fetch;
 
 const { app } = await import("../src/api");
 
@@ -36,6 +46,9 @@ const call = async (method: string, path: string, initData: string, body?: unkno
 const results: Array<[string, boolean, unknown]> = [];
 const check = (name: string, ok: boolean, detail?: unknown) => results.push([name, ok, detail]);
 
+/** The list stays empty until someone has picked their branch, as the mini app makes them do first. */
+const inSpb = (initData: string) => call("PATCH", "/api/me", initData, { city: "spb" });
+
 const health = await app.handle(new Request("http://localhost/api/health"));
 check("health 200", health.status === 200);
 
@@ -44,6 +57,8 @@ check("unauthed /me rejected", noAuth.status === 401 || noAuth.status === 422);
 
 const me = await call("GET", "/api/me", admin);
 check("admin /me isAdmin", me.status === 200 && (me.json as { isAdmin: boolean }).isAdmin === true);
+
+for (const person of [runner, runnerB]) await inSpb(person);
 
 const created = await call("POST", "/api/organizer/events", admin, {
   city: "spb", title: "Смоук-забег", description: "тест", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -97,6 +112,7 @@ const started = await call("POST", "/api/organizer/events", admin, {
 });
 const startedId = (started.json as { id: number }).id;
 const lateJoiner = initDataFor(6006, "Late");
+await inSpb(lateJoiner);
 
 const lateJoin = await call("POST", `/api/events/${startedId}/join`, lateJoiner);
 check("a walk-in joins an event that already started", lateJoin.status === 200 && (lateJoin.json as { status: string }).status === "registered", lateJoin.json);
@@ -149,25 +165,34 @@ check("admin creates an event with the queue off", noQueue.status === 200 && (no
 const tookLastSpot = await call("POST", `/api/events/${noQueueId}/join`, runnerB);
 check("first signup takes the last spot", tookLastSpot.status === 200 && (tookLastSpot.json as { status: string }).status === "registered", tookLastSpot.json);
 
-const turnedAway = await call("POST", `/api/events/${noQueueId}/join`, admin);
+// Not an admin: admins already stand on every roster as staff, so they could never be turned away.
+const latecomer = initDataFor(7007, "Latecomer");
+const turnedAway = await call("POST", `/api/events/${noQueueId}/join`, latecomer);
 check("a full event with no queue turns the next person away", turnedAway.status === 409 && (turnedAway.json as { error: string }).error === "event_full", turnedAway.json);
 
 const queueBackOn = await call("PATCH", `/api/admin/events/${noQueueId}`, admin, { waitlistEnabled: true });
-const queued = await call("POST", `/api/events/${noQueueId}/join`, admin);
+const queued = await call("POST", `/api/events/${noQueueId}/join`, latecomer);
 check("turning the queue on lets the next person queue", queueBackOn.status === 200 && queued.status === 200 && (queued.json as { position: number }).position === 1, queued.json);
 
 /* ------------------------------------------------------------ group restrictions */
 
 // Membership answers come from Telegram; seed the cache so the smoke run needs no network.
 const { db } = await import("../src/db");
+const { runtime } = await import("../src/runtime");
+const { rememberChat } = await import("../src/core/chats");
 const groupChat = -1001234567890;
+
+// The bot files a chat when it is added to one; a general admin then says whose it is.
+runtime.runSync(rememberChat(groupChat, "Клуб СПб", new Date()));
+const filed = await call("PUT", `/api/admin/chats/${groupChat}`, admin, { city: "spb" });
+check("admin files a chat under a branch", filed.status === 200, filed.json);
 const setMembership = (userId: number, isMember: boolean, ageMs = 0) =>
   db.$client.query("INSERT INTO chat_members (chat_id, user_id, is_member, checked_at) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id, user_id) DO UPDATE SET is_member = excluded.is_member, checked_at = excluded.checked_at")
     .run(groupChat, userId, isMember ? 1 : 0, Math.floor((Date.now() - ageMs) / 1000));
 
 // A user untouched by the earlier checks, so "banned" cannot mask "not_eligible".
 const outsider = initDataFor(5005, "Outsider");
-await call("GET", "/api/me", outsider);
+await inSpb(outsider);
 setMembership(5005, false);
 setMembership(3003, true);
 
@@ -182,7 +207,7 @@ const badGroup = await call("POST", "/api/organizer/events", admin, {
   city: "spb", title: "x", description: "x", startsAt: new Date(Date.now() + 86_400_000).toISOString(),
   location: "x", capacity: null, groups: [-1000000000001],
 });
-check("chat outside EVENT_GROUPS rejected", badGroup.status === 400, badGroup.json);
+check("chat outside the branch's catalog rejected", badGroup.status === 400, badGroup.json);
 
 const hiddenList = await call("GET", "/api/events", outsider);
 check("non-member does not see restricted event", !(hiddenList.json as Array<{ id: number }>).some((entry) => entry.id === restrictedId));
