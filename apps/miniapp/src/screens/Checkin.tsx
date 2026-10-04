@@ -7,8 +7,42 @@ import { errorText } from "../lib/format";
 import { useAction } from "../lib/useResource";
 import { useBackButton } from "../lib/useBackButton";
 import { canScan, haptic, scanQr } from "../telegram";
+import { useToast } from "../ui/overlays";
 import { SuccessBurst } from "../ui/qr";
 import { Button, PageTitle, Screen } from "../ui/primitives";
+
+/**
+ * The runner's scan, straight from the button that asks for it: the camera opens
+ * at once, and the outcome comes back as a toast instead of a screen of its own.
+ */
+export const useCheckinScan = (onDone: () => Promise<unknown> | void) => {
+  const { t } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const scan = () => {
+    if (!canScan()) {
+      toast(t("checkin.unavailable"), "err");
+      return;
+    }
+    void action.run(
+      async () => {
+        const code = await scanQr(t("checkin.scanText"));
+        if (code === null) return;
+        await sku.checkin(code.trim());
+        haptic.notify("success");
+        toast(`${t("checkin.success")} · ${t("checkin.successHint")}`);
+        await onDone();
+      },
+      {
+        onError: (error) => {
+          haptic.notify("error");
+          toast(errorText(t, error), "err");
+        },
+      },
+    );
+  };
+  return { scan, pending: action.pending };
+};
 
 type Outcome = { kind: "ok" } | { kind: "err"; message: string } | null;
 

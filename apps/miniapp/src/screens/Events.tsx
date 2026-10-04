@@ -7,6 +7,7 @@ import { errorText, relativeDayKey, shortDate, timeOf, untilStart, weekStart } f
 import { useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { admission, EventCard, spotsLeft } from "../ui/event";
+import { useCheckinScan } from "./Checkin";
 import { Button, EmptyState, ErrorState, Loader, PageTitle, Screen, SectionRule } from "../ui/primitives";
 
 type Filter = "all" | "open" | "free";
@@ -60,7 +61,7 @@ export const EventsScreen = () => {
 
       {events.data && list.length === 0 ? <EmptyState text={t("events.empty")} /> : null}
 
-      {next ? <NextRun event={next} /> : null}
+      {next ? <NextRun event={next} onChange={() => events.reload(true)} /> : null}
 
       {list.length > (next ? 1 : 0) ? (
         <div className="mt-[22px] flex gap-1.5" role="group" aria-label={t("events.filter.label")}>
@@ -101,8 +102,9 @@ export const EventsScreen = () => {
  * "Your next run": the countdown and one button, so the thing a runner opens the
  * app for on race morning is the first thing on it.
  */
-const NextRun = ({ event }: { event: EventCardData }) => {
+const NextRun = ({ event, onChange }: { event: EventCardData; onChange: () => Promise<void> }) => {
   const { t, locale } = useI18n();
+  const checkin = useCheckinScan(onChange);
   const navigate = useNavigate();
   const now = useTicker(30_000);
   const ticketed = isTicketed(event);
@@ -145,7 +147,7 @@ const NextRun = ({ event }: { event: EventCardData }) => {
         <p className="text-center text-[13px] text-hint">{t("detail.checkedInHint")}</p>
       ) : (
         <>
-          <Button block onClick={() => navigate("/checkin")}>
+          <Button block loading={checkin.pending} onClick={checkin.scan}>
             {t("action.scan")}
           </Button>
           <p className="mt-2.5 text-center text-[12px] text-hint">{t("events.scanHint")}</p>

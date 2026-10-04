@@ -14,6 +14,7 @@ import { admission, CountdownRing, PriceChip, spotsLabel, spotsLeft, StatusBadge
 import { GroupChips } from "../ui/groups";
 import { useConfirm, useToast } from "../ui/overlays";
 import { Button, ErrorState, Loader, Screen, SectionRule, Track } from "../ui/primitives";
+import { useCheckinScan } from "./Checkin";
 import { isTicketed } from "./Events";
 
 const OFFER_WINDOW_MS = 20 * 60 * 1000;
@@ -62,6 +63,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
   const toast = useToast();
   const confirm = useConfirm();
   const action = useAction();
+  const checkin = useCheckinScan(reload);
   const { detail, card } = data;
   const id = detail.id;
   const offer = card?.myPendingOffer ?? null;
@@ -138,7 +140,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
         ? ticketed
           ? { label: t("action.showTicket"), onPress: () => navigate(`/events/${id}/ticket`) }
           : status === "registered"
-            ? { label: t("action.scan"), onPress: () => navigate("/checkin") }
+            ? { label: t("action.scan"), onPress: checkin.scan, loading: checkin.pending }
             : quiet("status.checked_in")
         : paidEvent
           // A queue kept from before the event went paid still buys its way in.
