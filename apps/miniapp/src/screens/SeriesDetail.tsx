@@ -197,7 +197,6 @@ const Analytics = ({ stats }: { stats: SeriesStats }) => {
       <section className="card mt-2.5 p-4">
         <div className="mb-3.5 flex items-baseline justify-between">
           <span className="eyebrow">{t("series.trend")}</span>
-          <span className="num text-[11px] text-hint">{t("series.lastN", { n: Math.min(8, totals.held) })}</span>
         </div>
         <ShowUpChart occurrences={stats.occurrences} />
         <div className="hairline my-3.5" />

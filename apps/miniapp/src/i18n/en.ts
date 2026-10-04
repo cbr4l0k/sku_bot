@@ -29,7 +29,7 @@ export const en: Dict = {
 
   "events.title": "Coming up",
   "events.empty": "No announcements yet. Check back soon — new sessions land every week.",
-  "events.freeEntry": "Free entry",
+  "events.freeEntry": "No limit",
   "events.spotsLeft": "{n} left",
   "events.full": "Full",
   "events.waitlistSize": "{n} waiting",

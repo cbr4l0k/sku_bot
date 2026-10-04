@@ -340,7 +340,7 @@ export const EventManageScreen = () => {
             <LinkRow label={t("admin.stats")} onPress={() => setOverlay("stats")} />
             {ticketed ? <LinkRow label={t("manage.purchases")} onPress={() => setOverlay("purchases")} /> : null}
             {phase !== "signup" ? <LinkRow label={t("manage.link")} onPress={copyLink} /> : null}
-            {phase === "start" || phase === "wrapup" ? (
+            {phase === "start" ? (
               <LinkRow
                 label={t(info.signupClosed ? "manage.reopenSignup" : ticketed ? "manage.closeSales" : "manage.closeSignup")}
                 onPress={() => adminPatch({ status: info.signupClosed ? "published" : "closed" })}

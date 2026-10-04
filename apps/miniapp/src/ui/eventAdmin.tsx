@@ -18,7 +18,7 @@ export const StatsSheet = ({ eventId, capacity, onClose }: { eventId: number; ca
   const data = stats.data;
   const rows: ReadonlyArray<{ label: string; value: string; hint?: string }> = data
     ? [
-        { label: t("admin.statRegistered"), value: String(data.registered), hint: capacity === null ? t("events.freeEntry") : `${t("common.of")} ${capacity}` },
+        { label: t("admin.statRegistered"), value: String(data.registered), hint: capacity === null ? t("manage.noLimit") : `${t("common.of")} ${capacity}` },
         { label: t("admin.statCheckedIn"), value: String(data.checkedIn), hint: data.staff ? `${t("organizer.staffCount")} ${data.staffCheckedIn}/${data.staff}` : undefined },
         { label: t("admin.statWaitlisted"), value: String(data.waitlisted) },
         { label: t("admin.statNoShow"), value: String(data.registered - data.checkedIn), hint: percent(data.noShowRate) },
