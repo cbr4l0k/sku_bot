@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import type { Db } from "@sku/db";
 import { Database } from "../services";
 
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);

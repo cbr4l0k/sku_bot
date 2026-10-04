@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { CitySlug } from "@sku/cities";
-import { asc, chats, eq, type Db } from "@sku/db";
+import { asc, chats, eq } from "@sku/db";
 import { Database } from "../services";
 
 /**

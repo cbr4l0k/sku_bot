@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { and, asc, chatMembers, eq, eventChats, events, inArray, isNull, sql, type Db } from "@sku/db";
+import { and, asc, chatMembers, eq, eventChats, events, inArray, isNull, sql } from "@sku/db";
 import { Database } from "../services";
 
 /**

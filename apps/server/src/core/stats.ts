@@ -1,6 +1,5 @@
 import { Effect } from "effect";
 import { CITIES, type CitySlug } from "@sku/cities";
-import type { Db } from "@sku/db";
 import { Database } from "../services";
 type Registration = { event_id: number; user_id: number; status: string; is_staff: number };
 export const eventStats = Effect.fnUntraced(function* (eventId: number) {

@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { CITIES, cities, type CityRole, type CitySlug } from "@sku/cities";
-import { and, eq, eventOrganizers, events, sql, userCityRoles, type Db } from "@sku/db";
+import { and, eq, eventOrganizers, events, sql, userCityRoles } from "@sku/db";
 import { Database } from "../services";
 
 /**
