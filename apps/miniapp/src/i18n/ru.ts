@@ -526,6 +526,8 @@ export const ru = {
   "series.openDraft": "Открыть черновик",
   "series.setDate": "Назначить дату",
   "series.afterThat": "Потом: {date} · черновик за {n} дн.",
+  "series.allRuns": "Все {n}",
+  "series.allRegulars": "Все постоянные · {n}",
   "series.lastN": "последние {n}",
   "series.trendLabel": "Записались и пришли на последних {n} тренировках",
   "series.held": "Прошла",

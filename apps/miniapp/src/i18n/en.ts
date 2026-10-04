@@ -528,6 +528,8 @@ export const en: Dict = {
   "series.openDraft": "Open draft",
   "series.setDate": "Set a date",
   "series.afterThat": "After that: {date} · draft {n} days ahead",
+  "series.allRuns": "All {n} sessions",
+  "series.allRegulars": "All {n} regulars",
   "series.lastN": "last {n}",
   "series.trendLabel": "Signed up and came over the last {n} sessions",
   "series.held": "Held",

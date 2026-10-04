@@ -230,6 +230,11 @@ export const ScanDialog = ({
           {[timeOf(scanned.checkedInAt, locale), position ? t("manage.position", { n: position.n, total: position.total }) : null].filter(Boolean).join(" · ")}
         </span>
       </div>
+      {scanned.username ? (
+        <div className="mt-2 flex justify-center">
+          <TelegramUsername username={scanned.username} />
+        </div>
+      ) : null}
       <div className="hairline mt-[18px] mb-4" />
       <div className="eyebrow mb-2">{t("organizer.handoverTitle")}</div>
       {scanned.items.length === 0 ? (

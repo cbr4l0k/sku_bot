@@ -1,12 +1,14 @@
 import { useNavigate } from "react-router";
 
+import { CITIES } from "@sku/cities";
+
 import { sku, type Locale } from "../api";
 import { useI18n } from "../i18n";
-import { fullName, initials, monthYear, percent } from "../lib/format";
+import { bib, fullName, initials, percent } from "../lib/format";
 import { useSession } from "../session";
 import { haptic, telegramUser } from "../telegram";
 import { CityPicker } from "../ui/cityPicker";
-import { EmptyState, PageTitle, Screen, SectionRule } from "../ui/primitives";
+import { Chip, EmptyState, PageTitle, Screen, SectionRule } from "../ui/primitives";
 
 const LOCALES: { value: Locale; labelKey: "profile.ru" | "profile.en" }[] = [
   { value: "ru", labelKey: "profile.ru" },
@@ -20,7 +22,11 @@ export const ProfileScreen = () => {
 
   const fallback = telegramUser();
   const person = me ?? (fallback ? { firstName: fallback.first_name, lastName: fallback.last_name ?? null } : null);
-  const handle = [me?.username ? `@${me.username}` : null, me?.createdAt ? t("profile.sinceLine", { since: monthYear(me.createdAt, locale) }) : null]
+  const handle = [
+    me ? `№ ${bib(me.id)}` : null,
+    me?.username ? `@${me.username}` : null,
+    me?.createdAt ? t("profile.sinceLine", { since: new Date(me.createdAt).toLocaleDateString(locale) }) : null,
+  ]
     .filter(Boolean)
     .join(" · ");
 
@@ -36,6 +42,17 @@ export const ProfileScreen = () => {
             {handle ? <div className="num mt-[3px] text-[11px] text-hint">{handle}</div> : null}
           </div>
         </div>
+        {me && (me.isAdmin || me.roles.length > 0 || me.isOrganizerOfAny) ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {me.isAdmin ? <Chip tone="flare">{t("profile.roleAdmin")}</Chip> : null}
+            {me.roles.map((role) => (
+              <Chip key={`${role.city}-${role.role}`} tone={role.role === "admin" ? "flare" : "soft"}>
+                {`${CITIES[role.city].name[locale]} · ${t(role.role === "admin" ? "role.admin" : "role.organizer")}`}
+              </Chip>
+            ))}
+            {me.isOrganizerOfAny ? <Chip tone="soft">{t("profile.roleOrganizer")}</Chip> : null}
+          </div>
+        ) : null}
         {me ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
             <div className="stattile px-3.5 py-3">

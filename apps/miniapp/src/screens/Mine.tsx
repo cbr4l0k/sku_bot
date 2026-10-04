@@ -45,6 +45,10 @@ export const MineScreen = () => {
       {events.error && !events.data ? (
         <ErrorState message={errorText(t, events.error)} retryLabel={t("common.retry")} onRetry={() => void events.reload()} />
       ) : null}
+      {/* Payments left open come from here; losing them silently would hide a debt. */}
+      {orders.error && !orders.data ? (
+        <ErrorState message={errorText(t, orders.error)} retryLabel={t("common.retry")} onRetry={() => void orders.reload()} />
+      ) : null}
 
       {empty ? (
         <EmptyState

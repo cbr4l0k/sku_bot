@@ -131,6 +131,11 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
                 {t("events.queuePosition", { place: ordinal(event.myWaitlistPosition, locale) })}
               </span>
             ) : null}
+            {event.waitlistSize > 0 && !mine ? (
+              <span className="num self-center text-[10px] tracking-[0.12em] text-hint uppercase">
+                {t("events.waitlistSize", { n: event.waitlistSize })}
+              </span>
+            ) : null}
             {elsewhere ? (
               <span className="chip" style={{ background: elsewhere.brand, color: elsewhere.fieldInk === "light" ? "#ffffff" : "var(--ink-deep)" }}>
                 {elsewhere.name[locale]}

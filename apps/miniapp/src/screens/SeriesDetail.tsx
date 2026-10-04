@@ -176,6 +176,7 @@ export const SeriesDetailScreen = () => {
 
 const Analytics = ({ stats }: { stats: SeriesStats }) => {
   const { t } = useI18n();
+  const [allRegulars, setAllRegulars] = useState(false);
   const { totals, retention, regulars } = stats;
   const people = retention.onceOnly + retention.twoToThree + retention.fourPlus;
   const buckets: ReadonlyArray<{ key: MessageKey; count: number }> = [
@@ -230,13 +231,19 @@ const Analytics = ({ stats }: { stats: SeriesStats }) => {
       {regulars.length > 0 ? (
         <section className="card mt-2.5">
           <div className="eyebrow px-4 pt-3.5 pb-1">{t("series.regulars")}</div>
-          {regulars.slice(0, 5).map((person) => (
+          {(allRegulars ? regulars : regulars.slice(0, 5)).map((person) => (
             <div key={person.userId} className="row">
               <span className="av">{initials(person)}</span>
               <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{person.firstName}</span>
               <span className="num shrink-0 text-[12px] text-hint">{t("series.attended", { n: person.attended, total: totals.held })}</span>
             </div>
           ))}
+          {regulars.length > 5 && !allRegulars ? (
+            <button type="button" className="row" onClick={() => setAllRegulars(true)}>
+              <span className="flex-1 text-[13px]">{t("series.allRegulars", { n: regulars.length })}</span>
+              <span className="chev">›</span>
+            </button>
+          ) : null}
         </section>
       ) : null}
     </>

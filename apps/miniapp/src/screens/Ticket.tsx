@@ -87,7 +87,7 @@ export const TicketScreen = () => {
           <div className="row">
             <span className="num w-[22px] shrink-0">✓</span>
             <span className="text-[14px] text-hint">
-              {t("ticket.collected")}: {ticket.items.filter((item) => item.handedOverAt !== null).map((item) => item.name).join(", ")}
+              {t("ticket.collected")}: {ticket.items.filter((item) => item.handedOverAt !== null).map((item) => `${item.name}${item.quantity > 1 ? ` × ${item.quantity}` : ""}`).join(", ")}
             </span>
           </div>
         ) : null}

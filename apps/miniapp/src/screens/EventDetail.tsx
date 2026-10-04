@@ -154,7 +154,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
 
   const days = daysUntil(detail.startsAt);
   const whenHint = underway
-    ? t("detail.underway")
+    ? `${timeOf(detail.startsAt, locale)} · ${t("detail.underway")}`
     : days > 1
       ? t("detail.inDays", { time: timeOf(detail.startsAt, locale), n: days })
       : timeOf(detail.startsAt, locale);
@@ -255,7 +255,8 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
         </>
       ) : null}
 
-      {merchOnSale && (holds || !paidEvent) ? (
+      {/* Merch sells on its own too: checkout takes a basket with no ticket. */}
+      {merchOnSale ? (
         <Link to={checkoutPath} className="card row rise mt-3" style={{ "--i": 3 } as React.CSSProperties}>
           <span className="min-w-0 flex-1">
             <span className="block text-[14px] font-semibold">{t("detail.extras")}</span>

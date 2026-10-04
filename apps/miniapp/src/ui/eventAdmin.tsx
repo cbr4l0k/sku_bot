@@ -4,10 +4,50 @@ import type { CitySlug } from "@sku/cities";
 
 import { sku, type AdminPurchaseOrder } from "../api";
 import { useI18n, type MessageKey } from "../i18n";
-import { errorText, fullDate, fullName, money } from "../lib/format";
+import { errorText, fullDate, fullName, money, percent } from "../lib/format";
 import { useAction, useResource } from "../lib/useResource";
 import { Sheet, SheetFooter, useConfirm, useToast } from "./overlays";
 import { Button, Chip, EmptyState, ErrorState, Loader, SearchInput, TelegramUsername } from "./primitives";
+
+/* ---------------------------------------------------------------- event stats */
+
+/** The full numbers the old admin screen kept: offers, conversion and staff included. */
+export const StatsSheet = ({ eventId, capacity, onClose }: { eventId: number; capacity: number | null; onClose: () => void }) => {
+  const { t } = useI18n();
+  const stats = useResource(useCallback(() => sku.eventStats(eventId), [eventId]));
+  const data = stats.data;
+  const rows: ReadonlyArray<{ label: string; value: string; hint?: string }> = data
+    ? [
+        { label: t("admin.statRegistered"), value: String(data.registered), hint: capacity === null ? t("events.freeEntry") : `${t("common.of")} ${capacity}` },
+        { label: t("admin.statCheckedIn"), value: String(data.checkedIn), hint: data.staff ? `${t("organizer.staffCount")} ${data.staffCheckedIn}/${data.staff}` : undefined },
+        { label: t("admin.statWaitlisted"), value: String(data.waitlisted) },
+        { label: t("admin.statNoShow"), value: String(data.registered - data.checkedIn), hint: percent(data.noShowRate) },
+        { label: t("admin.statAttendance"), value: percent(data.attendanceRate) },
+        { label: t("admin.statConversion"), value: percent(data.waitlistConversion), hint: t("admin.statOffers", { a: data.offersAccepted, b: data.offersMade }) },
+      ]
+    : [];
+  return (
+    <Sheet title={t("admin.stats")} onClose={onClose}>
+      {data ? (
+        <section className="card">
+          {rows.map((row) => (
+            <div key={row.label} className="row">
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px] font-semibold">{row.label}</span>
+                {row.hint ? <span className="block text-[12px] text-hint">{row.hint}</span> : null}
+              </span>
+              <span className="num text-[15px]">{row.value}</span>
+            </div>
+          ))}
+        </section>
+      ) : stats.loading ? (
+        <Loader label={t("common.loading")} />
+      ) : (
+        <ErrorState message={errorText(t, stats.error)} retryLabel={t("common.retry")} onRetry={() => void stats.reload()} />
+      )}
+    </Sheet>
+  );
+};
 
 /* ------------------------------------------------------- organizer assignment */
 

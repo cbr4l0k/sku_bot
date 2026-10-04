@@ -9,7 +9,7 @@ import { errorText, fullName, money, percent, shortDate, timeOf } from "../lib/f
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource } from "../lib/useResource";
 import { canScan, copyText, haptic, scanQr } from "../telegram";
-import { OrganizersSheet, PurchasesSheet, SeriesSheet } from "../ui/eventAdmin";
+import { OrganizersSheet, PurchasesSheet, SeriesSheet, StatsSheet } from "../ui/eventAdmin";
 import { EventForm } from "../ui/eventForm";
 import { EventProductEditor } from "../ui/eventProducts";
 import { Dialog, Sheet, SheetFooter, useConfirm, useToast } from "../ui/overlays";
@@ -33,6 +33,7 @@ type Overlay =
   | "organizers"
   | "series"
   | "purchases"
+  | "stats"
   | "roster"
   | "cancel"
   | "qr";
@@ -202,7 +203,18 @@ export const EventManageScreen = () => {
       <PhaseBar phase={phase} />
 
       {phase === "canceled" ? (
-        <NowCard text={t("manage.nowCanceled")} />
+        <NowCard text={t("manage.nowCanceled")}>
+          <div className={`grid gap-2 ${canAdmin ? "grid-cols-2" : ""}`}>
+            <Button size="sm" variant="ghost" onClick={() => setOverlay("roster")}>
+              {t("manage.allRunners")}
+            </Button>
+            {canAdmin ? (
+              <Button size="sm" loading={action.pending} onClick={() => adminPatch({ status: "published" }, t("hq.published"))}>
+                {t("admin.publish")}
+              </Button>
+            ) : null}
+          </div>
+        </NowCard>
       ) : phase === "draft" ? (
         <NowCard text={t(canAdmin ? "manage.nowDraft" : "manage.nowDraftOrganizer")}>
           {canAdmin ? (
@@ -260,6 +272,19 @@ export const EventManageScreen = () => {
         />
       ) : null}
 
+      {/* The door opens on its own an hour ahead; before that it can still be
+          opened, or the event ended, by hand. */}
+      {phase === "signup" ? (
+        <section className="card mt-3">
+          {ticketed ? (
+            canScan() ? <LinkRow label={t("organizer.scanTickets")} onPress={scan} /> : null
+          ) : (
+            <LinkRow label={t("organizer.showQr")} onPress={() => setOverlay("qr")} />
+          )}
+          <LinkRow label={t("organizer.endEvent")} onPress={() => void end()} />
+        </section>
+      ) : null}
+
       {phase === "wrapup" ? <WrapUp info={info} /> : null}
 
       {phase === "signup" && ticketed ? (
@@ -303,12 +328,8 @@ export const EventManageScreen = () => {
         ) : null
       ) : null}
 
-      {phase !== "canceled" ? (
-        <>
-          <Rule label={phase === "draft" ? t("manage.checkBefore") : t("manage.settings")} />
-          <Settings event={event} info={info} canAdmin={canAdmin} phase={phase} onOpen={setOverlay} />
-        </>
-      ) : null}
+      <Rule label={phase === "draft" ? t("manage.checkBefore") : t("manage.settings")} />
+      <Settings event={event} info={info} canAdmin={canAdmin} phase={phase} onOpen={setOverlay} />
 
       {/* What the old admin screen offered at any hour stays reachable in every
           phase; the phase only decides what is up front. */}
@@ -316,20 +337,18 @@ export const EventManageScreen = () => {
         <>
           <Rule label={t("manage.adminActions")} />
           <section className="card">
+            <LinkRow label={t("admin.stats")} onPress={() => setOverlay("stats")} />
             {ticketed ? <LinkRow label={t("manage.purchases")} onPress={() => setOverlay("purchases")} /> : null}
-            {phase === "start" ? (
-              <>
-                <LinkRow label={t("manage.link")} onPress={copyLink} />
-                <LinkRow
-                  label={t(info.signupClosed ? "manage.reopenSignup" : ticketed ? "manage.closeSales" : "manage.closeSignup")}
-                  onPress={() => adminPatch({ status: info.signupClosed ? "published" : "closed" })}
-                />
-              </>
+            {phase !== "signup" ? <LinkRow label={t("manage.link")} onPress={copyLink} /> : null}
+            {phase === "start" || phase === "wrapup" ? (
+              <LinkRow
+                label={t(info.signupClosed ? "manage.reopenSignup" : ticketed ? "manage.closeSales" : "manage.closeSignup")}
+                onPress={() => adminPatch({ status: info.signupClosed ? "published" : "closed" })}
+              />
             ) : null}
-            {phase === "draft" || phase === "canceled" || phase === "wrapup" ? (
-              <DangerRow label={t(phase === "draft" ? "manage.deleteDraft" : "admin.deleteEvent")} onPress={() => void removeEvent()} />
-            ) : null}
-            {phase === "signup" || phase === "start" ? <DangerRow label={t("admin.cancelEvent")} onPress={() => setOverlay("cancel")} /> : null}
+            {/* The server refuses an event with money on it; it says so in the toast. */}
+            <DangerRow label={t(phase === "draft" ? "manage.deleteDraft" : "admin.deleteEvent")} onPress={() => void removeEvent()} />
+            {phase !== "canceled" ? <DangerRow label={t("admin.cancelEvent")} onPress={() => setOverlay("cancel")} /> : null}
           </section>
         </>
       ) : null}
@@ -482,6 +501,7 @@ export const EventManageScreen = () => {
       {overlay === "series" ? (
         <SeriesSheet eventId={id} city={event.city} current={event.seriesId} onClose={() => setOverlay(null)} onChanged={() => void refresh()} />
       ) : null}
+      {overlay === "stats" ? <StatsSheet eventId={id} capacity={event.capacity} onClose={() => setOverlay(null)} /> : null}
       {overlay === "purchases" ? <PurchasesSheet eventId={id} onClose={() => setOverlay(null)} onChanged={() => void refresh()} /> : null}
     </Screen>
   );
