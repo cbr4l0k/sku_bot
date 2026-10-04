@@ -1,7 +1,8 @@
 import { Effect } from "effect";
+import type { Database } from "../services";
 import { chatById, recordChatState } from "../core/chats";
 import type { MembershipProbe } from "../core/membership";
-import { runtime } from "../runtime";
+
 import { bot } from "./index";
 
 /** Statuses that mean the user is in the chat right now. */
@@ -50,12 +51,14 @@ export type ChatState = { title: string | null; problem: string | null; movedTo:
  */
 const migrations = new Map<number, number>();
 
-export const chatTitle = (chatId: number): string | null => runtime.runSync(chatById(chatId))?.title ?? null;
+export const chatTitle = Effect.fnUntraced(function* (chatId: number) {
+  return (yield* chatById(chatId))?.title ?? null;
+});
 
-export const chatState = (chatId: number): ChatState => {
-  const row = runtime.runSync(chatById(chatId));
+export const chatState = Effect.fnUntraced(function* (chatId: number): Effect.fn.Return<ChatState, never, Database> {
+  const row = yield* chatById(chatId);
   return { title: row?.title ?? null, problem: row?.problem ?? null, movedTo: migrations.get(chatId) ?? null };
-};
+});
 
 const selfId = async (): Promise<number> => bot.info?.id ?? (await bot.api.getMe()).id;
 

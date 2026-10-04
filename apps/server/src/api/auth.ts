@@ -1,11 +1,12 @@
 import { getBotTokenSecretKey, validateAndParseInitData } from "@gramio/init-data";
+import { Effect } from "effect";
 import { Elysia, t } from "elysia";
 
 import { eq, users } from "@sku/db";
 import { loadActor } from "../core/cities";
-import { db } from "../db";
 import { loadEnv } from "../env";
 import { runtime } from "../runtime";
+import { Database } from "../services";
 import { localeFromLanguageCode } from "../bot/i18n";
 
 const env = loadEnv();
@@ -16,7 +17,8 @@ export const auth = new Elysia({ name: "auth" })
     headers: t.Object({ "x-init-data": t.String() }),
     response: { 401: t.Object({ error: t.String() }) },
   })
-  .resolve(({ headers, status }) => {
+  // Elysia resolves synchronously here, so the sign-in runs to completion on the spot.
+  .resolve(({ headers, status }) => runtime.runSync(Effect.gen(function* () {
     const result = validateAndParseInitData(headers["x-init-data"], secretKey);
     if (!result || !result.user) return status(401, { error: "unauthorized" });
     // A valid HMAC alone is replayable forever — bound the credential lifetime.
@@ -24,6 +26,7 @@ export const auth = new Elysia({ name: "auth" })
     if (ageSeconds > 60 * 60 * 24) return status(401, { error: "unauthorized" });
 
     const telegramUser = result.user;
+    const db = yield* Database;
     const isConfiguredAdmin = env.ADMIN_IDS.includes(telegramUser.id);
     db.insert(users)
       .values({
@@ -42,6 +45,6 @@ export const auth = new Elysia({ name: "auth" })
 
     const isAdmin = user.isAdmin || isConfiguredAdmin;
     // Resolved once here so handlers can answer "may they?" without another query.
-    return { user, isAdmin, actor: runtime.runSync(loadActor(user.id, isAdmin)) };
-  })
+    return { user, isAdmin, actor: yield* loadActor(user.id, isAdmin) };
+  })))
   .as("scoped");

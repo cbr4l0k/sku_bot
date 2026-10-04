@@ -11,6 +11,7 @@ import { syncAllStaff } from "./core/staff";
 import { db } from "./db";
 import { loadEnv } from "./env";
 import { runtime } from "./runtime";
+import { Database } from "./services";
 import { startSweeper } from "./sweeper";
 
 const env = loadEnv();
@@ -54,7 +55,7 @@ if (isProduction) {
 
 // Warm the chat titles so the admin UI names them instead of showing raw ids, and
 // surface an unreachable chat in the log at boot rather than at first use.
-void runtime.runPromise(refreshChatStates(db.select({ id: chats.id }).from(chats).all().map((chat) => chat.id))).catch(console.error);
+void runtime.runPromise(Database.use((db) => refreshChatStates(db.select({ id: chats.id }).from(chats).all().map((chat) => chat.id)))).catch(console.error);
 
 let shuttingDown = false;
 const shutdown = async (signal: string) => {
