@@ -3,8 +3,8 @@ import { eq, ticketTiers, users } from "@sku/db";
 
 import { chatsOfEvent, refreshMemberships } from "../core/membership";
 import { joinEvent } from "../core/registration";
-import { db } from "../db";
 import { runtime } from "../runtime";
+import { Database } from "../services";
 import { joinCallback } from "./callbacks";
 import { renderEventCard } from "./event-card";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -29,6 +29,7 @@ export const joinHandler = (context: JoinContext): Promise<void> => runtime.runP
   if (!unpacked.success || !telegramUser) return;
 
   const eventId = unpacked.data.id;
+  const db = yield* Database;
   const account = db.select({ locale: users.locale }).from(users).where(eq(users.id, telegramUser.id)).get();
   const locale = account?.locale ?? localeFromLanguageCode(telegramUser.languageCode);
 
@@ -38,7 +39,7 @@ export const joinHandler = (context: JoinContext): Promise<void> => runtime.runP
     .where(eq(ticketTiers.eventId, eventId)).get();
   if (paid) {
     yield* Effect.promise(() => context.send(i18n.t(locale, "paymentRequiredNotice")));
-    const card = renderEventCard(eventId, telegramUser.id, locale);
+    const card = yield* renderEventCard(eventId, telegramUser.id, locale);
     if (card) yield* Effect.promise(() => context.editText(card.text, { reply_markup: card.keyboard }));
     return;
   }
@@ -58,6 +59,6 @@ export const joinHandler = (context: JoinContext): Promise<void> => runtime.runP
   yield* Effect.promise(() => context.send(i18n.t(locale, notice)));
 
   // Repaint the card so its buttons match the new state.
-  const card = renderEventCard(eventId, telegramUser.id, locale);
+  const card = yield* renderEventCard(eventId, telegramUser.id, locale);
   if (card) yield* Effect.promise(() => context.editText(card.text, { reply_markup: card.keyboard }));
 }));

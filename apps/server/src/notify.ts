@@ -27,7 +27,7 @@ const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) 
   const locale = localeFor(db, effect.userId);
 
   if (["ticket_paid", "ticket_refunded", "ticket_refund_failed", "purchase_paid", "purchase_refunded", "purchase_refund_failed"].includes(effect.kind)) {
-    const event = eventSummary(effect.eventId, locale);
+    const event = yield* eventSummary(effect.eventId, locale);
     if (!event) return;
     const key = effect.kind === "ticket_paid" ? "ticketPaid"
       : effect.kind === "ticket_refunded" ? "ticketRefunded"
@@ -44,7 +44,7 @@ const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) 
   }
 
   if (effect.kind === "offer_created") {
-    const event = eventSummary(effect.eventId, locale);
+    const event = yield* eventSummary(effect.eventId, locale);
     if (!event) {
       console.warn(`Offer notification skipped: event ${effect.eventId} was not found.`);
       return;
@@ -106,7 +106,7 @@ export const notifyEventCanceled = Effect.fn("notify.notifyEventCanceled")(funct
   const db = yield* Database;
   for (const userId of userIds) {
     const locale = localeFor(db, userId);
-    const event = eventSummary(eventId, locale);
+    const event = yield* eventSummary(eventId, locale);
     if (!event) {
       console.warn(`Event cancellation notification skipped: event ${eventId} was not found.`);
       continue;
@@ -124,7 +124,7 @@ export const notifyEventUpdated = Effect.fn("notify.notifyEventUpdated")(functio
   const db = yield* Database;
   for (const userId of userIds) {
     const locale = localeFor(db, userId);
-    const event = eventSummary(eventId, locale);
+    const event = yield* eventSummary(eventId, locale);
     if (!event) {
       console.warn(`Event update notification skipped: event ${eventId} was not found.`);
       continue;

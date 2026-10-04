@@ -2,8 +2,8 @@ import { Effect } from "effect";
 import { InlineKeyboard, Keyboard, RemoveKeyboard } from "gramio";
 import { eq, users } from "@sku/db";
 
-import { db } from "../db";
 import { runtime } from "../runtime";
+import { Database } from "../services";
 import { sendEventCard } from "./event-card";
 import { sendHero } from "./hero";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -27,6 +27,7 @@ export const contactHandler = (context: ContactContext): Promise<void> => runtim
   const telegramUser = context.from;
   if (!contact || !telegramUser) return;
 
+  const db = yield* Database;
   const locale = db.select({ locale: users.locale }).from(users).where(eq(users.id, telegramUser.id)).get()?.locale
     ?? localeFromLanguageCode(telegramUser.languageCode);
   if (contact.userId !== telegramUser.id) {

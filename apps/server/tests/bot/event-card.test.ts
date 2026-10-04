@@ -18,13 +18,13 @@ const unix = (date: Date) => Math.floor(date.getTime() / 1000);
 
 /** The labels of the card's callback buttons — the actions actually offered. */
 const actions = (eventId: number, userId: number): string[] => {
-  const card = renderEventCard(eventId, userId, "en");
+  const card = run(db, renderEventCard(eventId, userId, "en"));
   if (!card) return [];
   const rows = (card.keyboard.toJSON() as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
   return rows.flat().filter((button) => button.callback_data !== undefined).map((button) => button.text);
 };
 
-const cardText = (eventId: number, userId: number): string => String(renderEventCard(eventId, userId, "en")?.text ?? "");
+const cardText = (eventId: number, userId: number): string => String(run(db, renderEventCard(eventId, userId, "en"))?.text ?? "");
 
 describe("bot event card", () => {
   beforeEach(() => {
@@ -43,7 +43,7 @@ describe("bot event card", () => {
   test("a paid event never exposes the direct free-signup callback", () => {
     db.$client.query("INSERT INTO ticket_tiers (event_id, name, price_minor, quota) VALUES (1, 'Standard', 100000, 1)").run();
     db.$client.query("INSERT INTO event_products (event_id, kind, name, price_minor, max_per_order) VALUES (1, 'merchandise', 'T-shirt', 200000, 1)").run();
-    const card = renderEventCard(1, 2, "en")!;
+    const card = run(db, renderEventCard(1, 2, "en"))!;
     expect(actions(1, 2)).toEqual([]);
     const keyboard = JSON.stringify(card.keyboard.toJSON());
     expect(keyboard).toContain("Standard");
@@ -79,6 +79,6 @@ describe("bot event card", () => {
 
   test("hides an event the viewer's groups exclude them from", () => {
     db.$client.query("INSERT INTO event_chats (event_id, chat_id) VALUES (1, -100123)").run();
-    expect(renderEventCard(1, 2, "en")).toBeNull();
+    expect(run(db, renderEventCard(1, 2, "en"))).toBeNull();
   });
 });

@@ -66,7 +66,7 @@ const confirmedOutsider = Effect.fnUntraced(function* (chatId: number, userId: n
  */
 const issueInvite = Effect.fnUntraced(function* (candidate: InviteCandidate, now: Date) {
   const locale = localeFor(yield* Database, candidate.userId);
-  const event = eventSummary(candidate.eventId, locale);
+  const event = yield* eventSummary(candidate.eventId, locale);
   if (!event) return;
 
   const expiry = Math.max(event.startsAt.getTime() + LINK_GRACE_MS, now.getTime() + MIN_LINK_LIFE_MS);

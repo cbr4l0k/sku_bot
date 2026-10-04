@@ -1,7 +1,8 @@
 import { Bot, Plugin } from "gramio";
 import { users } from "@sku/db";
-import { db } from "../db";
 import { loadEnv } from "../env";
+import { runtime } from "../runtime";
+import { Database } from "../services";
 import { i18n, localeFromLanguageCode } from "./i18n";
 import { joinCallback } from "./callbacks";
 import { chatIdHandler, chatMembershipHandler } from "./chat-id";
@@ -14,8 +15,9 @@ const env = loadEnv();
 
 const i18nPlugin = new Plugin("sku-i18n").derive(["message", "callback_query"], (context) => {
   const telegramUser = context.from;
-  const savedUser = db.select({ id: users.id, locale: users.locale }).from(users).all()
-    .find((user) => user.id === telegramUser.id);
+  // gramio derives synchronously, so the lookup runs to completion right here.
+  const savedUser = runtime.runSync(Database.useSync((db) => db.select({ id: users.id, locale: users.locale }).from(users).all()
+    .find((user) => user.id === telegramUser.id)));
   const locale = savedUser?.locale ?? localeFromLanguageCode(telegramUser?.languageCode);
 
   return { locale, t: i18n.buildT(locale) };

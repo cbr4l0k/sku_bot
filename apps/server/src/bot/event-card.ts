@@ -2,12 +2,11 @@ import { Effect } from "effect";
 import { InlineKeyboard, bold, format } from "gramio";
 import { CITIES, type CitySlug } from "@sku/cities";
 import { and, count, eq, eventProducts, events, inArray, isNull, registrations, sql, ticketOrders, ticketTiers } from "@sku/db";
-import type { Locale } from "@sku/db";
+import type { Db, Locale } from "@sku/db";
 
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
-import { db } from "../db";
 import { loadEnv } from "../env";
-import { runtime } from "../runtime";
+import { Database } from "../services";
 import { joinCallback } from "./callbacks";
 import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
@@ -33,7 +32,7 @@ export const formatDate = (startsAt: Date, locale: Locale, city: CitySlug): stri
  * A deep link to an event its organizers have ended answers "unavailable" rather than
  * offering a sign-up nothing would accept.
  */
-const publishedEvent = (eventId: number) => db.select({
+const publishedEvent = (db: Db, eventId: number) => db.select({
   id: events.id,
   city: events.city,
   title: events.title,
@@ -45,10 +44,10 @@ const publishedEvent = (eventId: number) => db.select({
 }).from(events).where(and(eq(events.id, eventId), eq(events.status, "published"), isNull(events.endedAt))).get();
 
 /** Spots taken, which is never what the staff on the roster are holding. */
-const confirmedCount = (eventId: number) => db.select({ count: count() }).from(registrations)
+const confirmedCount = (db: Db, eventId: number) => db.select({ count: count() }).from(registrations)
   .where(and(eq(registrations.eventId, eventId), inArray(registrations.status, ["registered", "checked_in"]), eq(registrations.isStaff, false)))
   .get()?.count ?? 0;
-const pendingTicketCount = (eventId: number) => db.select({ count: count() }).from(ticketOrders)
+const pendingTicketCount = (db: Db, eventId: number) => db.select({ count: count() }).from(ticketOrders)
   .where(and(
     eq(ticketOrders.eventId, eventId),
     sql`${ticketOrders.ticketTierId} IS NOT NULL`,
@@ -56,13 +55,13 @@ const pendingTicketCount = (eventId: number) => db.select({ count: count() }).fr
   ))
   .get()?.count ?? 0;
 
-const myRegistration = (eventId: number, userId: number) => db
+const myRegistration = (db: Db, eventId: number, userId: number) => db
   .select({ status: registrations.status })
   .from(registrations)
   .where(and(eq(registrations.eventId, eventId), eq(registrations.userId, userId)))
   .get();
 
-const ticketOptions = (eventId: number, now = new Date()) => db.$client.query<{
+const ticketOptions = (db: Db, eventId: number, now = new Date()) => db.$client.query<{
   id: number;
   name: string;
   price_minor: number;
@@ -91,20 +90,25 @@ const money = (minor: number, locale: Locale) => new Intl.NumberFormat(locale ==
  * carries the one action open to them — sign up, take a queue place, or nothing
  * at all when the event is full and its queue is off.
  */
-export const renderEventCard = (eventId: number, userId: number, locale: Locale): { text: ReturnType<typeof format>; keyboard: InlineKeyboard } | null => {
-  const event = publishedEvent(eventId);
-  if (!event || !runtime.runSync(canSeeEvent(eventId, userId))) return null;
+export const renderEventCard = Effect.fnUntraced(function* (
+  eventId: number,
+  userId: number,
+  locale: Locale,
+): Effect.fn.Return<{ text: ReturnType<typeof format>; keyboard: InlineKeyboard } | null, never, Database> {
+  const db = yield* Database;
+  const event = publishedEvent(db, eventId);
+  if (!event || !(yield* canSeeEvent(eventId, userId))) return null;
 
-  const confirmed = confirmedCount(event.id);
-  const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed - pendingTicketCount(event.id), 0);
+  const confirmed = confirmedCount(db, event.id);
+  const spots = event.capacity === null ? null : Math.max(event.capacity - confirmed - pendingTicketCount(db, event.id), 0);
   const full = spots !== null && spots === 0;
-  const registration = myRegistration(event.id, userId);
+  const registration = myRegistration(db, event.id, userId);
   const status = registration?.status ?? null;
   const mine = status === "registered" || status === "checked_in" || status === "waitlisted";
   const paid = Boolean(db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, event.id)).get());
   const hasProducts = Boolean(db.select({ id: eventProducts.id }).from(eventProducts)
     .where(and(eq(eventProducts.eventId, event.id), eq(eventProducts.active, true))).get());
-  const tiers = paid && !mine ? ticketOptions(event.id) : [];
+  const tiers = paid && !mine ? ticketOptions(db, event.id) : [];
 
   const lines = [
     spots === null ? null : i18n.t(locale, "spotsLeft", spots),
@@ -139,20 +143,21 @@ ${i18n.t(locale, "eventDate", formatDate(event.startsAt, locale, event.city))}
 ${i18n.t(locale, "eventLocation", event.location, event.locationUrl)}${lines.length ? `\n${lines.join("\n")}` : ""}`,
     keyboard,
   };
-};
+});
 
-export const eventSummary = (eventId: number, locale: Locale): EventSummary | null => {
+export const eventSummary = Effect.fnUntraced(function* (eventId: number, locale: Locale): Effect.fn.Return<EventSummary | null, never, Database> {
+  const db = yield* Database;
   const event = db.select({ title: events.title, description: events.description, startsAt: events.startsAt, location: events.location, locationUrl: events.locationUrl, capacity: events.capacity, city: events.city })
     .from(events)
     .where(eq(events.id, eventId))
     .get();
   return event ? { ...event, date: formatDate(event.startsAt, locale, event.city) } : null;
-};
+});
 
 export const sendEventCard = Effect.fn("bot.sendEventCard")(function* (context: EventCardContext, eventId: number, userId: number, locale: Locale) {
   // A deep link must not reveal an event the recipient's chats exclude them from.
   yield* refreshMemberships(telegramMembership, userId, yield* chatsOfEvent(eventId), new Date());
-  const card = renderEventCard(eventId, userId, locale);
+  const card = yield* renderEventCard(eventId, userId, locale);
   if (!card) {
     yield* Effect.promise(() => context.send(i18n.t(locale, "eventUnavailable")));
     return;

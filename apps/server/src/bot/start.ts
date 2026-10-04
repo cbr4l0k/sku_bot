@@ -2,10 +2,10 @@ import { Effect } from "effect";
 import { InlineKeyboard, Keyboard, RemoveKeyboard } from "gramio";
 import { eq, users } from "@sku/db";
 
-import { db } from "../db";
 import { parseStartPayload } from "../core/links";
 import { loadEnv } from "../env";
 import { runtime } from "../runtime";
+import { Database } from "../services";
 import { sendEventCard } from "./event-card";
 import { sendHero } from "./hero";
 import { i18n, localeFromLanguageCode } from "./i18n";
@@ -34,6 +34,7 @@ export const startHandler = (context: StartContext): Promise<void> => runtime.ru
   const payload = context.args ? parseStartPayload(context.args) : null;
   if (payload) pendingEventStarts.set(telegramUser.id, payload.eventId);
 
+  const db = yield* Database;
   db.insert(users).values({
     id: telegramUser.id,
     firstName: telegramUser.firstName,

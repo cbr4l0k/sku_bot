@@ -1,10 +1,11 @@
+import { Effect } from "effect";
 import type { Locale } from "@sku/db";
 import { eq, users } from "@sku/db";
 
 import { rememberChat } from "../core/chats";
-import { db } from "../db";
 import { loadEnv } from "../env";
 import { runtime } from "../runtime";
+import { Database } from "../services";
 import { i18n } from "./i18n";
 
 const env = loadEnv();
@@ -22,29 +23,29 @@ type ChatMemberContext = {
   };
 };
 
-const isAdmin = (userId: number): boolean =>
+const isAdmin = (userId: number) => Database.useSync((db): boolean =>
   env.ADMIN_IDS.includes(userId) ||
-  db.select({ isAdmin: users.isAdmin }).from(users).where(eq(users.id, userId)).get()?.isAdmin === true;
+  db.select({ isAdmin: users.isAdmin }).from(users).where(eq(users.id, userId)).get()?.isAdmin === true);
 
-const localeOf = (userId: number): Locale =>
-  db.select({ locale: users.locale }).from(users).where(eq(users.id, userId)).get()?.locale ?? "ru";
+const localeOf = (userId: number) => Database.useSync((db): Locale =>
+  db.select({ locale: users.locale }).from(users).where(eq(users.id, userId)).get()?.locale ?? "ru");
 
 /**
  * Telegram never shows a group's numeric id in the app. The bot files chats it is
  * added to on its own, so this is the fallback for a chat it joined before it knew
  * to look — admins run /chatid inside the group to read the id off.
  */
-export const chatIdHandler = async (context: ChatIdContext): Promise<void> => {
+export const chatIdHandler = (context: ChatIdContext): Promise<void> => runtime.runPromise(Effect.gen(function* () {
   const userId = context.from?.id;
-  if (userId === undefined || !isAdmin(userId)) return;
+  if (userId === undefined || !(yield* isAdmin(userId))) return;
 
-  const locale = localeOf(userId);
+  const locale = yield* localeOf(userId);
   if (context.chat.type === "private") {
-    await context.send(i18n.t(locale, "chatIdOnlyInGroups"));
+    yield* Effect.promise(() => context.send(i18n.t(locale, "chatIdOnlyInGroups")));
     return;
   }
-  await context.send(i18n.t(locale, "chatId", context.chat.id));
-};
+  yield* Effect.promise(() => context.send(i18n.t(locale, "chatId", context.chat.id)));
+}));
 
 /**
  * Files the chat the moment the bot joins it, so setup needs no command at all.
