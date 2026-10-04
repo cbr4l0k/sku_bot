@@ -137,7 +137,7 @@ const Basket = ({ detail, reload }: { detail: EventDetail; reload: () => Promise
   );
 
   return (
-    <Screen className="pb-[calc(8rem_+_env(safe-area-inset-bottom,0px))]">
+    <Screen className="pb-[calc(8rem_+_var(--safe-bottom))]">
       <div className="rise mb-3.5 flex gap-1.5">
         <PriceChip event={detail} tone="soft" />
       </div>

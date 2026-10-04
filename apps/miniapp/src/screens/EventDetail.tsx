@@ -168,7 +168,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
   const leaders = detail.organizers;
 
   return (
-    <Screen className="pb-[calc(8rem_+_env(safe-area-inset-bottom,0px))]">
+    <Screen className="pb-[calc(8rem_+_var(--safe-bottom))]">
       <div className="rise mb-3.5 flex flex-wrap items-center gap-1.5">
         <PriceChip event={detail} tone="soft" />
         <StatusBadge status={status} hasOffer={offer !== null} />

@@ -9,7 +9,7 @@ import { SwooshMark } from "./swoosh";
    it, so the last row of a screen is never trapped under either. */
 export const Screen = ({ children, className = "" }: { children: ReactNode; className?: string }) => (
   <div
-    className={`relative z-10 mx-auto w-full max-w-[560px] px-4 pt-4 pb-[calc(7rem_+_env(safe-area-inset-bottom,0px))] ${className}`}
+    className={`relative z-10 mx-auto w-full max-w-[560px] px-4 pt-[calc(1rem_+_var(--safe-top))] pb-[calc(7rem_+_var(--safe-bottom))] ${className}`}
   >
     {children}
   </div>
