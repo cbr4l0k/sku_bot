@@ -214,13 +214,28 @@ test("series stats distinguish newcomers, returning runners, retention and settl
   ]);
   expect(stats.totals).toMatchObject({ occurrences: 3, uniqueParticipants: 4, revenueMinor: 500 });
   // Staff are left out of participant counts but still earn a place among the regulars.
-  expect(stats.regulars).toEqual([
-    { userId: 1, firstName: "U1", attended: 3 },
-    { userId: 2, firstName: "U2", attended: 2 },
-    { userId: 3, firstName: "U3", attended: 1 },
-    { userId: 4, firstName: "U4", attended: 1 },
-  ]);
+  const person = (userId: number, attended: number) => ({ userId, firstName: `U${userId}`, lastName: null, username: null, attended });
+  expect(stats.regulars).toEqual([person(1, 3), person(2, 2), person(3, 1), person(4, 1)]);
+  // The full list adds whoever held a spot without checking in; queueing alone is not taking part.
+  expect(stats.participants).toEqual([person(1, 3), person(2, 2), person(3, 1), person(4, 1), person(5, 0)]);
   expect(stats.retention).toEqual({ onceOnly: 2, twoToThree: 2, fourPlus: 0 });
+});
+
+test("the full participant list is not capped like the regulars, and carries how to reach each person", () => {
+  const seriesId = createSeries(null, null);
+  const event = db.$client.query<{ id: number }, [number]>(`
+    INSERT INTO events (city, title, description, starts_at, location, status, series_id, created_by)
+    VALUES ('spb', 'Track night', 'x', 1, 'Stadium', 'published', ?, 1) RETURNING id
+  `).get(seriesId);
+  if (!event) throw new Error("Event insert returned no id");
+  for (let id = 9; id <= 20; id++) {
+    db.$client.query("INSERT INTO users (id, first_name, last_name, username) VALUES (?, ?, 'L', ?)").run(id, `U${id}`, id === 9 ? "runner9" : null);
+    db.$client.query("INSERT INTO registrations (event_id, user_id, status) VALUES (?, ?, 'checked_in')").run(event.id, id);
+  }
+  const stats = run(db, seriesStats(seriesId));
+  expect(stats.regulars).toHaveLength(10);
+  expect(stats.participants).toHaveLength(12);
+  expect(stats.participants[0]).toEqual({ userId: 9, firstName: "U9", lastName: "L", username: "runner9", attended: 1 });
 });
 
 describe("leads and the queue reach the runs still ahead", () => {

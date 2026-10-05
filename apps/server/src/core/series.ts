@@ -298,7 +298,8 @@ export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: 
   `).all(seriesId);
   const confirmedByUser = new Map<number, number>();
   const checkedInByUser = new Map<number, number>();
-  const names = new Map<number, string>();
+  // Everyone who held a spot on any run, staff included, for the full list.
+  const heldSpot = new Set<number>();
   const firstConfirmedAt = new Map(db.$client.query<{ user_id: number; starts_at: number }, [number]>(`
     SELECT r.user_id, min(e.starts_at) AS starts_at
     FROM registrations r JOIN events e ON e.id = r.event_id
@@ -319,6 +320,7 @@ export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: 
       WHERE event_id = ? AND status IN ('registered', 'checked_in')
     `).all(event.id);
     for (const row of confirmed) {
+      heldSpot.add(row.user_id);
       if (row.status === "checked_in") checkedInByUser.set(row.user_id, (checkedInByUser.get(row.user_id) ?? 0) + 1);
     }
     const participants = confirmed.filter((row) => row.is_staff === 0);
@@ -357,17 +359,29 @@ export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: 
     };
   }));
 
-  if (checkedInByUser.size) {
-    const placeholders = [...checkedInByUser].map(() => "?").join(", ");
-    const users = db.$client.query<{ id: number; first_name: string }, number[]>(
-      `SELECT id, first_name FROM users WHERE id IN (${placeholders})`,
-    ).all(...checkedInByUser.keys());
-    for (const user of users) names.set(user.id, user.first_name);
+  const people = new Map<number, { first_name: string; last_name: string | null; username: string | null }>();
+  if (heldSpot.size) {
+    const placeholders = [...heldSpot].map(() => "?").join(", ");
+    const users = db.$client.query<{ id: number; first_name: string; last_name: string | null; username: string | null }, number[]>(
+      `SELECT id, first_name, last_name, username FROM users WHERE id IN (${placeholders})`,
+    ).all(...heldSpot);
+    for (const user of users) people.set(user.id, user);
   }
-  const regulars = [...checkedInByUser.entries()]
-    .map(([userId, attended]) => ({ userId, firstName: names.get(userId) ?? "", attended }))
-    .sort((a, b) => b.attended - a.attended || a.userId - b.userId)
-    .slice(0, 10);
+  // Most turned up first. Someone who held a spot but never checked in is still
+  // a participant, at the bottom with nothing attended.
+  const participants = [...heldSpot]
+    .map((userId) => {
+      const person = people.get(userId);
+      return {
+        userId,
+        firstName: person?.first_name ?? "",
+        lastName: person?.last_name ?? null,
+        username: person?.username ?? null,
+        attended: checkedInByUser.get(userId) ?? 0,
+      };
+    })
+    .sort((a, b) => b.attended - a.attended || a.userId - b.userId);
+  const regulars = participants.filter((person) => person.attended > 0).slice(0, 10);
   const participationCounts = [...confirmedByUser.values()];
   const capacityOccurrences = occurrences.filter((occurrence) => occurrence.capacity !== null && occurrence.capacity > 0);
   const held = occurrences.filter((occurrence) => occurrence.held);
@@ -408,6 +422,7 @@ export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: 
     },
     // "N of M" reads attended of totals.held.
     regulars,
+    participants,
     retention: {
       onceOnly: participationCounts.filter((count) => count === 1).length,
       twoToThree: participationCounts.filter((count) => count >= 2 && count <= 3).length,

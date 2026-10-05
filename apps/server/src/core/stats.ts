@@ -31,8 +31,9 @@ export const globalStats = Effect.fn("stats.globalStats")(function* (city: CityS
   const capacityEvents = events.filter((row) => row.capacity !== null && row.capacity > 0);
   const counts = new Map<number, number>();
   for (const row of registrations) if (row.status !== "canceled") counts.set(row.user_id, (counts.get(row.user_id) ?? 0) + 1);
-  const names = new Map(db.$client.query<{ id: number; first_name: string }, []>("SELECT id, first_name FROM users").all().map((row) => [row.id, row.first_name]));
-  return { totalEvents: events.length, uniqueParticipants: counts.size, avgFillRate: capacityEvents.length ? capacityEvents.reduce((sum, event) => sum + confirmed.filter((row) => row.event_id === event.id).length / (event.capacity ?? 1), 0) / capacityEvents.length : 0, attendanceRate: confirmed.length ? checkedIn.length / confirmed.length : 0, topParticipants: [...counts.entries()].map(([userId, count]) => ({ userId, firstName: names.get(userId) ?? "", count })).sort((a, b) => b.count - a.count || a.userId - b.userId).slice(0, 10) };
+  type Person = { id: number; first_name: string; last_name: string | null; username: string | null };
+  const people = new Map(db.$client.query<Person, []>("SELECT id, first_name, last_name, username FROM users").all().map((row) => [row.id, row]));
+  return { totalEvents: events.length, uniqueParticipants: counts.size, avgFillRate: capacityEvents.length ? capacityEvents.reduce((sum, event) => sum + confirmed.filter((row) => row.event_id === event.id).length / (event.capacity ?? 1), 0) / capacityEvents.length : 0, attendanceRate: confirmed.length ? checkedIn.length / confirmed.length : 0, topParticipants: [...counts.entries()].map(([userId, count]) => ({ userId, firstName: people.get(userId)?.first_name ?? "", lastName: people.get(userId)?.last_name ?? null, username: people.get(userId)?.username ?? null, count })).sort((a, b) => b.count - a.count || a.userId - b.userId).slice(0, 10) };
 });
 
 /** How far `zone` runs ahead of UTC at `at`, in milliseconds. */
