@@ -380,7 +380,7 @@ export const en: Dict = {
   "series.past": "Held",
   "series.noOccurrences": "No sessions yet",
   "series.template": "Template",
-  "series.templateHint": "Everything here is copied into each new session. Edits touch only future ones — those already raised stay as they are.",
+  "series.templateHint": "Everything here is copied into each new session. Edits touch only future ones — those already raised stay as they are. Leads and the waitlist are the exception, below.",
   "series.templateTiers": "{n} tickets",
   "series.templateProducts": "{n} products",
   "series.templateNothing": "No tickets or products",
@@ -423,6 +423,7 @@ export const en: Dict = {
   "err.next_starts_at_past": "That date has already passed — pick a new one",
   "err.cadence_missing": "This series has no cadence, so set the date by hand",
   "err.city_mismatch": "The event and the series belong to different branches",
+  "err.user_not_found": "No such user",
   "err.invalid_next_starts_at": "Could not read that date",
 
 
@@ -543,6 +544,9 @@ export const en: Dict = {
   "series.leadLine": "{n} days before the session",
   "series.pause": "Pause",
   "series.pauseHint": "No new drafts are created; existing ones stay",
+  "series.running": "Leads & waitlist",
+  "series.runningHint": "Changes here reach the template and every session already raised that hasn't started. Leads are on the roster without taking a spot.",
+  "series.leadsHint": "Pick who leads this series. They're on every session's roster without taking a spot; admins not picked here sign up like everyone else.",
   "manage.adminOnly": "Admin",
   "manage.after": "After the event",
   "manage.allRunners": "All runners and waitlist",

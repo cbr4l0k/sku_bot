@@ -160,6 +160,8 @@ export type SeriesDraft = {
   groups?: number[];
   homeChatId?: number | null;
   active?: boolean;
+  /** Who leads it; on an edit this also reaches the sessions still ahead. */
+  organizerIds?: number[];
 };
 
 export const sku = {

@@ -8,6 +8,7 @@ import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { PhaseChip } from "../ui/event";
+import { LeadsSheet } from "../ui/eventAdmin";
 import { Sheet, useConfirm, useToast } from "../ui/overlays";
 import { Button, Chip, ErrorState, Loader, Screen, SectionRule } from "../ui/primitives";
 import { SeriesForm } from "../ui/seriesForm";
@@ -26,6 +27,7 @@ export const SeriesDetailScreen = () => {
   const confirm = useConfirm();
   const action = useAction();
   const [editing, setEditing] = useState(false);
+  const [pickingLeads, setPickingLeads] = useState(false);
 
   const detail = useResource(useCallback(() => sku.seriesDetail(seriesId), [seriesId]));
   const stats = useResource(useCallback(() => sku.seriesStats(seriesId), [seriesId]));
@@ -145,6 +147,52 @@ export const SeriesDetailScreen = () => {
           </button>
         </div>
       </section>
+
+      <SectionRule label={t("series.running")} />
+      <section className="card">
+        <button type="button" className="row" onClick={() => setPickingLeads(true)}>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("detail.ledBy")}</span>
+            <span className="block truncate text-[12px] text-hint">{series.organizers.map(fullName).join(", ") || "—"}</span>
+          </span>
+          <span className="chev">›</span>
+        </button>
+        <div className="row">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("manage.waitlist")}</span>
+            <span className="block text-[12px] text-hint">{t("manage.waitlistHint")}</span>
+          </span>
+          <button
+            type="button"
+            className="switch"
+            aria-pressed={series.waitlistEnabled}
+            aria-label={t("manage.waitlist")}
+            disabled={action.pending}
+            onClick={() => {
+              haptic.select();
+              run(() => sku.updateSeries(seriesId, { waitlistEnabled: !series.waitlistEnabled }), t("toast.seriesSaved"));
+            }}
+          >
+            <span />
+          </button>
+        </div>
+      </section>
+      <p className="mx-1 mt-2.5 text-[12px]" style={{ color: "var(--ink-deep)" }}>
+        {t("series.runningHint")}
+      </p>
+
+      {pickingLeads ? (
+        <LeadsSheet
+          hint={t("series.leadsHint")}
+          initial={series.organizers}
+          allowEmpty
+          onSave={(organizerIds) => sku.updateSeries(seriesId, { organizerIds })}
+          onClose={() => {
+            setPickingLeads(false);
+            void refresh();
+          }}
+        />
+      ) : null}
 
       {editing ? (
         <Sheet title={t("series.editTemplate")} onClose={() => setEditing(false)}>

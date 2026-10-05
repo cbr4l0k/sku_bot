@@ -51,18 +51,44 @@ export const StatsSheet = ({ eventId, capacity, onClose }: { eventId: number; ca
 
 /* ------------------------------------------------------- organizer assignment */
 
+type Lead = { id: number; firstName: string; lastName: string | null; username?: string | null };
+
 export const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose: () => void }) => {
+  const { t } = useI18n();
+  return <LeadsSheet hint={t("admin.organizersHint")} onSave={(ids) => sku.setOrganizers(eventId, ids)} onClose={onClose} />;
+};
+
+/**
+ * Picking who leads something. Whoever is already picked stays listed on top
+ * while the search below changes, so a lead is never dropped just because they
+ * scrolled out of the results. `allowEmpty` lets a series run with no leads.
+ */
+export const LeadsSheet = ({
+  hint,
+  initial = [],
+  allowEmpty = false,
+  onSave,
+  onClose,
+}: {
+  hint: string;
+  initial?: readonly Lead[];
+  allowEmpty?: boolean;
+  onSave: (ids: number[]) => Promise<unknown>;
+  onClose: () => void;
+}) => {
   const { t } = useI18n();
   const toast = useToast();
   const action = useAction();
   const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<number[]>([]);
+  const [picked, setPicked] = useState<Lead[]>(() => [...initial]);
   const users = useResource(useCallback(() => sku.users(query.trim() || undefined), [query]));
+  const pickedIds = new Set(picked.map((person) => person.id));
+  const rows = [...picked, ...(users.data ?? []).filter((person) => !pickedIds.has(person.id))];
 
   const save = () =>
     void action.run(
       async () => {
-        await sku.setOrganizers(eventId, picked);
+        await onSave(picked.map((person) => person.id));
         toast(t("common.saved"));
         onClose();
       },
@@ -71,7 +97,7 @@ export const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose
 
   return (
     <Sheet title={t("admin.organizers")} onClose={onClose}>
-      <p className="mb-3 text-[12px] leading-relaxed text-hint">{t("admin.organizersHint")}</p>
+      <p className="mb-3 text-[12px] leading-relaxed text-hint">{hint}</p>
       <SearchInput
         className="mb-3"
         placeholder={t("common.search")}
@@ -79,14 +105,14 @@ export const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose
         onChange={(event) => setQuery(event.target.value)}
       />
       <div className="mb-4 max-h-[45dvh] overflow-y-auto">
-        {(users.data ?? []).map((person) => {
-          const active = picked.includes(person.id);
+        {rows.map((person) => {
+          const active = pickedIds.has(person.id);
           return (
             <div key={person.id} className="flex w-full items-center gap-3 border-b border-hair last:border-b-0">
               <button
                 type="button"
                 onClick={() =>
-                  setPicked((prev) => (active ? prev.filter((id) => id !== person.id) : [...prev, person.id]))
+                  setPicked((prev) => (active ? prev.filter((lead) => lead.id !== person.id) : [...prev, person]))
                 }
                 className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left"
               >
@@ -108,7 +134,7 @@ export const OrganizersSheet = ({ eventId, onClose }: { eventId: number; onClose
         })}
       </div>
       <SheetFooter>
-        <Button block loading={action.pending} disabled={picked.length === 0} onClick={save}>
+        <Button block loading={action.pending} disabled={!allowEmpty && picked.length === 0} onClick={save}>
           {t("common.save")} · {picked.length}
         </Button>
       </SheetFooter>
