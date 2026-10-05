@@ -8,7 +8,7 @@ process.env.CHECKIN_SECRET = "notifications-checkin";
 process.env.DATABASE_PATH = ":memory:";
 process.env.NODE_ENV = "test";
 
-import { beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { getBotTokenSecretKey, signInitData } from "@gramio/init-data";
 
 const { db } = await import("../src/db");
@@ -243,4 +243,37 @@ test("the organizer list shows a branch admin their whole branch", async () => {
   const titles = (await call("GET", "/api/organizer/events", MSK_ADMIN)).json.map((e: any) => e.title);
   expect(titles).toEqual(["a"]);
   expect((await call("GET", "/api/organizer/events", GENERAL)).json).toHaveLength(2);
+});
+
+// Every suite shares this database, and a series outliving its test would hold
+// on to the users the next suite wipes.
+afterEach(() => db.$client.exec("DELETE FROM event_series;"));
+
+test("a branch admin names a series' leads and switches its queue, reaching the runs ahead", async () => {
+  const series = (await call("POST", "/api/organizer/series", MSK_ADMIN, {
+    city: "msk", title: "Четверг", description: "d", location: "park", capacity: 1, nextStartsAt: null, cadenceDays: null,
+  })).json;
+  const ahead = (await call("POST", "/api/organizer/events", MSK_ADMIN, { ...draft("msk", "Четверг"), capacity: 1 })).json;
+  db.$client.query("UPDATE events SET series_id = ? WHERE id = ?").run(series.id, ahead.id);
+  const staffOn = (eventId: number) => db.$client
+    .query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND is_staff = 1 AND status = 'registered' ORDER BY user_id")
+    .all(eventId).map((row) => row.user_id);
+  // Whoever raised the run leads it until the series says otherwise.
+  expect(staffOn(ahead.id)).toEqual([MSK_ADMIN]);
+
+  // A named organizer may raise runs from the series but not rewrite who leads it.
+  db.$client.query("INSERT INTO series_organizers (series_id, user_id) VALUES (?, ?)").run(series.id, KZN_ORGANIZER);
+  expect((await call("PATCH", `/api/organizer/series/${series.id}`, KZN_ORGANIZER, { organizerIds: [KZN_ORGANIZER] })).status).toBe(403);
+  expect((await call("PATCH", `/api/organizer/series/${series.id}`, MSK_ADMIN, { title: "x", organizerIds: [999_999] })).json)
+    .toEqual({ error: "user_not_found" });
+  expect((await call("GET", `/api/organizer/series/${series.id}`, MSK_ADMIN)).json.title).toBe("Четверг");
+
+  expect((await call("PATCH", `/api/organizer/series/${series.id}`, MSK_ADMIN, { organizerIds: [RUNNER] })).status).toBe(200);
+  expect(staffOn(ahead.id)).toEqual([RUNNER]);
+  expect((await call("GET", `/api/events/${ahead.id}`, RUNNER)).json.organizers.map((o: any) => o.id)).toEqual([RUNNER]);
+
+  // The admin is no longer leading, so signing up costs them the one spot.
+  expect((await call("POST", `/api/events/${ahead.id}/join`, MSK_ADMIN)).json.status).toBe("registered");
+  expect((await call("PATCH", `/api/organizer/series/${series.id}`, MSK_ADMIN, { waitlistEnabled: false })).json.waitlistEnabled).toBe(false);
+  expect((await call("POST", `/api/events/${ahead.id}/join`, GENERAL)).json).toEqual({ error: "event_full" });
 });

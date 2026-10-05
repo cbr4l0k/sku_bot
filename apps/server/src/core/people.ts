@@ -76,7 +76,7 @@ export const personCard = Effect.fn("people.personCard")(function* (actor: Actor
  * against `canGrantRole` before anything is written, so a branch admin who also
  * submits a branch they do not run gets a refusal, not half a save.
  *
- * Returns the branches whose role actually changed, for re-syncing their rosters.
+ * Returns the branches whose role actually changed.
  */
 export const setCityRoles = Effect.fn("people.setCityRoles")(function* (
   actor: Actor,

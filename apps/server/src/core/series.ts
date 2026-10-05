@@ -4,6 +4,8 @@ import { Database } from "../services";
 import { SeriesRejected } from "./errors";
 import { eventStats } from "./stats";
 import { syncEventStaff } from "./staff";
+import type { OfferEffect } from "./types";
+import { issueOffersSync } from "./waitlist";
 
 const DAY_SECONDS = 24 * 60 * 60;
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
@@ -188,6 +190,83 @@ export const setNextStartsAt = Effect.fn("series.setNextStartsAt")(function* (se
     .run(date === null ? null : seconds(date), seconds(now), seriesId);
   if (!result.changes) return yield* new SeriesRejected({ code: "series_not_found" });
   return { ok: true as const };
+});
+
+/**
+ * The runs of a series still ahead of it: not started, not ended, not cancelled.
+ * Who leads a series and whether it queues reach these as well as the template,
+ * so the next sessions are run the way the series now says. A run that has
+ * started keeps what it had — that night's roster is already the record.
+ */
+const followingEventIds = (db: Db, seriesId: number, now: Date): number[] => db.$client
+  .query<{ id: number }, [number, number]>(`
+    SELECT id FROM events
+    WHERE series_id = ? AND starts_at > ? AND ended_at IS NULL AND status <> 'canceled'
+    ORDER BY starts_at, id
+  `)
+  .all(seriesId, seconds(now))
+  .map((row) => row.id);
+
+export const unknownUserIds = (db: Db, userIds: readonly number[]): boolean => {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return false;
+  const known = db.$client
+    .query<{ count: number }, number[]>(`SELECT count(*) AS count FROM users WHERE id IN (${ids.map(() => "?").join(", ")})`)
+    .get(...ids)?.count ?? 0;
+  return known !== ids.length;
+};
+
+/**
+ * Names who leads the series and every run still ahead of it. Leads are the
+ * only people put on a roster without signing up, so each of those runs is
+ * re-staffed straight after: a new lead lands on it, a dropped one comes off
+ * unless they have already checked in.
+ */
+export const setSeriesLeads = Effect.fn("series.setSeriesLeads")(function* (seriesId: number, userIds: readonly number[], now: Date) {
+  const db = yield* Database;
+  const ids = [...new Set(userIds)];
+  const result = db.$client.transaction((): { eventIds: number[] } | { error: "series_not_found" | "user_not_found" } => {
+    if (!seriesById(db, seriesId)) return { error: "series_not_found" };
+    if (unknownUserIds(db, ids)) return { error: "user_not_found" };
+    db.$client.query("DELETE FROM series_organizers WHERE series_id = ?").run(seriesId);
+    for (const userId of ids) db.$client.query("INSERT INTO series_organizers (series_id, user_id) VALUES (?, ?)").run(seriesId, userId);
+    const eventIds = followingEventIds(db, seriesId, now);
+    for (const eventId of eventIds) {
+      db.$client.query("DELETE FROM event_organizers WHERE event_id = ?").run(eventId);
+      for (const userId of ids) db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (?, ?)").run(eventId, userId);
+    }
+    db.$client.query("UPDATE event_series SET updated_at = ? WHERE id = ?").run(seconds(now), seriesId);
+    return { eventIds };
+  })();
+  if ("error" in result) return yield* new SeriesRejected({ code: result.error });
+  for (const eventId of result.eventIds) yield* syncEventStaff(eventId, now);
+  return { following: result.eventIds.length };
+});
+
+/**
+ * Switches the queue for the series and every run still ahead of it, with the
+ * same meaning as on a single event: off keeps anyone already queued in place,
+ * dormant; on hands out whatever spots that dormant queue missed.
+ */
+export const setSeriesWaitlist = Effect.fn("series.setSeriesWaitlist")(function* (seriesId: number, enabled: boolean, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): { eventIds: number[]; effects: OfferEffect[] } | { error: "series_not_found" } => {
+    if (!seriesById(db, seriesId)) return { error: "series_not_found" };
+    const timestamp = seconds(now);
+    db.$client.query("UPDATE event_series SET waitlist_enabled = ?, updated_at = ? WHERE id = ?").run(enabled ? 1 : 0, timestamp, seriesId);
+    const eventIds = followingEventIds(db, seriesId, now);
+    const effects: OfferEffect[] = [];
+    for (const eventId of eventIds) {
+      const changed = db.$client
+        .query("UPDATE events SET waitlist_enabled = ?, updated_at = ? WHERE id = ? AND waitlist_enabled <> ?")
+        .run(enabled ? 1 : 0, timestamp, eventId, enabled ? 1 : 0).changes;
+      // Offers are written with the switch, so a failure leaves the queue as it was.
+      if (changed && enabled) effects.push(...issueOffersSync(db, eventId, now));
+    }
+    return { eventIds, effects };
+  })();
+  if ("error" in result) return yield* new SeriesRejected({ code: result.error });
+  return { following: result.eventIds.length, effects: result.effects };
 });
 
 export const attachEvent = Effect.fn("series.attachEvent")(function* (eventId: number, seriesId: number) {

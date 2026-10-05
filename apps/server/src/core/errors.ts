@@ -57,6 +57,7 @@ export class SeriesRejected extends Schema.TaggedError<SeriesRejected>()("Series
     "cadence_missing",
     "event_not_found",
     "city_mismatch",
+    "user_not_found",
   ]),
 }) {}
 

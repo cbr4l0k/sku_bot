@@ -77,11 +77,11 @@ import {
   requestAdminRefund,
   requestUserRefund,
 } from "../core/tickets";
-import { syncAllStaff, syncCityStaff, syncEventStaff } from "../core/staff";
+import { syncAllStaff, syncEventStaff } from "../core/staff";
 import { eventStats, globalStats, monthStats } from "../core/stats";
 import { needsAttention } from "../core/attention";
 import { personCard, setCityRoles } from "../core/people";
-import { attachEvent, detachEvent, seriesStats, skipNext, spawnOccurrence } from "../core/series";
+import { attachEvent, detachEvent, seriesStats, setSeriesLeads, setSeriesWaitlist, skipNext, spawnOccurrence, unknownUserIds } from "../core/series";
 import { checkinMethodOf, eventPhase, eventSummary, hqOverview, rosterFlags, seriesSummary } from "../core/hq";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { loadEnv } from "../env";
@@ -841,6 +841,7 @@ export const app = new Elysia()
       if (body.locationUrl !== undefined && locationUrl === undefined) return error(status, 400, "invalid_location_url");
       if (body.groups && (yield* unknownGroup(targetCity, body.groups))) return error(status, 400, "unknown_group");
       if ((yield* unknownHomeChat(targetCity, body.homeChatId))) return error(status, 400, "unknown_home_chat");
+      if (body.organizerIds && unknownUserIds(db, body.organizerIds)) return error(status, 400, "user_not_found");
       db.$client.transaction(() => {
         db.update(eventSeries).set({
           ...(body.city === undefined ? {} : { city: body.city }),
@@ -849,7 +850,6 @@ export const app = new Elysia()
           ...(body.location === undefined ? {} : { location: body.location }),
           ...(locationUrl === undefined ? {} : { locationUrl }),
           ...(body.capacity === undefined ? {} : { capacity: body.capacity }),
-          ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }),
           ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }),
           ...(nextStartsAt === undefined ? {} : { nextStartsAt }),
           ...(body.cadenceDays === undefined ? {} : { cadenceDays: body.cadenceDays }),
@@ -861,11 +861,12 @@ export const app = new Elysia()
           db.delete(seriesChats).where(eq(seriesChats.seriesId, params.id)).run();
           for (const chatId of [...new Set(body.groups)]) db.insert(seriesChats).values({ seriesId: params.id, chatId }).run();
         }
-        if (body.organizerIds !== undefined) {
-          db.delete(seriesOrganizers).where(eq(seriesOrganizers.seriesId, params.id)).run();
-          for (const userId of [...new Set(body.organizerIds)]) db.insert(seriesOrganizers).values({ seriesId: params.id, userId }).run();
-        }
       })();
+      // Leads and the queue also reach the runs already raised and still ahead.
+      if (body.organizerIds !== undefined) yield* setSeriesLeads(params.id, body.organizerIds, now()).pipe(Effect.orDie);
+      if (body.waitlistEnabled !== undefined) {
+        fireEffects((yield* setSeriesWaitlist(params.id, body.waitlistEnabled, now()).pipe(Effect.orDie)).effects);
+      }
       const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
       return updated ? seriesView(updated) : error(status, 404, "series_not_found");
     })), { params: idParams, body: seriesPatchBody })
@@ -1335,6 +1336,8 @@ export const app = new Elysia()
       const found = yield* manageable(actor, params.id);
       if (found.denied) return error(status, found.code, found.denied);
       fireEffects((yield* reopenEvent(params.id, now())).effects);
+      // Rosters are only kept in line on live runs, so one coming back is brought up to date.
+      yield* syncEventStaff(params.id, now());
       const updated = db.select().from(events).where(eq(events.id, params.id)).get();
       return updated ? (yield* eventView(updated)) : error(status, 404, "event_not_found");
     })), { params: idParams })
@@ -1390,10 +1393,9 @@ export const app = new Elysia()
         ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects((yield* setCapacity(params.id, body.capacity, now())));
-      // A run that moved branch is staffed by the admins of the branch it moved to.
-      if (body.city !== undefined && body.city !== event.city) yield* syncEventStaff(params.id, now());
       // Switching the queue back on hands out the spots the dormant queue missed.
       if (body.waitlistEnabled === true && !event.waitlistEnabled) fireEffects((yield* issueOffers(params.id, now())));
+      if (body.status !== undefined && body.status !== "canceled" && event.status === "canceled") yield* syncEventStaff(params.id, now());
       if (body.status === "canceled" && event.status !== "canceled") {
         const result = yield* cancelEvent(params.id);
         fireEffects(result.effects);
@@ -1543,7 +1545,6 @@ export const app = new Elysia()
         db.insert(userCityRoles).values({ city: body.city, userId: params.id, role: body.role })
           .onConflictDoUpdate({ target: [userCityRoles.city, userCityRoles.userId], set: { role: body.role } }).run();
       }
-      yield* syncCityStaff(body.city, now());
       return {
         roles: db.select({ city: userCityRoles.city, role: userCityRoles.role }).from(userCityRoles)
           .where(eq(userCityRoles.userId, params.id)).orderBy(asc(userCityRoles.city)).all(),
@@ -1586,7 +1587,6 @@ export const app = new Elysia()
       if (!isAdmin) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: true }).where(eq(users.id, params.id)).run();
-      yield* syncAllStaff(now());
       return { ok: true };
     })), { params: idParams })
     .post("/admin/users/:id/demote", ({ params, isAdmin, status }) => run(Effect.gen(function* () {
@@ -1595,7 +1595,6 @@ export const app = new Elysia()
       if (adminIds.has(params.id)) return error(status, 409, "configured_admin_cannot_be_demoted");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       db.update(users).set({ isAdmin: false }).where(eq(users.id, params.id)).run();
-      yield* syncAllStaff(now());
       return { ok: true };
     })), { params: idParams })
     /**
@@ -1623,7 +1622,6 @@ export const app = new Elysia()
       if (!runsAnyBranch(actor)) return error(status, 403, "forbidden");
       if (!db.select({ id: users.id }).from(users).where(eq(users.id, params.id)).get()) return error(status, 404, "user_not_found");
       return yield* setCityRoles(actor, params.id, body.roles).pipe(
-        Effect.flatMap(({ changed }) => Effect.forEach(changed, (city) => syncCityStaff(city, now()), { discard: true })),
         Effect.flatMap(() => personCard(actor, params.id, adminIds)),
         Effect.map((card) => card ?? error(status, 404, "user_not_found")),
         Effect.catchTag("RolesRejected", ({ code }) => Effect.succeed(error(status, code === "forbidden" ? 403 : 400, code))),

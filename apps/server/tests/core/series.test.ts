@@ -4,9 +4,12 @@ import {
   dueSeries,
   seriesStats,
   setNextStartsAt,
+  setSeriesLeads,
+  setSeriesWaitlist,
   skipNext,
   spawnOccurrence,
 } from "../../src/core/series";
+import { joinEvent } from "../../src/core/registration";
 import { run } from "../support/effect";
 
 let db: Db;
@@ -218,4 +221,103 @@ test("series stats distinguish newcomers, returning runners, retention and settl
     { userId: 4, firstName: "U4", attended: 1 },
   ]);
   expect(stats.retention).toEqual({ onceOnly: 2, twoToThree: 2, fourPlus: 0 });
+});
+
+describe("leads and the queue reach the runs still ahead", () => {
+  const occurrence = (seriesId: number, startsAt: Date, ended = false) => {
+    const row = db.$client.query<{ id: number }, [number, number, number | null]>(`
+      INSERT INTO events (city, title, description, starts_at, location, capacity, status, series_id, created_by, ended_at)
+      VALUES ('spb', 'Track night', 'x', ?, 'Stadium', 1, 'published', ?, 1, ?) RETURNING id
+    `).get(unix(startsAt), seriesId, ended ? unix(startsAt) : null);
+    if (!row) throw new Error("Event insert returned no id");
+    return row.id;
+  };
+  const leads = (eventId: number) => db.$client
+    .query<{ user_id: number }, [number]>("SELECT user_id FROM event_organizers WHERE event_id = ? ORDER BY user_id").all(eventId).map((row) => row.user_id);
+  const staff = (eventId: number) => db.$client
+    .query<{ user_id: number }, [number]>("SELECT user_id FROM registrations WHERE event_id = ? AND is_staff = 1 AND status = 'registered' ORDER BY user_id").all(eventId).map((row) => row.user_id);
+  const queueOn = (eventId: number) => db.$client
+    .query<{ waitlist_enabled: number }, [number]>("SELECT waitlist_enabled FROM events WHERE id = ?").get(eventId)?.waitlist_enabled;
+
+  test("naming leads rewrites the template and every following run, and staffs them", () => {
+    const seriesId = createSeries(null);
+    const ahead = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"));
+    const draft = occurrence(seriesId, new Date("2030-01-15T19:00:00Z"));
+    db.$client.query("UPDATE events SET status = 'draft' WHERE id = ?").run(draft);
+    db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (?, 2)").run(ahead);
+
+    expect(run(db, setSeriesLeads(seriesId, [3, 4, 3], now))).toEqual({ following: 2 });
+    expect(db.$client.query("SELECT user_id FROM series_organizers WHERE series_id = ? ORDER BY user_id").all(seriesId))
+      .toEqual([{ user_id: 3 }, { user_id: 4 }]);
+    expect(leads(ahead)).toEqual([3, 4]);
+    expect(leads(draft)).toEqual([3, 4]);
+    expect(staff(ahead)).toEqual([3, 4]);
+  });
+
+  test("runs that started, ended, were cancelled or left the series keep their leads", () => {
+    const seriesId = createSeries(null);
+    const started = occurrence(seriesId, new Date("2030-01-01T11:00:00Z"));
+    const ended = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"), true);
+    const canceled = occurrence(seriesId, new Date("2030-01-09T19:00:00Z"));
+    db.$client.query("UPDATE events SET status = 'canceled' WHERE id = ?").run(canceled);
+    const detached = occurrence(seriesId, new Date("2030-01-10T19:00:00Z"));
+    db.$client.query("UPDATE events SET series_id = NULL WHERE id = ?").run(detached);
+    for (const eventId of [started, ended, canceled, detached]) {
+      db.$client.query("INSERT INTO event_organizers (event_id, user_id) VALUES (?, 2)").run(eventId);
+    }
+
+    expect(run(db, setSeriesLeads(seriesId, [5], now))).toEqual({ following: 0 });
+    for (const eventId of [started, ended, canceled, detached]) expect(leads(eventId)).toEqual([2]);
+  });
+
+  test("an unknown person is refused and nothing changes", () => {
+    const seriesId = createSeries(null);
+    db.$client.query("INSERT INTO series_organizers (series_id, user_id) VALUES (?, 2)").run(seriesId);
+    expect(run(db, setSeriesLeads(seriesId, [3, 999], now))).toEqual({ error: "user_not_found" });
+    expect(db.$client.query("SELECT user_id FROM series_organizers WHERE series_id = ?").all(seriesId)).toEqual([{ user_id: 2 }]);
+  });
+
+  test("a dropped lead comes off the roster and the next spawn copies the new leads", () => {
+    const seriesId = createSeries(new Date("2030-01-20T19:00:00Z"));
+    const ahead = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"));
+    run(db, setSeriesLeads(seriesId, [2], now));
+    expect(staff(ahead)).toEqual([2]);
+    run(db, setSeriesLeads(seriesId, [6], now));
+    expect(staff(ahead)).toEqual([6]);
+
+    const spawned = run(db, spawnOccurrence(seriesId, now));
+    if (!("eventId" in spawned)) throw new Error(spawned.error);
+    expect(leads(spawned.eventId)).toEqual([6]);
+    expect(staff(spawned.eventId)).toEqual([6]);
+  });
+
+  test("switching the queue reaches the template and the following runs only", () => {
+    const seriesId = createSeries(new Date("2030-01-20T19:00:00Z"));
+    const ahead = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"));
+    const ended = occurrence(seriesId, new Date("2030-01-09T19:00:00Z"), true);
+
+    expect(run(db, setSeriesWaitlist(seriesId, false, now))).toEqual({ following: 1, effects: [] });
+    expect(queueOn(ahead)).toBe(0);
+    expect(queueOn(ended)).toBe(1);
+    const spawned = run(db, spawnOccurrence(seriesId, now));
+    if (!("eventId" in spawned)) throw new Error(spawned.error);
+    expect(queueOn(spawned.eventId)).toBe(0);
+  });
+
+  test("off keeps the queue dormant; back on offers the spot it missed", () => {
+    const seriesId = createSeries(null);
+    const ahead = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"));
+    run(db, joinEvent(ahead, 2, now));
+    run(db, joinEvent(ahead, 3, now));
+    run(db, setSeriesWaitlist(seriesId, false, now));
+    db.$client.query("UPDATE registrations SET status = 'canceled' WHERE event_id = ? AND user_id = 2").run(ahead);
+    expect(run(db, joinEvent(ahead, 4, now))).toEqual({ status: "registered" });
+    db.$client.query("UPDATE registrations SET status = 'canceled' WHERE event_id = ? AND user_id = 4").run(ahead);
+
+    const back = run(db, setSeriesWaitlist(seriesId, true, now));
+    expect(back.following).toBe(1);
+    expect(back.effects).toMatchObject([{ kind: "offer_created", userId: 3, eventId: ahead }]);
+    // Switching to what it already is hands out nothing twice.
+    expect(run(db, setSeriesWaitlist(seriesId, true, now)).effects).toEqual([]);
+  });
 });

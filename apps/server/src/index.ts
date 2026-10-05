@@ -20,9 +20,9 @@ const isProduction = env.NODE_ENV === "production";
 migrate(db);
 const seeded = runtime.runSync(Effect.gen(function* () {
   yield* syncConfiguredAdmins(env.ADMIN_IDS);
-  // Admins and organizers stand on every roster they are responsible for without
-  // signing up for it. Done at boot so a change to ADMIN_IDS — the one source of
-  // staff that no request passes through — lands with the deploy that made it.
+  // Whoever leads an event stands on its roster without signing up for it. Done
+  // at boot so rosters written under an older rule — when every admin was put on
+  // every run — are brought into line by the deploy that changed it.
   yield* syncAllStaff(new Date());
 
   // The chat catalog moved out of the environment and into the database. Anything
