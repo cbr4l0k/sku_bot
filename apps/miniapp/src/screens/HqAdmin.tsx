@@ -9,7 +9,7 @@ import { errorText, fullName, initials, money, percent, shortDate } from "../lib
 import { useAction, useResource } from "../lib/useResource";
 import { useToast } from "../ui/overlays";
 import { PersonSheet } from "../ui/person";
-import { Button, Chip, EmptyState, ErrorState, Loader, SearchInput } from "../ui/primitives";
+import { Button, Chip, EmptyState, ErrorState, Loader, PersonName, SearchInput } from "../ui/primitives";
 
 const Rule = ({ label, aside }: { label: string; aside?: string }) => (
   <div className="mt-[26px] mb-3 flex items-center gap-3">
@@ -270,7 +270,7 @@ export const NumbersTab = () => {
               <div key={person.userId} className="row">
                 <span className="num w-6 shrink-0 text-[12px] text-hint">{index + 1}</span>
                 <span className="av">{initials(person)}</span>
-                <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{person.firstName}</span>
+                <PersonName person={person} className="flex-1 text-[14px] font-semibold" />
                 <span className="num text-[13px]">{person.count}</span>
               </div>
             ))}

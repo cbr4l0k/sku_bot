@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
+import { fullName } from "../lib/format";
 import { haptic, openTelegramUsername } from "../telegram";
 import { SwooshMark } from "./swoosh";
 
@@ -209,6 +210,31 @@ export const SearchInput = ({ className = "", ...rest }: InputHTMLAttributes<HTM
     <input className="field pl-10" {...rest} />
   </div>
 );
+
+/**
+ * A person's name in a list. With a username it opens their Telegram chat;
+ * without one there is nothing Telegram lets a Mini App open, so it stays text.
+ */
+export const PersonName = ({
+  person,
+  className = "",
+}: {
+  person: { firstName: string; lastName?: string | null; username?: string | null };
+  className?: string;
+}) => {
+  const name = fullName(person);
+  return person.username ? (
+    <button
+      type="button"
+      className={`min-w-0 truncate text-left underline decoration-current/30 underline-offset-2 ${className}`}
+      onClick={() => openTelegramUsername(person.username ?? "")}
+    >
+      {name}
+    </button>
+  ) : (
+    <span className={`min-w-0 truncate ${className}`}>{name}</span>
+  );
+};
 
 export const TelegramUsername = ({ username, className = "" }: { username: string; className?: string }) => (
   <button

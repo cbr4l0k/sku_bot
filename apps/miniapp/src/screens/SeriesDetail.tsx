@@ -10,7 +10,7 @@ import { haptic } from "../telegram";
 import { PhaseChip } from "../ui/event";
 import { LeadsSheet } from "../ui/eventAdmin";
 import { Sheet, useConfirm, useToast } from "../ui/overlays";
-import { Button, Chip, ErrorState, Loader, Screen, SectionRule } from "../ui/primitives";
+import { Button, Chip, ErrorState, Loader, PersonName, Screen, SearchInput, SectionRule } from "../ui/primitives";
 import { SeriesForm } from "../ui/seriesForm";
 import { NextUpCard } from "../ui/seriesNext";
 import { ShowUpChart } from "../ui/seriesTrend";
@@ -224,8 +224,9 @@ export const SeriesDetailScreen = () => {
 
 const Analytics = ({ stats }: { stats: SeriesStats }) => {
   const { t } = useI18n();
-  const [allRegulars, setAllRegulars] = useState(false);
-  const { totals, retention, regulars } = stats;
+  const [everyone, setEveryone] = useState(false);
+  const { totals, retention, regulars, participants } = stats;
+  const preview = regulars.slice(0, 5);
   const people = retention.onceOnly + retention.twoToThree + retention.fourPlus;
   const buckets: ReadonlyArray<{ key: MessageKey; count: number }> = [
     { key: "series.retentionOnce", count: retention.onceOnly },
@@ -275,25 +276,60 @@ const Analytics = ({ stats }: { stats: SeriesStats }) => {
         </section>
       ) : null}
 
-      {regulars.length > 0 ? (
+      {participants.length > 0 ? (
         <section className="card mt-2.5">
-          <div className="eyebrow px-4 pt-3.5 pb-1">{t("series.regulars")}</div>
-          {(allRegulars ? regulars : regulars.slice(0, 5)).map((person) => (
-            <div key={person.userId} className="row">
-              <span className="av">{initials(person)}</span>
-              <span className="min-w-0 flex-1 truncate text-[14px] font-semibold">{person.firstName}</span>
-              <span className="num shrink-0 text-[12px] text-hint">{t("series.attended", { n: person.attended, total: totals.held })}</span>
-            </div>
+          {preview.length > 0 ? <div className="eyebrow px-4 pt-3.5 pb-1">{t("series.regulars")}</div> : null}
+          {preview.map((person) => (
+            <ParticipantRow key={person.userId} person={person} held={totals.held} />
           ))}
-          {regulars.length > 5 && !allRegulars ? (
-            <button type="button" className="row" onClick={() => setAllRegulars(true)}>
-              <span className="flex-1 text-[13px]">{t("series.allRegulars", { n: regulars.length })}</span>
-              <span className="chev">›</span>
-            </button>
-          ) : null}
+          <button type="button" className="row" onClick={() => setEveryone(true)}>
+            <span className="flex-1 text-[13px]">{t("series.allParticipants", { n: participants.length })}</span>
+            <span className="chev">›</span>
+          </button>
         </section>
       ) : null}
+
+      {everyone ? <ParticipantsSheet participants={participants} held={totals.held} onClose={() => setEveryone(false)} /> : null}
     </>
+  );
+};
+
+type Participant = SeriesStats["participants"][number];
+
+const ParticipantRow = ({ person, held, rank }: { person: Participant; held: number; rank?: number }) => {
+  const { t } = useI18n();
+  return (
+    <div className="row">
+      {rank === undefined ? null : <span className="num w-6 shrink-0 text-[12px] text-hint">{rank}</span>}
+      <span className="av">{initials(person)}</span>
+      <PersonName person={person} className="flex-1 text-[14px] font-semibold" />
+      <span className="num shrink-0 text-[12px] text-hint">{t("series.attended", { n: person.attended, total: held })}</span>
+    </div>
+  );
+};
+
+/** Everyone who has held a spot in the series, most often first. */
+const ParticipantsSheet = ({ participants, held, onClose }: { participants: readonly Participant[]; held: number; onClose: () => void }) => {
+  const { t } = useI18n();
+  const [query, setQuery] = useState("");
+  const needle = query.trim().replace(/^@/, "").toLowerCase();
+  const shown = participants
+    .map((person, index) => ({ person, rank: index + 1 }))
+    .filter(({ person }) => !needle || [fullName(person), person.username ?? ""].some((text) => text.toLowerCase().includes(needle)));
+  return (
+    <Sheet title={t("series.participants")} onClose={onClose} full>
+      <p className="mb-3 text-[12px] leading-relaxed text-hint">{t("series.participantsHint")}</p>
+      <SearchInput className="mb-3" placeholder={t("people.search")} value={query} onChange={(event) => setQuery(event.target.value)} />
+      {shown.length > 0 ? (
+        <section className="card">
+          {shown.map(({ person, rank }) => (
+            <ParticipantRow key={person.userId} person={person} held={held} rank={rank} />
+          ))}
+        </section>
+      ) : (
+        <p className="py-6 text-center text-[13px] text-hint">{t("manage.listEmpty")}</p>
+      )}
+    </Sheet>
   );
 };
 
