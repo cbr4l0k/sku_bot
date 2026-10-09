@@ -5,7 +5,7 @@ import { CITIES } from "@sku/cities";
 
 import { sku, type EventCard as EventCardData, type EventDetail } from "../api";
 import { useI18n, type MessageKey } from "../i18n";
-import { countdown, daysUntil, errorText, initials, isPast, longDay, money, ordinal, timeOf } from "../lib/format";
+import { countdown, daysUntil, errorText, initials, isPast, longDay, money, timeOf } from "../lib/format";
 import { useBackButton } from "../lib/useBackButton";
 import { useAction, useResource, useTicker } from "../lib/useResource";
 import { haptic, openLink } from "../telegram";
@@ -148,7 +148,7 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
             ? quiet("detail.noTicketsAvailable")
             : { label: price.kind === "paid" ? t("detail.chooseTicketFrom", { price: money(price.from, locale) }) : t("detail.chooseTicket"), onPress: () => navigate(checkoutPath) }
           : status === "waitlisted"
-            ? quiet("detail.queued", { place: ordinal(detail.myWaitlistPosition ?? 1, locale) })
+            ? quiet("detail.queued")
             : left === 0 && !detail.waitlistEnabled
               ? quiet("detail.fullNoQueue")
               : { label: t(left === 0 ? "action.joinWaitlist" : "action.join"), onPress: join, loading: action.pending };

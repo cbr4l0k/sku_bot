@@ -15,7 +15,7 @@ export type DockAction = {
   onPress?: () => void;
   loading?: boolean;
   disabled?: boolean;
-  /** A state rather than a call to act ("On the waitlist · 3rd"): drawn quieter. */
+  /** A state rather than a call to act ("On the waitlist"): drawn quieter. */
   quiet?: boolean;
 };
 

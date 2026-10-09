@@ -132,12 +132,3 @@ export const untilStart = (msLeft: number, dayLabel: (n: number) => string): str
 /** "четверг, 12 сентября" — the day without the time. */
 export const longDay = (iso: string, locale: Locale): string =>
   new Intl.DateTimeFormat(tags[locale], { weekday: "long", day: "numeric", month: "long" }).format(parseDate(iso));
-
-const englishSuffix = (n: number): string => {
-  const tens = n % 100;
-  if (tens >= 11 && tens <= 13) return "th";
-  return ["th", "st", "nd", "rd"][n % 10] ?? "th";
-};
-
-/** A place in a queue: "3-й" / "3rd". */
-export const ordinal = (n: number, locale: Locale): string => (locale === "ru" ? `${n}-й` : `${n}${englishSuffix(n)}`);

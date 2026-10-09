@@ -4,7 +4,7 @@ import { CITIES } from "@sku/cities";
 
 import type { EventCard as EventCardData, EventPhase, EventStatus, RegistrationStatus } from "../api";
 import { useI18n, type Translate } from "../i18n";
-import { dayNumber, money, monthNumber, ordinal, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
+import { dayNumber, money, monthNumber, relativeDayKey, timeOf, weekdayShort } from "../lib/format";
 import { useSession } from "../session";
 import { GroupChips } from "./groups";
 import { Chip, Track } from "./primitives";
@@ -126,11 +126,6 @@ export const EventCard = ({ event, index }: { event: EventCardData; index: numbe
             ) : (
               <PriceChip event={event} />
             )}
-            {status === "waitlisted" && event.myWaitlistPosition !== null && !event.myPendingOffer ? (
-              <span className="num self-center text-[10px] tracking-[0.12em] text-hint uppercase">
-                {t("events.queuePosition", { place: ordinal(event.myWaitlistPosition, locale) })}
-              </span>
-            ) : null}
             {event.waitlistSize > 0 && !mine ? (
               <span className="num self-center text-[10px] tracking-[0.12em] text-hint uppercase">
                 {t("events.waitlistSize", { n: event.waitlistSize })}
