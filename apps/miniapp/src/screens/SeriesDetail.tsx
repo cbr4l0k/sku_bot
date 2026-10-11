@@ -176,6 +176,25 @@ export const SeriesDetailScreen = () => {
             <span />
           </button>
         </div>
+        <div className="row">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[14px] font-semibold">{t("manage.reminders")}</span>
+            <span className="block text-[12px] text-hint">{t("manage.remindersHint")}</span>
+          </span>
+          <button
+            type="button"
+            className="switch"
+            aria-pressed={series.remindersEnabled}
+            aria-label={t("manage.reminders")}
+            disabled={action.pending}
+            onClick={() => {
+              haptic.select();
+              run(() => sku.updateSeries(seriesId, { remindersEnabled: !series.remindersEnabled }), t("toast.seriesSaved"));
+            }}
+          >
+            <span />
+          </button>
+        </div>
       </section>
       <p className="mx-1 mt-2.5 text-[12px]" style={{ color: "var(--ink-deep)" }}>
         {t("series.runningHint")}
