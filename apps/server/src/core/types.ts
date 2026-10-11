@@ -28,4 +28,10 @@ export type TicketEffect = {
   eventId: number;
 };
 
-export type NotificationEffect = OfferEffect | SupersededEffect | TicketEffect;
+export type ReminderEffect = {
+  kind: "run_reminder";
+  userId: number;
+  eventId: number;
+};
+
+export type NotificationEffect = OfferEffect | SupersededEffect | TicketEffect | ReminderEffect;

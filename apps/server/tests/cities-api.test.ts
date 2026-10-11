@@ -275,5 +275,9 @@ test("a branch admin names a series' leads and switches its queue, reaching the 
   // The admin is no longer leading, so signing up costs them the one spot.
   expect((await call("POST", `/api/events/${ahead.id}/join`, MSK_ADMIN)).json.status).toBe("registered");
   expect((await call("PATCH", `/api/organizer/series/${series.id}`, MSK_ADMIN, { waitlistEnabled: false })).json.waitlistEnabled).toBe(false);
+  expect((await call("PATCH", `/api/organizer/series/${series.id}`, MSK_ADMIN, { remindersEnabled: true })).json.remindersEnabled).toBe(true);
+  expect(db.$client.query<{ reminders_enabled: number }, [number]>("SELECT reminders_enabled FROM events WHERE id = ?").get(ahead.id)?.reminders_enabled).toBe(1);
+  expect((await call("PATCH", `/api/organizer/events/${ahead.id}`, MSK_ADMIN, { remindersEnabled: false })).status).toBe(200);
+  expect(db.$client.query<{ reminders_enabled: number }, [number]>("SELECT reminders_enabled FROM events WHERE id = ?").get(ahead.id)?.reminders_enabled).toBe(0);
   expect((await call("POST", `/api/events/${ahead.id}/join`, GENERAL)).json).toEqual({ error: "event_full" });
 });

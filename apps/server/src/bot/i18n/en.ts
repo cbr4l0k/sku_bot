@@ -93,6 +93,13 @@ ${join([
   leaveKeep: "No, keep it",
   leftNotice: "You're off the list. Your spot goes to the next runner in the queue.",
   leftQueueNotice: "You've left the queue.",
+  runReminder: (title: string, date: string, location: string, locationUrl: string | null) => format`${bold("See you soon!")}
+
+${bold(title)}
+📅 ${date}
+📍 ${locationUrl ? link(location, locationUrl) : location}
+
+Can't make it after all? Free your spot so someone from the queue can run instead.`,
   joinedNotice: "Done — you are signed up!",
   queuedNotice: "You are in the queue. We will message you the moment a spot frees up.",
   alreadyJoinedNotice: "You are already signed up for this event.",
