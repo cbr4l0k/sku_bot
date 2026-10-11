@@ -10,7 +10,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { run } from "../support/effect";
 
 const { declineHandler, leaveHandler } = await import("../../src/bot/leave");
-const { declineCallback, leaveCallback } = await import("../../src/bot/callbacks");
+const { offerHandler } = await import("../../src/bot/offers");
+const { sweepOffers } = await import("../../src/core/waitlist");
+const { declineCallback, leaveCallback, offerCallback } = await import("../../src/bot/callbacks");
 const { cancelRegistration, joinEvent } = await import("../../src/core/registration");
 const { bot } = await import("../../src/bot");
 const { db } = await import("../../src/db");
@@ -143,6 +145,24 @@ describe("leaving from chat", () => {
     await declineHandler(confirm.context);
     expect(status(2)).toBe("waitlisted");
     expect(confirm.calls.edits[0]?.text).toBe("This spot is no longer available.");
+  });
+
+  test("accepting withdraws the other open offers even when the chat edit fails", async () => {
+    run(db, joinEvent(1, 1, now));
+    run(db, joinEvent(1, 2, now));
+    run(db, joinEvent(1, 3, now));
+    run(db, cancelRegistration(1, 1, now));
+    const first = offers()[0]!;
+    // Lapsed and passed down the queue, yet still claimable by whoever answers first.
+    db.$client.query("UPDATE waitlist_offers SET expires_at = ? WHERE id = ?").run(unix(now) - 1, first.id);
+    run(db, sweepOffers(now));
+    dms.length = 0;
+    const accept = tap(2, offerCallback.pack({ id: first.id }));
+    accept.context.editText = async () => { throw new Error("message to edit not found"); };
+    await expect(offerHandler(accept.context)).rejects.toThrow();
+    expect(status(2)).toBe("registered");
+    expect(offers()).toMatchObject([{ user_id: 2, status: "accepted" }, { user_id: 3, status: "superseded" }]);
+    expect(dms).toMatchObject([{ chat_id: 3, text: "This spot is no longer available." }]);
   });
 
   test("someone else's offer cannot be declined", async () => {
