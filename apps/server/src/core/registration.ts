@@ -53,7 +53,8 @@ export const cancelRegistration = Effect.fn("registration.cancelRegistration")(f
     const registration = db.$client.query<RegistrationRow, [number, number]>("SELECT id, status FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
     const wasConfirmed = registration?.status === "registered" || registration?.status === "checked_in";
     if (registration && registration.status !== "canceled") db.$client.query("UPDATE registrations SET status = 'canceled', updated_at = ?, checked_in_at = NULL WHERE id = ?").run(seconds(now), registration.id);
-    db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE event_id = ? AND user_id = ? AND status = 'pending'").run(eventId, userId);
-    return { effects: wasConfirmed ? issueOffersSync(db, eventId, now) : [] };
+    // A pending offer held a spot for this user; passing on it frees that spot for the next in line.
+    const heldOffer = db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE event_id = ? AND user_id = ? AND status = 'pending'").run(eventId, userId).changes > 0;
+    return { effects: wasConfirmed || heldOffer ? issueOffersSync(db, eventId, now) : [] };
   })();
 });

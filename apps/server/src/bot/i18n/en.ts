@@ -37,6 +37,10 @@ ${date}
 
 The event starts soon, so everyone in the queue has been notified. The first to accept gets the spot.`,
   offerAccept: "Accept",
+  offerDecline: "Decline",
+  offerDeclineConfirm: "Yes, pass it on and leave the queue",
+  offerDeclineKeep: "Keep the offer",
+  offerDeclined: "Done — the spot goes to the next runner, and you've left the queue.",
   offerAccepted: (title: string, date: string) => format`${bold("You're confirmed!")}
 
 ${bold(title)}
@@ -82,6 +86,13 @@ ${join([
   cardRegistered: "You are signed up.",
   cardWaitlisted: "You are in the queue.",
   cardCheckedIn: "You are checked in.",
+  leaveButton: "Can't make it",
+  leaveQueueButton: "Leave the queue",
+  leaveConfirm: "Yes, give up my spot",
+  leaveQueueConfirm: "Yes, leave the queue",
+  leaveKeep: "No, keep it",
+  leftNotice: "You're off the list. Your spot goes to the next runner in the queue.",
+  leftQueueNotice: "You've left the queue.",
   joinedNotice: "Done — you are signed up!",
   queuedNotice: "You are in the queue. We will message you the moment a spot frees up.",
   alreadyJoinedNotice: "You are already signed up for this event.",

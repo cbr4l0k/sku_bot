@@ -38,6 +38,10 @@ ${date}
 
 Событие скоро начнётся, поэтому мы написали всем в очереди. Место получит тот, кто примет приглашение первым.`,
   offerAccept: "Принять",
+  offerDecline: "Отказаться",
+  offerDeclineConfirm: "Да, отдать место и выйти из очереди",
+  offerDeclineKeep: "Оставить приглашение",
+  offerDeclined: "Готово — место перейдёт следующему в очереди, а вы вышли из очереди.",
   offerAccepted: (title: string, date: string) => format`${bold("✅ Вы в списке участников!")}
 
 ${bold(title)}
@@ -85,6 +89,13 @@ ${join([
   cardRegistered: "Ты записан.",
   cardWaitlisted: "Ты в очереди.",
   cardCheckedIn: "Ты отмечен.",
+  leaveButton: "Не смогу прийти",
+  leaveQueueButton: "Выйти из очереди",
+  leaveConfirm: "Да, освободить место",
+  leaveQueueConfirm: "Да, выйти из очереди",
+  leaveKeep: "Нет, остаюсь",
+  leftNotice: "Ты больше не в списке. Место перейдёт следующему в очереди.",
+  leftQueueNotice: "Ты вышел из очереди.",
   joinedNotice: "Готово — ты записан!",
   queuedNotice: "Ты в очереди. Напишем, как только освободится место.",
   alreadyJoinedNotice: "Ты уже записан на это событие.",

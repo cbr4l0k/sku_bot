@@ -35,19 +35,15 @@ export const offerHandler = (context: OfferContext): Promise<void> => runtime.ru
     yield* Effect.promise(() => context.editText(i18n.t(locale, "bannedNotice"), { reply_markup: undefined }));
     return;
   }
-  const result = yield* acceptOffer(unpacked.data.id, telegramUser.id, new Date()).pipe(
-    Effect.catchTag("OfferRejected", () => Effect.succeed(null)),
+  yield* acceptOffer(unpacked.data.id, telegramUser.id, new Date()).pipe(
+    // Everyone else's offers are withdrawn before this chat's own edit, which may fail.
+    Effect.tap((result) => dispatchEffects(result.effects)),
+    Effect.andThen(() => eventSummaryFromOffer(unpacked.data.id, locale)),
+    Effect.andThen((summary) => Effect.promise(() => context.editText(summary
+      ? i18n.t(locale, "offerAccepted", summary.title, summary.date)
+      : i18n.t(locale, "offerSuperseded"), { reply_markup: undefined }))),
+    Effect.catchTag("OfferRejected", () => Effect.promise(() => context.editText(i18n.t(locale, "offerSpotTaken"), { reply_markup: undefined }))),
   );
-  if (!result) {
-    yield* Effect.promise(() => context.editText(i18n.t(locale, "offerSpotTaken"), { reply_markup: undefined }));
-    return;
-  }
-
-  const summary = yield* eventSummaryFromOffer(unpacked.data.id, locale);
-  yield* Effect.promise(() => context.editText(summary
-    ? i18n.t(locale, "offerAccepted", summary.title, summary.date)
-    : i18n.t(locale, "offerSuperseded"), { reply_markup: undefined }));
-  yield* dispatchEffects(result.effects);
 }));
 
 const eventSummaryFromOffer = Effect.fnUntraced(function* (offerId: number, locale: "ru" | "en") {

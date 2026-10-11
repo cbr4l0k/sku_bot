@@ -7,7 +7,7 @@ import type { Db, Locale } from "@sku/db";
 import { canSeeEvent, chatsOfEvent, refreshMemberships } from "../core/membership";
 import { loadEnv } from "../env";
 import { Database } from "../services";
-import { joinCallback } from "./callbacks";
+import { joinCallback, leaveCallback } from "./callbacks";
 import { i18n } from "./i18n";
 import { telegramMembership } from "./membership";
 
@@ -56,7 +56,7 @@ const pendingTicketCount = (db: Db, eventId: number) => db.select({ count: count
   .get()?.count ?? 0;
 
 const myRegistration = (db: Db, eventId: number, userId: number) => db
-  .select({ status: registrations.status })
+  .select({ status: registrations.status, isStaff: registrations.isStaff })
   .from(registrations)
   .where(and(eq(registrations.eventId, eventId), eq(registrations.userId, userId)))
   .get();
@@ -121,6 +121,10 @@ export const renderEventCard = Effect.fnUntraced(function* (
   const keyboard = new InlineKeyboard();
   if (!paid && !mine && (!full || event.waitlistEnabled)) {
     keyboard.text(i18n.t(locale, full ? "joinQueueButton" : "joinButton"), joinCallback.pack({ id: event.id })).row();
+  }
+  // Paid tickets are given back through the app's refund flow, and staff leave by being taken off the leads.
+  if (!paid && !registration?.isStaff && (status === "registered" || status === "waitlisted")) {
+    keyboard.text(i18n.t(locale, status === "waitlisted" ? "leaveQueueButton" : "leaveButton"), leaveCallback.pack({ id: event.id, step: "ask" })).row();
   }
   if (paid && !mine) {
     for (const tier of tiers) {

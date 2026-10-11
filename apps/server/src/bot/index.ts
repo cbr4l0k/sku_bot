@@ -4,10 +4,11 @@ import { loadEnv } from "../env";
 import { runtime } from "../runtime";
 import { Database } from "../services";
 import { i18n, localeFromLanguageCode } from "./i18n";
-import { joinCallback } from "./callbacks";
+import { declineCallback, joinCallback, leaveCallback } from "./callbacks";
 import { chatIdHandler, chatMembershipHandler } from "./chat-id";
 import { contactHandler } from "./contact";
 import { joinHandler } from "./join";
+import { declineHandler, leaveHandler } from "./leave";
 import { offerHandler } from "./offers";
 import { startHandler } from "./start";
 
@@ -29,10 +30,13 @@ export const bot = new Bot(env.BOT_TOKEN)
   .command("chatid", chatIdHandler)
   .on("my_chat_member", chatMembershipHandler)
   .on("message", contactHandler)
-  // One callback_query stream, two kinds of button: route by the packed prefix.
+  // One callback_query stream, several kinds of button: route by the packed prefix.
   .on("callback_query", (context) => {
     const data = typeof context.data === "string" ? context.data : undefined;
-    return data && joinCallback.safeUnpack(data).success ? joinHandler(context) : offerHandler(context);
+    if (data && joinCallback.safeUnpack(data).success) return joinHandler(context);
+    if (data && leaveCallback.safeUnpack(data).success) return leaveHandler(context);
+    if (data && declineCallback.safeUnpack(data).success) return declineHandler(context);
+    return offerHandler(context);
   })
   .onStart(async () => {
     await Promise.all([

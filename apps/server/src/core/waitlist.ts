@@ -7,11 +7,11 @@ import type { NotificationEffect, OfferEffect, SupersededEffect } from "./types"
 const OFFER_WINDOW_SECONDS = 20 * 60; // 20 minutes
 export const QUEUE_BROADCAST_LEAD_SECONDS = 2 * 60 * 60; // 2 hours
 const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
-type EventRow = { id: number; capacity: number | null; waitlist_enabled: number; starts_at: number };
+type EventRow = { id: number; capacity: number | null; waitlist_enabled: number; starts_at: number; status: string; ended_at: number | null };
 type OfferRow = { id: number; event_id: number; user_id: number; expires_at: number; message_id: number | null };
 
 const transaction = <T>(db: Db, work: () => T): T => db.$client.transaction(work)();
-const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled, starts_at FROM events WHERE id = ?").get(eventId);
+const event = (db: Db, eventId: number) => db.$client.query<EventRow, [number]>("SELECT id, capacity, waitlist_enabled, starts_at, status, ended_at FROM events WHERE id = ?").get(eventId);
 /** Spots actually taken. Staff rows are on the roster but hold no spot. */
 const confirmed = (db: Db, eventId: number) => db.$client.query<{ count: number }, [number]>("SELECT count(*) AS count FROM registrations WHERE event_id = ? AND status IN ('registered', 'checked_in') AND is_staff = 0").get(eventId)?.count ?? 0;
 const reserved = (db: Db, eventId: number, now: number) => db.$client.query<{ count: number }, [number, number]>("SELECT count(*) AS count FROM waitlist_offers WHERE event_id = ? AND status = 'pending' AND expires_at > ?").get(eventId, now)?.count ?? 0;
@@ -42,6 +42,8 @@ const issue = (db: Db, eventId: number, now: number): OfferEffect[] => {
   // switched off keeps their place, dormant, in case it is switched back on.
   const current = event(db, eventId);
   if (!current?.waitlist_enabled) return [];
+  // A spot in an event that is over, or called off, is not worth offering.
+  if (current.status !== "published" || current.ended_at !== null) return [];
   const effects: OfferEffect[] = [];
 
   // Close to the start, an empty spot is too urgent to walk down the queue in
@@ -132,7 +134,7 @@ export const acceptOffer = Effect.fn("waitlist.acceptOffer")(function* (offerId:
       return { ok: false, reason: "spot_taken" };
     }
     const current = event(db, offer.event_id);
-    if (!current || (current.capacity !== null && confirmed(db, current.id) >= current.capacity)) {
+    if (!current || current.status !== "published" || current.ended_at !== null || (current.capacity !== null && confirmed(db, current.id) >= current.capacity)) {
       db.$client.query("UPDATE waitlist_offers SET status = 'superseded' WHERE id = ?").run(offerId);
       return { ok: false, reason: "spot_taken" };
     }
