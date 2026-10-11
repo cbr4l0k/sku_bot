@@ -71,6 +71,8 @@ export const eventSeries = sqliteTable("event_series", {
   locationUrl: text("location_url"),
   capacity: integer("capacity"),
   waitlistEnabled: integer("waitlist_enabled", { mode: "boolean" }).notNull().default(true),
+  /** Copied to each run, like the queue switch; see events.remindersEnabled. */
+  remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(false),
   homeChatId: integer("home_chat_id"),
   /**
    * The next occurrence's date is a human decision, never an inference. Null
@@ -108,6 +110,8 @@ export const events = sqliteTable(
     capacity: integer("capacity"),
     /** With the queue off, a full event simply stops accepting registrations. */
     waitlistEnabled: integer("waitlist_enabled", { mode: "boolean" }).notNull().default(true),
+    /** Signed-up runners get a DM shortly before the start; organizers opt in per event. */
+    remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(false),
     status: text("status").$type<EventStatus>().notNull().default("draft"),
     /**
      * When an organizer declared the event over. The clock never sets this: an event
@@ -271,6 +275,8 @@ export const registrations = sqliteTable(
     checkedInAt: integer("checked_in_at", { mode: "timestamp" }),
     /** Null for anyone not checked in, and for check-ins that predate the column. */
     checkinMethod: text("checkin_method").$type<CheckinMethod>(),
+    /** When this runner was reminded of the event; each is reminded once. */
+    remindedAt: integer("reminded_at", { mode: "timestamp" }),
   },
   (table) => [
     unique("registrations_event_id_user_id_unique").on(table.eventId, table.userId),
