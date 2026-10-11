@@ -63,18 +63,30 @@ describe("bot event card", () => {
     expect(cardText(1, 3)).toContain("No spots left");
   });
 
-  test("shows a signed-up user their standing instead of a button", () => {
+  test("shows a signed-up user their standing, and a way out", () => {
     run(db, joinEvent(1, 2, now));
-    expect(actions(1, 2)).toEqual([]);
+    expect(actions(1, 2)).toEqual(["Can't make it"]);
     expect(cardText(1, 2)).toContain("You are signed up");
   });
 
   test("shows that a user is queued without exposing their place", () => {
     run(db, joinEvent(1, 2, now));
     run(db, joinEvent(1, 3, now));
-    expect(actions(1, 3)).toEqual([]);
+    expect(actions(1, 3)).toEqual(["Leave the queue"]);
     expect(cardText(1, 3)).toContain("You are in the queue");
     expect(cardText(1, 3)).not.toContain("#1");
+  });
+
+  test("staff on the roster are not offered a way to leave", () => {
+    run(db, joinEvent(1, 2, now));
+    db.$client.query("UPDATE registrations SET is_staff = 1 WHERE user_id = 2").run();
+    expect(actions(1, 2)).toEqual([]);
+  });
+
+  test("a paid registration is left through the app's refund flow, not the card", () => {
+    run(db, joinEvent(1, 2, now));
+    db.$client.query("INSERT INTO ticket_tiers (event_id, name, price_minor, quota) VALUES (1, 'Standard', 100000, 1)").run();
+    expect(actions(1, 2)).toEqual([]);
   });
 
   test("hides an event the viewer's groups exclude them from", () => {

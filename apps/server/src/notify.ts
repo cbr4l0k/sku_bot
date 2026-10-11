@@ -1,8 +1,8 @@
 import { Effect } from "effect";
-import { InlineKeyboard, TelegramError } from "gramio";
+import { TelegramError } from "gramio";
 
 import { eq, users, type Db } from "@sku/db";
-import { offerCallback } from "./bot/callbacks";
+import { offerKeyboard } from "./bot/callbacks";
 import { i18n } from "./bot/i18n";
 import { eventSummary } from "./bot/event-card";
 import type { EventChange, EventUpdatedFields } from "./bot/event-card";
@@ -49,16 +49,12 @@ const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) 
       console.warn(`Offer notification skipped: event ${effect.eventId} was not found.`);
       return;
     }
-    const replyMarkup = new InlineKeyboard().text(
-      i18n.t(locale, "offerAccept"),
-      offerCallback.pack({ id: effect.offerId }),
-    );
     const response = yield* Effect.promise(() => bot.api.sendMessage({
       chat_id: effect.userId,
       text: effect.broadcast
         ? i18n.t(locale, "offerBroadcast", event.title, event.date)
         : i18n.t(locale, "offer", event.title, event.date),
-      reply_markup: replyMarkup,
+      reply_markup: offerKeyboard(locale, effect.offerId),
       suppress: true,
     }));
 
