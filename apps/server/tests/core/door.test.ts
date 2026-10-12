@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createDb, migrate, type Db } from "@sku/db";
 import { endEvent } from "../../src/core/waitlist";
 import { joinEvent } from "../../src/core/registration";
-import { mintTicketToken, scanTicket, toggleHandover, verifyTicketToken } from "../../src/core/checkin";
+import { mintTicketToken, scanTicket, toggleHandover, turnIn, verifyTicketToken } from "../../src/core/checkin";
 import { run } from "../support/effect";
 
 let db: Db;
@@ -116,5 +116,32 @@ describe("merch handover", () => {
       .run();
     const seat = db.$client.query<{ id: number }, []>("SELECT id FROM order_items WHERE order_id = 'seat'").get()!.id;
     expect(run(db, toggleHandover(1, seat, 2, now))).toEqual({ error: "item_not_found" });
+  });
+});
+
+describe("staff turning in", () => {
+  const staffRow = (userId: number) => db.$client
+    .query("INSERT INTO registrations (event_id, user_id, status, is_staff) VALUES (1, ?, 'registered', 1)")
+    .run(userId);
+  const row = (userId: number) => db.$client
+    .query<{ status: string; checkin_method: string | null; checked_in_at: number | null }, [number]>(
+      "SELECT status, checkin_method, checked_in_at FROM registrations WHERE event_id = 1 AND user_id = ?",
+    ).get(userId);
+
+  test("staff check themselves in without a scan, once", () => {
+    staffRow(1);
+    expect(run(db, turnIn(1, 1, now))).toEqual({ ok: true });
+    expect(row(1)).toEqual({ status: "checked_in", checkin_method: "manual", checked_in_at: unix(now) });
+    expect(run(db, turnIn(1, 1, now))).toEqual({ error: "already_checked_in" });
+  });
+
+  test("runners and strangers cannot turn in, and nobody can after the end", () => {
+    run(db, joinEvent(1, 2, now));
+    expect(run(db, turnIn(1, 2, now))).toEqual({ error: "not_staff" });
+    expect(row(2)?.status).toBe("registered");
+    expect(run(db, turnIn(1, 3, now))).toEqual({ error: "not_registered" });
+    staffRow(4);
+    run(db, endEvent(1, now));
+    expect(run(db, turnIn(1, 4, now))).toEqual({ error: "event_over" });
   });
 });

@@ -14,7 +14,7 @@ export class OfferRejected extends Schema.TaggedError<OfferRejected>()("OfferRej
 }) {}
 
 export class CheckinRejected extends Schema.TaggedError<CheckinRejected>()("CheckinRejected", {
-  code: Schema.Literals(["not_registered", "already_checked_in", "event_over"]),
+  code: Schema.Literals(["not_registered", "already_checked_in", "event_over", "not_staff"]),
 }) {}
 
 export class HandoverRejected extends Schema.TaggedError<HandoverRejected>()("HandoverRejected", {

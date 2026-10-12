@@ -94,6 +94,8 @@ const { mintCheckinToken } = await import("../src/core/checkin");
 const token = mintCheckinToken(process.env.CHECKIN_SECRET, eventId, new Date());
 const checkin = await call("POST", "/api/checkin", runnerB, { code: token });
 check("runnerB checks in via QR token", checkin.status === 200, checkin.json);
+const runnerTurnIn = await call("POST", `/api/events/${eventId}/turn-in`, runnerB);
+check("a runner cannot turn in as staff", runnerTurnIn.status === 403, runnerTurnIn.json);
 
 const stats = await call("GET", `/api/admin/events/${eventId}/stats`, admin);
 check("event stats", stats.status === 200 && (stats.json as { checkedIn: number }).checkedIn === 1, stats.json);

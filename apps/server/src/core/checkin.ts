@@ -39,6 +39,25 @@ export const checkIn = Effect.fn("checkin.checkIn")(function* (eventId: number, 
   if ("error" in result) return yield* new CheckinRejected({ code: result.error });
   return result;
 });
+/**
+ * Staff arriving. They are the ones holding the QR up, so there is nothing for
+ * them to scan: they say they are here and the door opens for everyone else.
+ * One-way on purpose — taking it back is the roster's job.
+ */
+export const turnIn = Effect.fn("checkin.turnIn")(function* (eventId: number, userId: number, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): { ok: true } | { error: "not_registered" | "not_staff" | "already_checked_in" | "event_over" } => {
+    if (eventOver(db, eventId)) return { error: "event_over" };
+    const registration = db.$client.query<Registration & { is_staff: number }, [number, number]>("SELECT id, status, is_staff FROM registrations WHERE event_id = ? AND user_id = ?").get(eventId, userId);
+    if (!registration || registration.status === "waitlisted" || registration.status === "canceled") return { error: "not_registered" };
+    if (!registration.is_staff) return { error: "not_staff" };
+    if (registration.status === "checked_in") return { error: "already_checked_in" };
+    db.$client.query("UPDATE registrations SET status = 'checked_in', checked_in_at = ?, checkin_method = 'manual', updated_at = ? WHERE id = ?").run(seconds(now), seconds(now), registration.id);
+    return { ok: true };
+  })();
+  if ("error" in result) return yield* new CheckinRejected({ code: result.error });
+  return result;
+});
 /** Stays open after the event ends: fixing the roster afterwards is part of the job. */
 export const manualToggleCheckin = Effect.fn("checkin.manualToggleCheckin")(function* (eventId: number, userId: number, now: Date) {
   const db = yield* Database;

@@ -40,6 +40,7 @@ import {
   mintTicketToken,
   scanTicket,
   toggleHandover,
+  turnIn,
   verifyCheckinToken,
   verifyTicketToken,
 } from "../core/checkin";
@@ -724,6 +725,13 @@ export const app = new Elysia()
         Effect.catchTag("CheckinRejected", ({ code }) => Effect.succeed(error(status, 400, code))),
       );
     })), { body: t.Object({ code: t.String({ minLength: 1 }) }) })
+    /** Staff mark themselves arrived instead of scanning the code they are there to show. */
+    .post("/events/:id/turn-in", ({ params, user, status }) => run(Effect.gen(function* () {
+      if (user.isBanned) return error(status, 403, "banned");
+      return yield* turnIn(params.id, user.id, now()).pipe(
+        Effect.catchTag("CheckinRejected", ({ code }) => Effect.succeed(error(status, code === "not_staff" ? 403 : 400, code))),
+      );
+    })), { params: idParams })
     /**
      * The ticket a runner shows at the door. Deliberately not a
      * checked-in/not-checked-in gate: someone who has already been scanned may

@@ -93,3 +93,17 @@ test("a ticketed draft switched back to free is free again", async () => {
   expect((await call("PATCH", `/api/admin/events/${id}`, SPB_ADMIN, { status: "published" })).status).toBe(200);
   expect((await call("POST", `/api/events/${id}/join`, RUNNER)).status).toBe(200);
 });
+
+test("staff turn in on free and paid runs alike, and runners cannot", async () => {
+  const startsAt = Math.floor(Date.now() / 1000) + 3600;
+  for (const id of [1, 2]) {
+    db.$client.query("INSERT INTO events (id, title, description, starts_at, location, capacity, status, created_by) VALUES (?, 'run', 'x', ?, 'park', 10, 'published', ?)").run(id, startsAt, GENERAL);
+    db.$client.query("INSERT INTO registrations (event_id, user_id, status, is_staff) VALUES (?, ?, 'registered', 1)").run(id, SPB_ADMIN);
+  }
+  db.$client.query("INSERT INTO ticket_tiers (event_id, name, price_minor) VALUES (2, 'Standard', 5000)").run();
+
+  expect((await call("POST", "/api/events/2/turn-in", SPB_ADMIN)).status).toBe(200);
+  expect((await call("POST", "/api/events/1/turn-in", RUNNER)).status).toBe(400);
+  expect((await call("POST", "/api/events/1/turn-in", SPB_ADMIN)).status).toBe(200);
+  expect((await call<{ myRegistrationStatus: string }>("GET", "/api/events/1", SPB_ADMIN)).json.myRegistrationStatus).toBe("checked_in");
+});
