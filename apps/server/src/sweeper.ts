@@ -5,6 +5,7 @@ import { sweepOffers } from "./core/waitlist";
 import { sweepReminders } from "./core/reminders";
 import { sweepTicketPayments } from "./core/tickets";
 import { dueSeries, spawnOccurrence } from "./core/series";
+import { draftReviewEffects } from "./core/alerts";
 import { paymentProvider } from "./payments";
 import { runtime } from "./runtime";
 import { Payments, type Database } from "./services";
@@ -31,10 +32,17 @@ const every = (intervalMs: number, run: () => Promise<void>) => {
   return () => clearInterval(timer);
 };
 
-/** Templates that are due open their next draft; one that cannot is left for a person to look at. */
-const spawnDueSeries = Effect.fn("sweeper.spawnDueSeries")(function* (sweepAt: Date) {
+/**
+ * Templates that are due open their next draft; one that cannot is left for a person
+ * to look at. Each draft raised here is announced to whoever reviews it.
+ */
+export const spawnDueSeries = Effect.fn("sweeper.spawnDueSeries")(function* (sweepAt: Date) {
   for (const seriesId of yield* dueSeries(sweepAt)) {
-    yield* spawnOccurrence(seriesId, sweepAt).pipe(Effect.catchTag("SeriesRejected", () => Effect.void));
+    yield* spawnOccurrence(seriesId, sweepAt).pipe(
+      Effect.andThen(({ eventId }) => draftReviewEffects(eventId)),
+      Effect.andThen(dispatchEffects),
+      Effect.catchTag("SeriesRejected", () => Effect.void),
+    );
   }
 });
 

@@ -2,9 +2,9 @@ import { Effect } from "effect";
 import { InlineKeyboard, TelegramError } from "gramio";
 
 import { eq, ticketTiers, users, type Db } from "@sku/db";
-import { leaveCallback, offerKeyboard } from "./bot/callbacks";
+import { draftKeyboard, leaveCallback, offerKeyboard } from "./bot/callbacks";
 import { i18n } from "./bot/i18n";
-import { eventSummary } from "./bot/event-card";
+import { eventSummary, money } from "./bot/event-card";
 import type { EventChange, EventUpdatedFields } from "./bot/event-card";
 import { bot } from "./bot";
 import { loadEnv } from "./env";
@@ -86,6 +86,39 @@ const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) 
       suppress: true,
     }));
     if (response instanceof TelegramError) logTelegramFailure("run reminder", response);
+    return;
+  }
+
+  if (effect.kind === "draft_review") {
+    const event = yield* eventSummary(effect.eventId, locale);
+    if (!event) return;
+    const url = `https://${env.DOMAIN}/hq/events/${effect.eventId}`;
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
+      chat_id: effect.userId,
+      text: i18n.t(locale, "draftReview", event.title, event.date),
+      reply_markup: effect.canPublish ? draftKeyboard(locale, effect.eventId, url) : new InlineKeyboard().webApp(i18n.t(locale, "draftOpen"), url),
+      suppress: true,
+    }));
+    if (response instanceof TelegramError) logTelegramFailure("draft review", response);
+    return;
+  }
+
+  if (effect.kind === "refund_failed_alert") {
+    const event = yield* eventSummary(effect.eventId, locale);
+    const order = db.$client.query<{ amount_minor: number; first_name: string; last_name: string | null; username: string | null }, [string]>(`
+      SELECT o.amount_minor, u.first_name, u.last_name, u.username
+      FROM ticket_orders o JOIN users u ON u.id = o.user_id
+      WHERE o.id = ?
+    `).get(effect.orderId);
+    if (!event || !order) return;
+    const runner = [order.first_name, order.last_name].filter(Boolean).join(" ") + (order.username ? ` (@${order.username})` : "");
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
+      chat_id: effect.userId,
+      text: i18n.t(locale, "refundFailedAlert", event.title, runner, money(order.amount_minor, locale), effect.reason),
+      reply_markup: new InlineKeyboard().webApp(i18n.t(locale, "openApp"), `https://${env.DOMAIN}/hq/events/${effect.eventId}`),
+      suppress: true,
+    }));
+    if (response instanceof TelegramError) logTelegramFailure("refund alert", response);
     return;
   }
 

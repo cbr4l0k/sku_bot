@@ -119,5 +119,34 @@ ${blockquote("Ссылка одноразовая и только для теб�
   chatId: (chatId: number) => format`ID этого чата — ${code(String(chatId))}
 
 Чат уже в каталоге — выберите его филиал в «Админ → Чаты», и события этого города смогут его использовать.`,
+  draftReview: (title: string, date: string) => format`${bold("Новый забег ждёт проверки")}
+
+${bold(title)}
+📅 ${date}
+
+Серия создала этот черновик. Записаться на него нельзя, пока он не опубликован.`,
+  draftPublish: "✅ Опубликовать",
+  draftSkip: "Пропустить забег",
+  draftSkipConfirm: "Да, удалить черновик",
+  draftSkipKeep: "Оставить",
+  draftOpen: "Открыть черновик",
+  draftPublished: (title: string, date: string) => format`${bold("Опубликовано")}
+
+${bold(title)}
+📅 ${date}
+
+Теперь на забег можно записаться.`,
+  draftSkipped: (title: string) => format`${bold("Пропущено")}
+
+Черновик ${bold(title)} удалён. Серия продолжится со следующей даты.`,
+  draftHandled: "Этот черновик уже опубликован или удалён.",
+  draftNotAllowed: "Опубликовать или пропустить забег могут только админы филиала. Открыть черновик можно.",
+  draftHasOrders: "По этому черновику уже есть оплаты, поэтому из чата его не удалить. Откройте его в приложении.",
+  refundFailedAlert: (title: string, runner: string, amount: string, reason: string | null) => format`${bold("Возврат не прошёл")}
+
+${bold(title)}
+${runner} · ${amount}${reason ? `\nЮKassa: ${reason}` : ""}
+
+Место участника пока сохранено. Повторите возврат в покупках события.`,
   chatIdOnlyInGroups: "Отправьте эту команду в самой группе, ID которой нужен.",
 } satisfies ShouldFollowLanguage<typeof en>;

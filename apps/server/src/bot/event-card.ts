@@ -79,7 +79,7 @@ const ticketOptions = (db: Db, eventId: number, now = new Date()) => db.$client.
   ORDER BY t.sort_order, t.id
 `).all(eventId, Math.floor(now.getTime() / 1000), Math.floor(now.getTime() / 1000));
 
-const money = (minor: number, locale: Locale) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
+export const money = (minor: number, locale: Locale) => new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", {
   style: "currency",
   currency: "RUB",
   maximumFractionDigits: minor % 100 === 0 ? 0 : 2,
