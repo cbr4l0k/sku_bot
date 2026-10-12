@@ -34,4 +34,23 @@ export type ReminderEffect = {
   eventId: number;
 };
 
-export type NotificationEffect = OfferEffect | SupersededEffect | TicketEffect | ReminderEffect;
+/** A series raised a draft; `canPublish` decides whether this recipient gets the buttons. */
+export type DraftReviewEffect = {
+  kind: "draft_review";
+  userId: number;
+  eventId: number;
+  canPublish: boolean;
+};
+
+/** Sent to an admin about someone else's refund: `runnerId` is whose money it is. */
+export type RefundAlertEffect = {
+  kind: "refund_failed_alert";
+  userId: number;
+  eventId: number;
+  orderId: string;
+  runnerId: number;
+  /** As the provider gave it for this failure; a later retry must not rewrite the alert. */
+  reason: string | null;
+};
+
+export type NotificationEffect = OfferEffect | SupersededEffect | TicketEffect | ReminderEffect | DraftReviewEffect | RefundAlertEffect;

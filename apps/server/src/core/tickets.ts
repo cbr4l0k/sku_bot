@@ -3,6 +3,7 @@ import type { Db, TicketOrderStatus } from "@sku/db";
 import { PaymentProviderError, type ProviderPayment, type ProviderRefund } from "../payments/provider";
 import { Database, Payments } from "../services";
 import { CheckoutRejected, OrderRejected, type CheckoutError } from "./errors";
+import { refundAlertEffects } from "./alerts";
 import type { NotificationEffect } from "./types";
 import { issueOffersSync } from "./waitlist";
 
@@ -449,6 +450,7 @@ const applyRefund = (db: Db, refundRow: RefundRow, remote: ProviderRefund, now: 
     effects.push({ kind: hasTicket ? "ticket_refunded" : "purchase_refunded", userId: order.user_id, eventId: order.event_id });
   } else if (remote.status === "canceled" && refundRow.status !== "canceled") {
     effects.push({ kind: hasTicket ? "ticket_refund_failed" : "purchase_refund_failed", userId: order.user_id, eventId: order.event_id });
+    effects.push(...refundAlertEffects(db, order, remote.failureReason));
   }
   return effects;
 };
@@ -558,9 +560,10 @@ export const ensureRefund = Effect.fn("tickets.ensureRefund")(function* (
       if (!isDefinitiveProviderRejection(error)) return Effect.die(error);
       return Effect.sync((): NotificationEffect[] => {
         const timestamp = seconds(now);
+        const reason = providerFailureReason(error);
         transaction(db, () => {
           db.$client.query("UPDATE refunds SET status = 'canceled', failure_reason = ?, updated_at = ? WHERE id = ?")
-            .run(providerFailureReason(error), timestamp, prepared.refund.id);
+            .run(reason, timestamp, prepared.refund.id);
           db.$client.query("UPDATE ticket_orders SET status = 'refund_failed', updated_at = ? WHERE id = ?")
             .run(timestamp, prepared.order.id);
         });
@@ -568,7 +571,7 @@ export const ensureRefund = Effect.fn("tickets.ensureRefund")(function* (
           kind: prepared.order.ticket_tier_id === null ? "purchase_refund_failed" : "ticket_refund_failed",
           userId: prepared.order.user_id,
           eventId: prepared.order.event_id,
-        }];
+        }, ...refundAlertEffects(db, prepared.order, reason)];
       });
     }),
   );

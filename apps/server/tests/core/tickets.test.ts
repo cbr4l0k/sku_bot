@@ -587,3 +587,31 @@ test("a payment that lands after abandonment is refunded without disturbing a re
   expect(db.$client.query<{ status: string }, [string]>("SELECT status FROM ticket_orders WHERE id = ?").get(abandoned.orderId)?.status).toBe("refunded");
   expect(db.$client.query<{ status: string }, [string]>("SELECT status FROM ticket_orders WHERE id = ?").get(replacement.orderId)?.status).toBe("awaiting_payment");
 });
+
+test("a failed refund also tells the club's admins and that branch's admins, once each", async () => {
+  db.$client.exec(`
+    INSERT INTO users (id, first_name, is_admin) VALUES (3, 'Club admin', 1), (4, 'Both', 1), (5, 'Branch admin', 0), (6, 'Other branch', 0);
+    INSERT INTO user_city_roles (city, user_id, role) VALUES ('spb', 4, 'admin'), ('spb', 5, 'admin'), ('msk', 6, 'admin');
+  `);
+  const checkoutResult = await checkout();
+  if ("error" in checkoutResult) throw new Error(checkoutResult.error);
+  provider.setPaymentStatus("pay-1", "succeeded");
+  await runPaid(db, provider, reconcilePayment("pay-1", now));
+  const alert = (reason: string) => (userId: number) => ({ kind: "refund_failed_alert", userId, eventId: 1, orderId: checkoutResult.orderId, runnerId: 1, reason });
+
+  // Refused outright by the provider.
+  provider.refundError = new PaymentProviderError("YooKassa /refunds returned 403", 403, JSON.stringify({ description: "Refunds are restricted for this shop" }));
+  const refused = alert("Refunds are restricted for this shop");
+  expect(await runPaid(db, provider, requestAdminRefund(1, checkoutResult.orderId, now))).toEqual({
+    effects: [{ kind: "ticket_refund_failed", userId: 1, eventId: 1 }, refused(3), refused(4), refused(5)],
+  });
+
+  // Accepted, then canceled on the provider's side: a retry that fails alerts again.
+  provider.refundError = null;
+  const create = provider.createRefund.bind(provider);
+  provider.createRefund = async (input) => ({ ...(await create(input)), status: "canceled", failureReason: "rejected_by_payee" });
+  const canceled = alert("rejected_by_payee");
+  expect(await runPaid(db, provider, requestAdminRefund(1, checkoutResult.orderId, now))).toEqual({
+    effects: [{ kind: "ticket_refund_failed", userId: 1, eventId: 1 }, canceled(3), canceled(4), canceled(5)],
+  });
+});
