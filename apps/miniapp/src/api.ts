@@ -182,6 +182,7 @@ export const sku = {
   cancel: (id: number) => call(api.events({ id }).cancel.post(undefined, auth())),
   acceptOffer: (id: number) => call(api.offers({ id }).accept.post(undefined, auth())),
   checkin: (code: string) => call(api.checkin.post({ code }, auth())),
+  turnIn: (id: number) => call(api.events({ id })["turn-in"].post(undefined, auth())),
   myTicket: (id: number) => call(api.events({ id }).ticket.get(auth())),
 
   organizerEvents: () => call(api.organizer.events.get(auth())),

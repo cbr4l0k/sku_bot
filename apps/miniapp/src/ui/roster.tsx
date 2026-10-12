@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { sku, type AttendanceRow, type ScannedTicket } from "../api";
 import { useI18n, type MessageKey } from "../i18n";
-import { countdown, fullName, initials, timeOf } from "../lib/format";
+import { countdown, errorText, fullName, initials, timeOf } from "../lib/format";
 import { useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { CountdownRing } from "./event";
 import { Dialog, Sheet, useOverlayLock } from "./overlays";
-import { Button, Chip, EmptyState, Loader, SearchInput, TelegramUsername } from "./primitives";
+import { Button, Chip, EmptyState, ErrorState, Loader, SearchInput, TelegramUsername } from "./primitives";
 import { QrCanvas } from "./qr";
 import { Backdrop } from "./swoosh";
 
@@ -170,7 +170,10 @@ export const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => 
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-6" style={{ background: "var(--brand)" }}>
       <Backdrop />
       <div className="relative z-10 flex flex-col items-center gap-5">
-        {token.data ? (
+        {/* A refused token (the run ended, or the viewer no longer leads it) must not leave a stale code up. */}
+        {token.error ? (
+          <ErrorState message={errorText(t, token.error)} retryLabel={t("common.retry")} onRetry={() => void token.reload()} />
+        ) : token.data ? (
           <div className="fade-in">
             <QrCanvas value={token.data.token} size={Math.min(280, window.innerWidth - 96)} />
           </div>
@@ -179,12 +182,14 @@ export const QrStage = ({ eventId, onClose }: { eventId: number; onClose: () => 
             <Loader label={t("common.loading")} />
           </div>
         )}
-        <div className="flex items-center gap-3">
-          <CountdownRing remaining={remaining} total={TOKEN_WINDOW_MS} size={34} />
-          <span className="num text-[11px] tracking-[0.16em] text-hint uppercase">
-            {t("organizer.qrRefresh")} {countdown(remaining)}
-          </span>
-        </div>
+        {token.error ? null : (
+          <div className="flex items-center gap-3">
+            <CountdownRing remaining={remaining} total={TOKEN_WINDOW_MS} size={34} />
+            <span className="num text-[11px] tracking-[0.16em] text-hint uppercase">
+              {t("organizer.qrRefresh")} {countdown(remaining)}
+            </span>
+          </div>
+        )}
         <p className="max-w-[300px] text-center text-[12px] leading-relaxed text-hint">{t("organizer.qrHint")}</p>
       </div>
       <Button variant="ghost" onClick={onClose} className="relative z-10">

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { CITIES } from "@sku/cities";
@@ -13,8 +13,9 @@ import { useDockAction, type DockAction } from "../ui/dock";
 import { admission, CountdownRing, PriceChip, spotsLabel, spotsLeft, StatusBadge } from "../ui/event";
 import { GroupChips } from "../ui/groups";
 import { useConfirm, useToast } from "../ui/overlays";
+import { QrStage } from "../ui/roster";
 import { Button, ErrorState, Loader, Screen, SectionRule, Track } from "../ui/primitives";
-import { useCheckinScan } from "./Checkin";
+import { useCheckinScan, useTicketScan, useTurnIn } from "./Checkin";
 import { isTicketed } from "./Events";
 
 const OFFER_WINDOW_MS = 20 * 60 * 1000;
@@ -66,6 +67,9 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
   const checkin = useCheckinScan(reload);
   const { detail, card } = data;
   const id = detail.id;
+  const turnIn = useTurnIn(id, reload);
+  const door = useTicketScan(id, reload);
+  const [showQr, setShowQr] = useState(false);
   const offer = card?.myPendingOffer ?? null;
   const now = useTicker(1000, offer !== null);
 
@@ -137,11 +141,19 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
     : offer
       ? { label: t("action.accept"), onPress: accept, loading: action.pending }
       : holds
-        ? ticketed
-          ? { label: t("action.showTicket"), onPress: () => navigate(`/events/${id}/ticket`) }
-          : status === "registered"
-            ? { label: t("action.scan"), onPress: checkin.scan, loading: checkin.pending }
-            : quiet("status.checked_in")
+        // Staff work the door rather than come through it: turn in first, then
+        // show the QR on a free run or scan tickets on a paid one.
+        ? staff
+          ? status === "registered"
+            ? { label: t("action.turnIn"), onPress: turnIn.turnIn, loading: turnIn.pending }
+            : ticketed
+              ? { label: t("organizer.scanTickets"), onPress: door.scan, loading: door.pending }
+              : { label: t("organizer.showQr"), onPress: () => setShowQr(true) }
+          : ticketed
+            ? { label: t("action.showTicket"), onPress: () => navigate(`/events/${id}/ticket`) }
+            : status === "registered"
+              ? { label: t("action.scan"), onPress: checkin.scan, loading: checkin.pending }
+              : quiet("status.checked_in")
         : paidEvent
           // A queue kept from before the event went paid still buys its way in.
           ? price.kind === "unavailable"
@@ -269,13 +281,15 @@ const Loaded = ({ data, reload }: { data: Loaded; reload: () => Promise<void> })
       ) : null}
 
       {status === "waitlisted" && !offer ? <p className="mt-4 text-[13px] leading-relaxed text-hint">{t("detail.waitlistHint")}</p> : null}
-      {staff ? <p className="mt-4 text-[13px] leading-relaxed text-hint">{t("detail.staffHint")}</p> : null}
+      {staff ? <p className="mt-4 text-[13px] leading-relaxed text-hint">{t(ticketed ? "detail.staffTicketsHint" : "detail.staffHint")}</p> : null}
 
       {joinable && (status === "waitlisted" || (holds && !staff)) ? (
         <Button variant="danger" size="sm" block className="mt-5" loading={action.pending} onClick={() => void cancel()}>
           {t(status === "waitlisted" ? "action.leaveQueue" : "action.cancel")}
         </Button>
       ) : null}
+      {showQr ? <QrStage eventId={id} onClose={() => setShowQr(false)} /> : null}
+      {door.dialog}
     </Screen>
   );
 };

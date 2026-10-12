@@ -7,7 +7,8 @@ import { errorText, relativeDayKey, shortDate, timeOf, untilStart, weekStart } f
 import { useResource, useTicker } from "../lib/useResource";
 import { haptic } from "../telegram";
 import { admission, EventCard, spotsLeft } from "../ui/event";
-import { useCheckinScan } from "./Checkin";
+import { QrStage } from "../ui/roster";
+import { useCheckinScan, useTicketScan, useTurnIn } from "./Checkin";
 import { Button, EmptyState, ErrorState, Loader, PageTitle, Screen, SectionRule } from "../ui/primitives";
 
 type Filter = "all" | "open" | "free";
@@ -61,7 +62,8 @@ export const EventsScreen = () => {
 
       {events.data && list.length === 0 ? <EmptyState text={t("events.empty")} /> : null}
 
-      {next ? <NextRun event={next} onChange={() => events.reload(true)} /> : null}
+      {/* Keyed so a scan or QR left open on one run never carries over to the next. */}
+      {next ? <NextRun key={next.id} event={next} onChange={() => events.reload(true)} /> : null}
 
       {list.length > (next ? 1 : 0) ? (
         <div className="mt-[22px] flex gap-1.5" role="group" aria-label={t("events.filter.label")}>
@@ -105,11 +107,16 @@ export const EventsScreen = () => {
 const NextRun = ({ event, onChange }: { event: EventCardData; onChange: () => Promise<void> }) => {
   const { t, locale } = useI18n();
   const checkin = useCheckinScan(onChange);
+  const turnIn = useTurnIn(event.id, onChange);
+  const door = useTicketScan(event.id, onChange);
+  const [showQr, setShowQr] = useState(false);
   const navigate = useNavigate();
   const now = useTicker(30_000);
   const ticketed = isTicketed(event);
   const checkedIn = event.myRegistrationStatus === "checked_in";
-  const ticket = useResource(useCallback(() => sku.myTicket(event.id), [event.id]), { enabled: ticketed, pollMs: 60_000 });
+  // Staff are the ones holding the QR up, never the ones scanning it.
+  const staff = event.myStaffEntry;
+  const ticket = useResource(useCallback(() => sku.myTicket(event.id), [event.id]), { enabled: ticketed && !staff, pollMs: 60_000 });
   const toCollect = (ticket.data?.items ?? []).filter((item) => item.handedOverAt === null).length;
   const relative = relativeDayKey(event.startsAt);
   const when = `${relative ? t(relative) : shortDate(event.startsAt, locale)}, ${timeOf(event.startsAt, locale)}`;
@@ -136,7 +143,26 @@ const NextRun = ({ event, onChange }: { event: EventCardData; onChange: () => Pr
           <Figure label={t("events.entry")} value="QR" />
         )}
       </dl>
-      {ticketed ? (
+      {staff ? (
+        <>
+          {!checkedIn ? (
+            <Button block loading={turnIn.pending} onClick={turnIn.turnIn}>
+              {t("action.turnIn")}
+            </Button>
+          ) : ticketed ? (
+            <Button block loading={door.pending} onClick={door.scan}>
+              {t("organizer.scanTickets")}
+            </Button>
+          ) : (
+            <Button block onClick={() => setShowQr(true)}>
+              {t("organizer.showQr")}
+            </Button>
+          )}
+          <p className="mt-2.5 text-center text-[12px] text-hint">
+            {t(!checkedIn ? (ticketed ? "events.turnInTicketsHint" : "events.turnInHint") : ticketed ? "events.scanTicketsHint" : "events.showQrHint")}
+          </p>
+        </>
+      ) : ticketed ? (
         <>
           <Button block onClick={() => navigate(`/events/${event.id}/ticket`)}>
             {t("action.showTicket")}
@@ -153,6 +179,8 @@ const NextRun = ({ event, onChange }: { event: EventCardData; onChange: () => Pr
           <p className="mt-2.5 text-center text-[12px] text-hint">{t("events.scanHint")}</p>
         </>
       )}
+      {showQr ? <QrStage eventId={event.id} onClose={() => setShowQr(false)} /> : null}
+      {door.dialog}
     </article>
   );
 };

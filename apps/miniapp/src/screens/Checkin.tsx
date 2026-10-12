@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { sku } from "../api";
+import { sku, type ScannedTicket } from "../api";
 import { useI18n } from "../i18n";
 import { errorText } from "../lib/format";
 import { useAction } from "../lib/useResource";
 import { useBackButton } from "../lib/useBackButton";
 import { canScan, haptic, scanQr } from "../telegram";
 import { useToast } from "../ui/overlays";
+import { ScanDialog } from "../ui/roster";
 import { SuccessBurst } from "../ui/qr";
 import { Button, PageTitle, Screen } from "../ui/primitives";
 
@@ -42,6 +43,90 @@ export const useCheckinScan = (onDone: () => Promise<unknown> | void) => {
     );
   };
   return { scan, pending: action.pending };
+};
+
+/** Staff's side of the same door: they hold the QR up, so they turn in instead of scanning it. */
+export const useTurnIn = (eventId: number, onDone: () => Promise<unknown> | void) => {
+  const { t } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const turnIn = () =>
+    void action.run(
+      async () => {
+        await sku.turnIn(eventId);
+        haptic.notify("success");
+        toast(t("toast.turnedIn"));
+        await onDone();
+      },
+      {
+        onError: (error) => {
+          haptic.notify("error");
+          toast(errorText(t, error), "err");
+        },
+      },
+    );
+  return { turnIn, pending: action.pending };
+};
+
+/**
+ * Staff at a paid run's door: the same scan the organizer screen has, with the
+ * ticket kept up afterwards so the merch can be handed over from it.
+ */
+export const useTicketScan = (eventId: number, onDone: () => Promise<unknown> | void) => {
+  const { t } = useI18n();
+  const toast = useToast();
+  const action = useAction();
+  const [scanned, setScanned] = useState<ScannedTicket | null>(null);
+  const [busyItem, setBusyItem] = useState<number | null>(null);
+  const fail = (error: unknown) => {
+    haptic.notify("error");
+    toast(errorText(t, error), "err");
+  };
+  const scan = () => {
+    if (!canScan()) {
+      toast(t("checkin.unavailable"), "err");
+      return;
+    }
+    void action.run(
+      async () => {
+        setScanned(null);
+        const code = await scanQr(t("organizer.scanText"));
+        if (code === null) return;
+        const result = await sku.scanTicket(eventId, code.trim());
+        haptic.notify(result.alreadyCheckedIn ? "warning" : "success");
+        setScanned(result);
+        await onDone();
+      },
+      { onError: fail },
+    );
+  };
+  const handover = (itemId: number) => {
+    setBusyItem(itemId);
+    void action
+      .run(
+        async () => {
+          const result = await sku.toggleHandover(eventId, itemId);
+          haptic.tap(result.handedOverAt ? "medium" : "light");
+          setScanned((current) =>
+            current ? { ...current, items: current.items.map((item) => (item.id === itemId ? { ...item, handedOverAt: result.handedOverAt } : item)) } : null,
+          );
+        },
+        { onError: fail },
+      )
+      .finally(() => setBusyItem(null));
+  };
+  const dialog = scanned ? (
+    <ScanDialog
+      scanned={scanned}
+      position={null}
+      pending={action.pending}
+      busyItem={busyItem}
+      onHandover={handover}
+      onNext={scan}
+      onClose={() => setScanned(null)}
+    />
+  ) : null;
+  return { scan, pending: action.pending, dialog };
 };
 
 type Outcome = { kind: "ok" } | { kind: "err"; message: string } | null;
