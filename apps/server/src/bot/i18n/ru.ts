@@ -96,6 +96,13 @@ ${join([
   leaveKeep: "Нет, остаюсь",
   leftNotice: "Ты больше не в списке. Место перейдёт следующему в очереди.",
   leftQueueNotice: "Ты вышел из очереди.",
+  runReminder: (title: string, date: string, location: string, locationUrl: string | null) => format`${bold("Скоро увидимся!")}
+
+${bold(title)}
+📅 ${date}
+📍 ${locationUrl ? link(location, locationUrl) : location}
+
+Не получается прийти? Освободи место — его сможет занять кто-то из очереди.`,
   joinedNotice: "Готово — ты записан!",
   queuedNotice: "Ты в очереди. Напишем, как только освободится место.",
   alreadyJoinedNotice: "Ты уже записан на это событие.",

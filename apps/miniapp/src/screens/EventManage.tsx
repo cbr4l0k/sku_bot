@@ -329,7 +329,15 @@ export const EventManageScreen = () => {
       ) : null}
 
       <Rule label={phase === "draft" ? t("manage.checkBefore") : t("manage.settings")} />
-      <Settings event={event} info={info} canAdmin={canAdmin} phase={phase} onOpen={setOverlay} />
+      <Settings
+        event={event}
+        info={info}
+        canAdmin={canAdmin}
+        phase={phase}
+        onOpen={setOverlay}
+        pending={action.pending}
+        onToggleReminders={() => run(() => sku.updateEvent(id, { remindersEnabled: !event.remindersEnabled }), t("common.saved"))}
+      />
 
       {/* What the old admin screen offered at any hour stays reachable in every
           phase; the phase only decides what is up front. */}
@@ -620,12 +628,16 @@ const Settings = ({
   canAdmin,
   phase,
   onOpen,
+  pending,
+  onToggleReminders,
 }: {
   event: EventSummary;
   info: EventSummaryData;
   canAdmin: boolean;
   phase: EventPhase;
   onOpen: (overlay: Overlay) => void;
+  pending: boolean;
+  onToggleReminders: () => void;
 }) => {
   const { t, locale } = useI18n();
   const tiers = event.ticketTiers.filter((tier) => tier.active).length;
@@ -677,6 +689,25 @@ const Settings = ({
           </button>
         );
       })}
+      <div className="row">
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px] font-semibold">{t("manage.reminders")}</span>
+          <span className="block text-[12px] text-hint">{t("manage.remindersHint")}</span>
+        </span>
+        <button
+          type="button"
+          className="switch"
+          aria-pressed={event.remindersEnabled}
+          aria-label={t("manage.reminders")}
+          disabled={pending}
+          onClick={() => {
+            haptic.select();
+            onToggleReminders();
+          }}
+        >
+          <span />
+        </button>
+      </div>
     </section>
   );
 };

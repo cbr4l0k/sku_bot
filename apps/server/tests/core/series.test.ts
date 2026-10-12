@@ -5,6 +5,7 @@ import {
   seriesStats,
   setNextStartsAt,
   setSeriesLeads,
+  setSeriesReminders,
   setSeriesWaitlist,
   skipNext,
   spawnOccurrence,
@@ -317,6 +318,23 @@ describe("leads and the queue reach the runs still ahead", () => {
     const spawned = run(db, spawnOccurrence(seriesId, now));
     if (!("eventId" in spawned)) throw new Error(spawned.error);
     expect(queueOn(spawned.eventId)).toBe(0);
+  });
+
+  test("switching reminders reaches the template, the following runs and the next spawn", () => {
+    const seriesId = createSeries(new Date("2030-01-20T19:00:00Z"));
+    const ahead = occurrence(seriesId, new Date("2030-01-08T19:00:00Z"));
+    const ended = occurrence(seriesId, new Date("2030-01-09T19:00:00Z"), true);
+    const remindersOn = (table: "events" | "event_series", id: number) => db.$client
+      .query<{ reminders_enabled: number }, [number]>(`SELECT reminders_enabled FROM ${table} WHERE id = ?`).get(id)?.reminders_enabled;
+
+    expect(run(db, setSeriesReminders(seriesId, true, now))).toEqual({ following: 1 });
+    expect(remindersOn("event_series", seriesId)).toBe(1);
+    expect(remindersOn("events", ahead)).toBe(1);
+    expect(remindersOn("events", ended)).toBe(0);
+    const spawned = run(db, spawnOccurrence(seriesId, now));
+    if (!("eventId" in spawned)) throw new Error(spawned.error);
+    expect(remindersOn("events", spawned.eventId)).toBe(1);
+    expect(run(db, setSeriesReminders(999, true, now))).toEqual({ error: "series_not_found" });
   });
 
   test("off keeps the queue dormant; back on offers the spot it missed", () => {

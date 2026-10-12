@@ -1,14 +1,17 @@
 import { Effect } from "effect";
-import { TelegramError } from "gramio";
+import { InlineKeyboard, TelegramError } from "gramio";
 
-import { eq, users, type Db } from "@sku/db";
-import { offerKeyboard } from "./bot/callbacks";
+import { eq, ticketTiers, users, type Db } from "@sku/db";
+import { leaveCallback, offerKeyboard } from "./bot/callbacks";
 import { i18n } from "./bot/i18n";
 import { eventSummary } from "./bot/event-card";
 import type { EventChange, EventUpdatedFields } from "./bot/event-card";
 import { bot } from "./bot";
+import { loadEnv } from "./env";
 import type { NotificationEffect } from "./core/types";
 import { Database } from "./services";
+
+const env = loadEnv();
 
 const localeFor = (db: Db, userId: number) =>
   db.select({ locale: users.locale }).from(users).where(eq(users.id, userId)).get()?.locale ?? "ru";
@@ -65,6 +68,24 @@ const dispatchEffect = Effect.fnUntraced(function* (effect: NotificationEffect) 
 
     db.$client.query("UPDATE waitlist_offers SET message_id = ? WHERE id = ?")
       .run(response.message_id, effect.offerId);
+    return;
+  }
+
+  if (effect.kind === "run_reminder") {
+    const event = yield* eventSummary(effect.eventId, locale);
+    if (!event) return;
+    // A paid spot is given back through the app's refund flow, not from chat.
+    const paid = Boolean(db.select({ id: ticketTiers.id }).from(ticketTiers).where(eq(ticketTiers.eventId, effect.eventId)).get());
+    const keyboard = new InlineKeyboard();
+    if (!paid) keyboard.text(i18n.t(locale, "leaveButton"), leaveCallback.pack({ id: effect.eventId, step: "ask" })).row();
+    keyboard.webApp(i18n.t(locale, "openEvent"), `https://${env.DOMAIN}/events/${effect.eventId}`);
+    const response = yield* Effect.promise(() => bot.api.sendMessage({
+      chat_id: effect.userId,
+      text: i18n.t(locale, "runReminder", event.title, event.date, event.location, event.locationUrl),
+      reply_markup: keyboard,
+      suppress: true,
+    }));
+    if (response instanceof TelegramError) logTelegramFailure("run reminder", response);
     return;
   }
 

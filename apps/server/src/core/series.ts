@@ -19,6 +19,7 @@ type SeriesRow = {
   location_url: string | null;
   capacity: number | null;
   waitlist_enabled: number;
+  reminders_enabled: number;
   home_chat_id: number | null;
   next_starts_at: number | null;
   cadence_days: number | null;
@@ -50,7 +51,7 @@ type SpawnError = Extract<SeriesRejected["code"], "series_not_found" | "series_i
 
 const seriesById = (db: Db, seriesId: number) => db.$client.query<SeriesRow, [number]>(`
   SELECT id, city, title, description, location, location_url, capacity,
-    waitlist_enabled, home_chat_id, next_starts_at, cadence_days, active, created_by
+    waitlist_enabled, reminders_enabled, home_chat_id, next_starts_at, cadence_days, active, created_by
   FROM event_series WHERE id = ?
 `).get(seriesId);
 
@@ -83,14 +84,14 @@ export const spawnOccurrence = Effect.fn("series.spawnOccurrence")(function* (se
     }
     // Publishing has effects far beyond this transaction — notifications and chat
     // invitations — so every generated run waits in draft for a person to inspect it.
-    const event = db.$client.query<{ id: number }, [string, string, string, number, string, string | null, number | null, number, number | null, number, number, number, number]>(`
+    const event = db.$client.query<{ id: number }, [string, string, string, number, string, string | null, number | null, number, number, number | null, number, number, number, number]>(`
       INSERT INTO events (
         city, title, description, starts_at, location, location_url, capacity,
-        waitlist_enabled, status, home_chat_id, series_id, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?) RETURNING id
+        waitlist_enabled, reminders_enabled, status, home_chat_id, series_id, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?) RETURNING id
     `).get(
       series.city, series.title, series.description, startsAt,
-      series.location, series.location_url, series.capacity, series.waitlist_enabled,
+      series.location, series.location_url, series.capacity, series.waitlist_enabled, series.reminders_enabled,
       series.home_chat_id, series.id, series.created_by, timestamp, timestamp,
     );
     if (!event) throw new Error("Occurrence insert returned no id");
@@ -429,4 +430,19 @@ export const seriesStats = Effect.fn("series.seriesStats")(function* (seriesId: 
       fourPlus: participationCounts.filter((count) => count >= 4).length,
     },
   };
+});
+
+/** Switches run reminders for the series and every run still ahead of it. */
+export const setSeriesReminders = Effect.fn("series.setSeriesReminders")(function* (seriesId: number, enabled: boolean, now: Date) {
+  const db = yield* Database;
+  const result = db.$client.transaction((): { eventIds: number[] } | { error: "series_not_found" } => {
+    if (!seriesById(db, seriesId)) return { error: "series_not_found" };
+    const timestamp = seconds(now);
+    db.$client.query("UPDATE event_series SET reminders_enabled = ?, updated_at = ? WHERE id = ?").run(enabled ? 1 : 0, timestamp, seriesId);
+    const eventIds = followingEventIds(db, seriesId, now);
+    for (const eventId of eventIds) db.$client.query("UPDATE events SET reminders_enabled = ?, updated_at = ? WHERE id = ?").run(enabled ? 1 : 0, timestamp, eventId);
+    return { eventIds };
+  })();
+  if ("error" in result) return yield* new SeriesRejected({ code: result.error });
+  return { following: result.eventIds.length };
 });

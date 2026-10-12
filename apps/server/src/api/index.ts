@@ -81,7 +81,7 @@ import { syncAllStaff, syncEventStaff } from "../core/staff";
 import { eventStats, globalStats, monthStats } from "../core/stats";
 import { needsAttention } from "../core/attention";
 import { personCard, setCityRoles } from "../core/people";
-import { attachEvent, detachEvent, seriesStats, setSeriesLeads, setSeriesWaitlist, skipNext, spawnOccurrence, unknownUserIds } from "../core/series";
+import { attachEvent, detachEvent, seriesStats, setSeriesLeads, setSeriesReminders, setSeriesWaitlist, skipNext, spawnOccurrence, unknownUserIds } from "../core/series";
 import { checkinMethodOf, eventPhase, eventSummary, hqOverview, rosterFlags, seriesSummary } from "../core/hq";
 import { acceptOffer, cancelEvent, endEvent, issueOffers, reopenEvent, setCapacity } from "../core/waitlist";
 import { loadEnv } from "../env";
@@ -419,6 +419,7 @@ const eventFields = t.Object({
   locationUrl: t.Optional(t.Nullable(t.String())),
   capacity: t.Nullable(t.Integer({ minimum: 0 })),
   waitlistEnabled: t.Optional(t.Boolean()),
+  remindersEnabled: t.Optional(t.Boolean()),
 });
 
 const eventPatchFields = t.Partial(eventFields);
@@ -459,6 +460,7 @@ const seriesFields = t.Object({
   locationUrl: t.Optional(t.Nullable(t.String())),
   capacity: t.Nullable(t.Integer({ minimum: 0 })),
   waitlistEnabled: t.Optional(t.Boolean()),
+  remindersEnabled: t.Optional(t.Boolean()),
   homeChatId: t.Optional(t.Nullable(t.Integer())),
   nextStartsAt: t.Nullable(t.String()),
   cadenceDays: t.Nullable(t.Integer({ minimum: 1 })),
@@ -786,6 +788,7 @@ export const app = new Elysia()
           locationUrl,
           capacity: body.capacity,
           waitlistEnabled: body.waitlistEnabled,
+          remindersEnabled: body.remindersEnabled,
           homeChatId: body.homeChatId,
           nextStartsAt,
           cadenceDays: body.cadenceDays,
@@ -862,11 +865,12 @@ export const app = new Elysia()
           for (const chatId of [...new Set(body.groups)]) db.insert(seriesChats).values({ seriesId: params.id, chatId }).run();
         }
       })();
-      // Leads and the queue also reach the runs already raised and still ahead.
+      // Leads, the queue and reminders also reach the runs already raised and still ahead.
       if (body.organizerIds !== undefined) yield* setSeriesLeads(params.id, body.organizerIds, now()).pipe(Effect.orDie);
       if (body.waitlistEnabled !== undefined) {
         fireEffects((yield* setSeriesWaitlist(params.id, body.waitlistEnabled, now()).pipe(Effect.orDie)).effects);
       }
+      if (body.remindersEnabled !== undefined) yield* setSeriesReminders(params.id, body.remindersEnabled, now()).pipe(Effect.orDie);
       const updated = db.select().from(eventSeries).where(eq(eventSeries.id, params.id)).get();
       return updated ? seriesView(updated) : error(status, 404, "series_not_found");
     })), { params: idParams, body: seriesPatchBody })
@@ -1036,7 +1040,7 @@ export const app = new Elysia()
         (body.location !== undefined && body.location !== event.location) || (locationUrl !== undefined && locationUrl !== event.locationUrl) ? "location" : null,
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.waitlistEnabled !== undefined) {
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.waitlistEnabled !== undefined || body.remindersEnabled !== undefined) {
         db.update(events).set({
           ...(body.title === undefined ? {} : { title: body.title }),
           ...(body.description === undefined ? {} : { description: body.description }),
@@ -1044,6 +1048,7 @@ export const app = new Elysia()
           ...(body.location === undefined ? {} : { location: body.location }),
           ...(locationUrl === undefined ? {} : { locationUrl }),
           ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }),
+          ...(body.remindersEnabled === undefined ? {} : { remindersEnabled: body.remindersEnabled }),
           updatedAt: now(),
         }).where(eq(events.id, params.id)).run();
       }
@@ -1388,9 +1393,9 @@ export const app = new Elysia()
         body.capacity !== undefined && body.capacity !== event.capacity ? "capacity" : null,
       ].filter((change): change is EventChange => change !== null);
       if (body.groups !== undefined) yield* setEventChats(params.id, body.groups);
-      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined || body.homeChatId !== undefined || body.city !== undefined) db.update(events).set({
+      if (body.title !== undefined || body.description !== undefined || startsAt !== undefined || body.location !== undefined || locationUrl !== undefined || body.status !== undefined || body.waitlistEnabled !== undefined || body.remindersEnabled !== undefined || body.homeChatId !== undefined || body.city !== undefined) db.update(events).set({
         ...(body.city === undefined ? {} : { city: body.city }),
-        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
+        ...(body.title === undefined ? {} : { title: body.title }), ...(body.description === undefined ? {} : { description: body.description }), ...(startsAt === undefined ? {} : { startsAt }), ...(body.location === undefined ? {} : { location: body.location }), ...(locationUrl === undefined ? {} : { locationUrl }), ...(body.status === undefined ? {} : { status: body.status }), ...(body.waitlistEnabled === undefined ? {} : { waitlistEnabled: body.waitlistEnabled }), ...(body.remindersEnabled === undefined ? {} : { remindersEnabled: body.remindersEnabled }), ...(body.homeChatId === undefined ? {} : { homeChatId: body.homeChatId }), updatedAt: now(),
       }).where(eq(events.id, params.id)).run();
       if (body.capacity !== undefined) fireEffects((yield* setCapacity(params.id, body.capacity, now())));
       // Switching the queue back on hands out the spots the dormant queue missed.

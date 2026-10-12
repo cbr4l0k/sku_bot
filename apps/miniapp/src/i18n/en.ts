@@ -637,6 +637,8 @@ export const en: Dict = {
   "manage.waiting": "Waiting · {n}",
   "manage.waitlist": "Waitlist",
   "manage.waitlistHint": "When spots run out, people can join a waitlist",
+  "manage.reminders": "Reminders",
+  "manage.remindersHint": "Everyone signed up gets a message 2 hours before the start",
   "manage.adminActions": "Admin actions",
   "attention.title": "Needs attention",
   "attention.chats": "{n} chats without a branch",

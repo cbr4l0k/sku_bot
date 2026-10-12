@@ -125,6 +125,7 @@ export type EventDraft = {
   locationUrl: string | null;
   capacity: number | null;
   waitlistEnabled?: boolean;
+  remindersEnabled?: boolean;
 };
 
 /** A chat of one branch; `title` is null when the bot cannot reach it. */
@@ -157,6 +158,7 @@ export type SeriesDraft = {
   cadenceDays: number | null;
   leadDays?: number;
   waitlistEnabled?: boolean;
+  remindersEnabled?: boolean;
   groups?: number[];
   homeChatId?: number | null;
   active?: boolean;

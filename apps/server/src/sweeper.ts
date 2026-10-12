@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { syncChatGuests } from "./bot/guests";
 import { dispatchEffects } from "./notify";
 import { sweepOffers } from "./core/waitlist";
+import { sweepReminders } from "./core/reminders";
 import { sweepTicketPayments } from "./core/tickets";
 import { dueSeries, spawnOccurrence } from "./core/series";
 import { paymentProvider } from "./payments";
@@ -48,6 +49,8 @@ const spawnDueSeries = Effect.fn("sweeper.spawnDueSeries")(function* (sweepAt: D
 export const startSweeper = (intervalMs = 30_000, guestIntervalMs = 60_000, seriesIntervalMs = 60 * 60 * 1000) => {
   const stopOffers = every(intervalMs, guarded("Offer", () => sweepOffers(new Date()).pipe(Effect.flatMap(dispatchEffects))));
   const stopGuests = every(guestIntervalMs, guarded("Chat guest", () => syncChatGuests(new Date())));
+  // Reminders share the guests' minute: a run two hours off is not racing anything.
+  const stopReminders = every(guestIntervalMs, guarded("Reminder", () => sweepReminders(new Date()).pipe(Effect.flatMap(dispatchEffects))));
   const stopSeries = every(seriesIntervalMs, guarded("Series", () => spawnDueSeries(new Date())));
   const configuredProvider = paymentProvider;
   const stopPayments = configuredProvider
@@ -60,6 +63,7 @@ export const startSweeper = (intervalMs = 30_000, guestIntervalMs = 60_000, seri
   return () => {
     stopOffers();
     stopGuests();
+    stopReminders();
     stopSeries();
     stopPayments();
   };

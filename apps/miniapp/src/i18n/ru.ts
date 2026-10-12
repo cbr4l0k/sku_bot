@@ -635,6 +635,8 @@ export const ru = {
   "manage.waiting": "Ждём · {n}",
   "manage.waitlist": "Очередь",
   "manage.waitlistHint": "Когда места кончатся, можно встать в очередь",
+  "manage.reminders": "Напоминания",
+  "manage.remindersHint": "Все записавшиеся получат сообщение за 2 часа до старта",
   "manage.adminActions": "Управление",
   "attention.title": "Нужно внимание",
   "attention.chats": "Чатов без филиала: {n}",
