@@ -116,5 +116,34 @@ ${blockquote("The link is single-use and yours alone. Turn up and check in and t
   chatId: (chatId: number) => format`This chat's ID is ${code(String(chatId))}
 
 The chat is already in the catalog — pick its city under Admin → Chats and events there can use it.`,
+  draftReview: (title: string, date: string) => format`${bold("A new run is waiting for review")}
+
+${bold(title)}
+📅 ${date}
+
+The series raised this draft. Nobody can sign up until it is published.`,
+  draftPublish: "✅ Publish",
+  draftSkip: "Skip this run",
+  draftSkipConfirm: "Yes, delete this draft",
+  draftSkipKeep: "Keep it",
+  draftOpen: "Open draft",
+  draftPublished: (title: string, date: string) => format`${bold("Published")}
+
+${bold(title)}
+📅 ${date}
+
+Runners can sign up now.`,
+  draftSkipped: (title: string) => format`${bold("Skipped")}
+
+The draft for ${bold(title)} was deleted. The series carries on with its next date.`,
+  draftHandled: "This draft has already been published or removed.",
+  draftNotAllowed: "Only the branch's admins can publish or skip this run. You can still open the draft.",
+  draftHasOrders: "This draft already has payments, so it can't be deleted from chat. Open it in the app.",
+  refundFailedAlert: (title: string, runner: string, amount: string, reason: string | null) => format`${bold("A refund failed")}
+
+${bold(title)}
+${runner} · ${amount}${reason ? `\nYooKassa: ${reason}` : ""}
+
+The runner's place is still held. Retry the refund from the event's purchases.`,
   chatIdOnlyInGroups: "Run this command inside the group whose ID you need.",
 } satisfies LanguageMap;

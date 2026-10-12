@@ -4,9 +4,10 @@ import { loadEnv } from "../env";
 import { runtime } from "../runtime";
 import { Database } from "../services";
 import { i18n, localeFromLanguageCode } from "./i18n";
-import { declineCallback, joinCallback, leaveCallback } from "./callbacks";
+import { declineCallback, draftCallback, joinCallback, leaveCallback } from "./callbacks";
 import { chatIdHandler, chatMembershipHandler } from "./chat-id";
 import { contactHandler } from "./contact";
+import { draftHandler } from "./drafts";
 import { joinHandler } from "./join";
 import { declineHandler, leaveHandler } from "./leave";
 import { offerHandler } from "./offers";
@@ -36,6 +37,7 @@ export const bot = new Bot(env.BOT_TOKEN)
     if (data && joinCallback.safeUnpack(data).success) return joinHandler(context);
     if (data && leaveCallback.safeUnpack(data).success) return leaveHandler(context);
     if (data && declineCallback.safeUnpack(data).success) return declineHandler(context);
+    if (data && draftCallback.safeUnpack(data).success) return draftHandler(context);
     return offerHandler(context);
   })
   .onStart(async () => {
