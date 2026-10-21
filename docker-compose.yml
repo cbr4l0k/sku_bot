@@ -11,9 +11,16 @@ services:
       - sku_data:/app/data
     expose:
       - "3000"
+    networks:
+      default: {}
+      web:
+        aliases: [sku_bot_app]
 
+  # Only for a host without the shared Caddy: docker compose --profile standalone up -d
   caddy:
+    profiles: ["standalone"]
     image: caddy:2
+    profiles: ["standalone"]
     restart: unless-stopped
     # Lets Caddy reach the VPN's Xray on the host (172.17.0.1:10000).
     extra_hosts:
@@ -30,6 +37,12 @@ services:
     depends_on:
       - app
 
+networks:
+  web:
+    external: true
+
+# The shared Caddy keeps its certificates in caddy_data and caddy_config (as
+# sku_bot_caddy_data / sku_bot_caddy_config); never remove them.
 volumes:
   sku_data:
   caddy_data:

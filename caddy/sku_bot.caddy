@@ -1,0 +1,4 @@
+sku.capitalism.best {
+    encode gzip
+    reverse_proxy sku_bot_app:3000
+}
