@@ -29,6 +29,8 @@ Caddy obtains and renews HTTPS certificates automatically once DNS points to the
 1. Update the code on the VDS (`git pull`, or `rsync` it again).
 2. Rebuild and restart: `docker compose up -d --build`.
 
+From a workstation, `scripts/deploy.sh` does both for the app alone — on the shared VDS another Caddy already serves ports 80 and 443: it typechecks and tests, syncs the checkout through the local proxy, rebuilds the app, and shows its logs. Run `scripts/deploy.sh --dry-run` first to see what would change on the server.
+
 Docker owns the `sku_data` volume, so it is independent of the checkout's path and contents. Rebuilds, `docker compose down`, re-cloning into a new directory, and `rsync --delete` all leave the database untouched.
 
 **`docker compose down -v` deletes the database.** The `-v` flag removes named volumes, `sku_data` among them. Use plain `docker compose down`.
